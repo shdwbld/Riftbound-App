@@ -130,6 +130,12 @@ export type Action =
   | { type: 'ACTIVATE_LEGEND'; player: PlayerId }
   /** Generate a token (e.g. Recruit) from the token pile onto your Base. */
   | { type: 'CREATE_TOKEN'; player: PlayerId; cardId: string }
+  // --- Limited / utility actions (hotkeys & right-click menu) ---
+  | { type: 'DRAW'; player: PlayerId }
+  | { type: 'BUFF_UNIT'; player: PlayerId; iid: string }
+  | { type: 'RECYCLE_RUNE'; player: PlayerId; iid: string }
+  | { type: 'TRASH_CARD'; player: PlayerId; iid: string }
+  | { type: 'REVEAL_TOP'; player: PlayerId }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment }
   | {
       type: 'PLAY_SPELL'

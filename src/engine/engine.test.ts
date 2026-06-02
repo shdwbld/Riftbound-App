@@ -325,6 +325,42 @@ describe('interactions & battlefield passives', () => {
   })
 })
 
+describe('utility actions (hotkeys / context menu)', () => {
+  it('BUFF_UNIT adds one buff, capped at 1', () => {
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'BUFF_UNIT', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base[0].buffs).toBe(1)
+    expect(reduce(r.state, { type: 'BUFF_UNIT', player: 0, iid: u.iid }).error).toBeDefined()
+  })
+
+  it('TRASH_CARD moves a hand card to the trash', () => {
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'TRASH_CARD', player: 0, iid: u.iid })
+    expect(r.state.players[0].zones.trash.some((c) => c.iid === u.iid)).toBe(true)
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === u.iid)).toBe(false)
+  })
+
+  it('RECYCLE_RUNE returns a rune to the bottom of the rune deck', () => {
+    const s = baseState()
+    const rune = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(rune)
+    const r = reduce(s, { type: 'RECYCLE_RUNE', player: 0, iid: rune.iid })
+    expect(r.state.players[0].zones.runeDeck.some((c) => c.iid === rune.iid)).toBe(true)
+  })
+
+  it('DRAW moves the top of the deck to hand', () => {
+    const s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'DRAW', player: 0 })
+    expect(r.state.players[0].zones.hand.length).toBe(1)
+  })
+})
+
 describe('guards', () => {
   it("rejects acting out of turn", () => {
     const s = baseState()

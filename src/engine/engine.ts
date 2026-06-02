@@ -863,6 +863,67 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       return ok(beginTurn(s))
     }
 
+    case 'DRAW': {
+      const s = clone(state)
+      const p = s.players[action.player]
+      if (p.zones.mainDeck.length === 0)
+        return ok(awardPoints(s, nextPlayer(s, action.player), 1, 'scored from Burn Out', 'hold'))
+      drawN(p, 1)
+      return ok(log(s, action.player, `${p.name} drew a card.`))
+    }
+
+    case 'BUFF_UNIT': {
+      const s = clone(state)
+      for (const u of [
+        ...s.players[action.player].zones.base,
+        ...s.battlefields.flatMap((b) => b.units),
+      ]) {
+        if (u.iid === action.iid && u.owner === action.player) {
+          if ((u.buffs ?? 0) >= 1) return fail(state, 'A unit can have at most 1 Buff.')
+          u.buffs = 1
+          return ok(log(s, action.player, `Buffed ${getCard(u.cardId)?.name} (+1 Might).`))
+        }
+      }
+      return fail(state, 'No such friendly unit to buff.')
+    }
+
+    case 'RECYCLE_RUNE': {
+      const s = clone(state)
+      const p = s.players[action.player]
+      const rune = removeFromZone(p, 'runePool', action.iid)
+      if (!rune) return fail(state, 'Rune not in your pool.')
+      p.zones.runeDeck.push({ ...rune, exhausted: false, damage: 0 })
+      return ok(log(s, action.player, `Recycled ${getCard(rune.cardId)?.name}.`))
+    }
+
+    case 'TRASH_CARD': {
+      const s = clone(state)
+      const p = s.players[action.player]
+      for (const z of ['hand', 'base', 'runePool'] as ZoneId[]) {
+        const c = removeFromZone(p, z, action.iid)
+        if (c) {
+          p.zones.trash.push({ ...c, exhausted: false, damage: 0 })
+          return ok(log(s, action.player, `Trashed ${getCard(c.cardId)?.name}.`))
+        }
+      }
+      for (const bf of s.battlefields) {
+        const idx = bf.units.findIndex((u) => u.iid === action.iid && u.owner === action.player)
+        if (idx >= 0) {
+          const [c] = bf.units.splice(idx, 1)
+          p.zones.trash.push({ ...c, exhausted: false, damage: 0 })
+          recomputeControllers(s)
+          return ok(log(s, action.player, `Trashed ${getCard(c.cardId)?.name}.`))
+        }
+      }
+      return fail(state, 'No such card to trash.')
+    }
+
+    case 'REVEAL_TOP': {
+      const top = state.players[action.player].zones.mainDeck[0]
+      if (!top) return fail(state, 'Your deck is empty.')
+      return ok(log(clone(state), action.player, `Revealed top of deck: ${getCard(top.cardId)?.name}.`))
+    }
+
     case 'CONCEDE': {
       // The conceding player drops; if one player remains they win, otherwise
       // the current points leader among the rest is declared the winner.

@@ -5,6 +5,7 @@ import {
   type PlayerId,
   type EngineCard,
   type PlayerState,
+  type Action,
 } from '../engine/types'
 import { canAfford } from '../engine/autopay'
 import { type Card, type Domain, DOMAIN_META } from '../types/cards'
@@ -27,6 +28,8 @@ export interface MatchBoardProps {
   onActivateLegend?: () => void
   onConcede?: () => void
   onCreateToken?: (cardId: string) => void
+  /** Right-click card actions (buff / recycle / trash). */
+  onCardAction?: (action: Action) => void
   /** Open the card detail modal for any card on the board. */
   onInspect?: (card: Card) => void
 }
@@ -48,10 +51,25 @@ export default function MatchBoard({
   onActivateLegend,
   onConcede,
   onCreateToken,
+  onCardAction,
   onInspect,
 }: MatchBoardProps) {
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action: Action }[] } | null>(null)
   const me = match.players[perspective]
+
+  const openMenu = (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand') => {
+    e.preventDefault()
+    if (!onCardAction) return
+    const card = getCard(ci.cardId)
+    const items: { label: string; action: Action }[] = []
+    if (card?.type === 'rune' && zone === 'runePool')
+      items.push({ label: '♺ Recycle rune', action: { type: 'RECYCLE_RUNE', player: perspective, iid: ci.iid } })
+    if (card?.type === 'unit')
+      items.push({ label: '✦ Buff +1', action: { type: 'BUFF_UNIT', player: perspective, iid: ci.iid } })
+    items.push({ label: '🗑 Trash', action: { type: 'TRASH_CARD', player: perspective, iid: ci.iid } })
+    setMenu({ x: e.clientX, y: e.clientY, items })
+  }
   // Opponents in seating order, starting just after the local player.
   const opponents: PlayerState[] = []
   for (let i = 1; i < match.players.length; i++)
@@ -178,6 +196,8 @@ export default function MatchBoard({
         onActivateLegend={onActivateLegend}
         onConcede={onConcede}
         onCreateToken={onCreateToken}
+        onContext={onCardAction ? openMenu : undefined}
+        onRevealTop={onCardAction ? () => onCardAction({ type: 'REVEAL_TOP', player: perspective }) : undefined}
       />
 
       {/* Log */}
@@ -192,6 +212,30 @@ export default function MatchBoard({
           ))}
         </div>
       </div>
+
+      {/* Right-click context menu */}
+      {menu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null) }} />
+          <div
+            className="fixed z-50 min-w-32 overflow-hidden rounded-lg border border-white/15 bg-[#1a1a26] text-sm shadow-xl"
+            style={{ left: menu.x, top: menu.y }}
+          >
+            {menu.items.map((it) => (
+              <button
+                key={it.label}
+                onClick={() => {
+                  onCardAction?.(it.action)
+                  setMenu(null)
+                }}
+                className="block w-full px-3 py-1.5 text-left hover:bg-white/10"
+              >
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -263,6 +307,8 @@ function PlayerMat({
   onActivateLegend,
   onConcede,
   onCreateToken,
+  onContext,
+  onRevealTop,
 }: {
   me: PlayerState
   myActionTurn: boolean
@@ -274,6 +320,8 @@ function PlayerMat({
   onActivateLegend?: () => void
   onConcede?: () => void
   onCreateToken?: (cardId: string) => void
+  onContext?: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand') => void
+  onRevealTop?: () => void
 }) {
   const domains = playerDomains(me)
   const readyRunes = me.zones.runePool.filter((r) => !r.exhausted).length
@@ -373,7 +421,11 @@ function PlayerMat({
           const movable = myActionTurn && isUnit && !u.exhausted
           return (
             <div key={u.iid} className="flex flex-col items-center gap-0.5">
-              <button onClick={() => onInspect(u)} className={selectedUnit === u.iid ? 'rounded ring-2 ring-indigo-400' : ''}>
+              <button
+                onClick={() => onInspect(u)}
+                onContextMenu={(e) => onContext?.(e, u, 'base')}
+                className={selectedUnit === u.iid ? 'rounded ring-2 ring-indigo-400' : ''}
+              >
                 <BoardCard ci={u} selected={selectedUnit === u.iid} />
               </button>
               {movable && (
@@ -405,7 +457,8 @@ function PlayerMat({
             <span
               key={r.iid}
               title={d?.name}
-              className={`flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${
+              onContextMenu={(e) => onContext?.(e, r, 'runePool')}
+              className={`flex h-6 w-6 cursor-context-menu items-center justify-center rounded-full border text-[10px] font-bold ${
                 r.exhausted ? 'opacity-30' : ''
               }`}
               style={{ borderColor: color, color, background: `${color}22` }}
@@ -429,7 +482,7 @@ function PlayerMat({
             canAfford(me, card)
           return (
             <div key={c.iid} className="flex flex-col items-center gap-0.5">
-              <button onClick={() => onInspect(c)}>
+              <button onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')}>
                 <BoardCard ci={c} />
               </button>
               <button
@@ -447,7 +500,13 @@ function PlayerMat({
 
       {/* piles */}
       <div className="mt-2 flex items-end gap-2">
-        <CardBack size="sm" count={me.zones.mainDeck.length} label="deck" />
+        <button
+          onClick={onRevealTop}
+          title="Reveal top card"
+          className="rounded transition hover:ring-2 hover:ring-indigo-400/50"
+        >
+          <CardBack size="sm" count={me.zones.mainDeck.length} label="deck" />
+        </button>
         <CardBack size="sm" count={me.zones.runeDeck.length} label="runes" />
         <div className="flex items-center gap-1 text-[10px] text-white/40">🗑 {me.zones.trash.length}</div>
       </div>

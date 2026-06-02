@@ -1,16 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { listDecks, getDeck } from '../lib/deckStorage'
 import { getCard } from '../data/cards'
 import type { Deck } from '../types/deck'
 import type { Card } from '../types/cards'
-import { type MatchState, type PlayerId, type EngineCard } from '../engine/types'
+import { type MatchState, type PlayerId, type EngineCard, type Action } from '../engine/types'
 import { createMatch } from '../engine/setup'
 import { reduce } from '../engine/engine'
 import { autoPayForCard } from '../engine/autopay'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
+import HotkeyHelp from '../components/HotkeyHelp'
 
 export default function MatchPage() {
   const location = useLocation()
@@ -18,18 +19,83 @@ export default function MatchPage() {
   const [match, setMatch] = useState<MatchState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
+  const [showHelp, setShowHelp] = useState(false)
+
+  // Stable refs so the keyboard handler always sees current state.
+  const matchRef = useRef<MatchState | null>(match)
+  matchRef.current = match
+  const historyRef = useRef<MatchState[]>([])
+
+  const flash = useCallback((msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2000)
+  }, [])
+
+  const dispatch = useCallback(
+    (action: Action) => {
+      const cur = matchRef.current
+      if (!cur) return
+      const { state, error } = reduce(cur, action)
+      if (error) return flash(error)
+      historyRef.current.push(cur)
+      if (historyRef.current.length > 100) historyRef.current.shift()
+      setMatch(state)
+    },
+    [flash],
+  )
+  const undo = useCallback(() => {
+    const prev = historyRef.current.pop()
+    if (prev) setMatch(prev)
+    else flash('Nothing to undo.')
+  }, [flash])
+
+  // Global hotkeys (active during a live match).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const m = matchRef.current
+      if (!m) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      const ctrl =
+        m.phase === 'showdown' && m.showdown ? m.showdown.priority : m.activePlayer
+      const k = e.key.toLowerCase()
+      if (k === '?' || k === 'h') {
+        setShowHelp((v) => !v)
+        return
+      }
+      if (m.phase === 'gameover' || m.phase === 'mulligan') return
+      switch (k) {
+        case ' ':
+          e.preventDefault()
+          dispatch(m.phase === 'showdown' ? { type: 'PASS', player: ctrl } : { type: 'END_TURN', player: ctrl })
+          break
+        case 'd':
+          dispatch({ type: 'DRAW', player: ctrl })
+          break
+        case 'r':
+        case 'backspace':
+          e.preventDefault()
+          undo()
+          break
+        case 'a':
+        case 's':
+        case 't':
+        case 'c':
+          flash('Chain/targeting actions arrive with the timing engine.')
+          break
+        case 'e':
+        case 'p':
+          flash('Emotes/pings are not available yet.')
+          break
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [dispatch, undo, flash])
 
   if (!match) return <MatchSetup preDeckId={preDeckId} onStart={setMatch} />
 
-  const flash = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(null), 2200)
-  }
-  const act = (action: Parameters<typeof reduce>[1]) => {
-    const { state, error } = reduce(match, action)
-    if (error) return flash(error)
-    setMatch(state)
-  }
+  const act = dispatch
 
   if (match.phase === 'gameover') {
     const w = match.winner!
@@ -79,9 +145,19 @@ export default function MatchPage() {
         onActivateLegend={() => act({ type: 'ACTIVATE_LEGEND', player: controlling })}
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
         onCreateToken={(cardId) => act({ type: 'CREATE_TOKEN', player: controlling, cardId })}
+        onCardAction={(a) => act(a)}
         onInspect={setInspect}
       />
+      <div className="flex justify-end">
+        <button
+          onClick={() => setShowHelp(true)}
+          className="rounded bg-white/5 px-2 py-1 text-[11px] text-white/40 hover:bg-white/10"
+        >
+          ⌨ Hotkeys (H)
+        </button>
+      </div>
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
+      {showHelp && <HotkeyHelp onClose={() => setShowHelp(false)} />}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-rose-500/90 px-4 py-2 text-sm font-medium shadow-lg">
           {toast}
