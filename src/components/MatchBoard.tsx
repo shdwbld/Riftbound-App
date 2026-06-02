@@ -136,11 +136,12 @@ export default function MatchBoard({
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
         {opponents.map((opp) => (
-          <OpponentMat key={opp.id} opp={opp} active={match.activePlayer === opp.id} onInspect={inspect} />
+          <OpponentMat key={opp.id} opp={opp} target={match.pointsToWin} active={match.activePlayer === opp.id} onInspect={inspect} />
         ))}
       </div>
 
-      {/* Battlefields — the focal center */}
+      {/* Battlefield Zone — the focal center, with card art + effect text */}
+      <ZoneFrame label="Battlefield Zone">
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(match.battlefields.length, 4)}, minmax(0,1fr))` }}>
         {match.battlefields.map((bf, i) => {
           const bfCard = getCard(bf.cardId)
@@ -158,30 +159,54 @@ export default function MatchBoard({
                   ? 'border-emerald-400/60'
                   : ctrl != null
                     ? 'border-rose-400/50'
-                    : 'border-white/15'
+                    : 'border-amber-600/30'
               } ${targetable ? 'cursor-pointer ring-2 ring-indigo-400/50' : ''} ${
                 ctrl != null ? domainAnimClass(ctrlDomains) : ''
               }`}
               style={{
-                background: ctrl != null ? matGradient(ctrlDomains) : 'linear-gradient(135deg,#15151f,#0a0a12)',
+                background: ctrl != null ? matGradient(ctrlDomains) : 'linear-gradient(135deg,#11192e,#0a0f1c)',
                 ['--glow' as string]: ctrl != null ? domainGlow(ctrlDomains) : 'transparent',
               }}
             >
               {isFury && <div className="fire-overlay" />}
               {isLight && <div className="light-overlay" />}
-              <div className="relative mb-1 flex items-center justify-between">
-                <span className="truncate text-[11px] font-semibold text-white/80">
-                  {bfCard?.name ?? `Battlefield ${i + 1}`}
-                </span>
-                {ctrl != null && (
-                  <span
-                    className="rounded px-1.5 py-0.5 text-[9px] font-semibold"
-                    style={{ background: '#0008', color: domainGlow(ctrlDomains) }}
-                  >
-                    {match.players[ctrl].name}
-                  </span>
+              {/* art + name + effect text */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (bfCard && onInspect && !targetable) onInspect(bfCard)
+                }}
+                className="relative mb-1 flex w-full items-start gap-2 text-left"
+              >
+                {bfCard?.imageUrl && (
+                  <img
+                    src={bfCard.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    className="h-14 w-10 shrink-0 rounded object-cover ring-1 ring-amber-600/30"
+                  />
                 )}
-              </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="truncate text-[11px] font-bold text-amber-100">
+                      {bfCard?.name ?? `Battlefield ${i + 1}`}
+                    </span>
+                    {ctrl != null && (
+                      <span
+                        className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold"
+                        style={{ background: '#0008', color: domainGlow(ctrlDomains) }}
+                      >
+                        {match.players[ctrl].name}
+                      </span>
+                    )}
+                  </div>
+                  {bfCard?.text && (
+                    <p className="mt-0.5 line-clamp-3 text-[10px] leading-tight text-white/65">
+                      {bfCard.text}
+                    </p>
+                  )}
+                </div>
+              </button>
               <div className="relative flex min-h-[92px] flex-wrap content-start gap-1">
                 {bf.units.map((u) => (
                   <button
@@ -207,6 +232,7 @@ export default function MatchBoard({
           )
         })}
       </div>
+      </ZoneFrame>
 
       {/* Chain stack */}
       {chainOpen && (
@@ -288,6 +314,7 @@ export default function MatchBoard({
       {/* Local player mat */}
       <PlayerMat
         me={me}
+        target={match.pointsToWin}
         myActionTurn={myActionTurn}
         canRespond={myChainPriority}
         selectedUnits={selectedUnits}
@@ -346,10 +373,12 @@ export default function MatchBoard({
 
 function OpponentMat({
   opp,
+  target,
   active,
   onInspect,
 }: {
   opp: PlayerState
+  target: number
   active: boolean
   onInspect: (ci: EngineCard) => void
 }) {
@@ -361,7 +390,7 @@ function OpponentMat({
     >
       <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
         <span className="font-semibold">{opp.name}</span>
-        <span className="rounded bg-black/30 px-1.5 py-0.5 text-emerald-300">{opp.points} pts</span>
+        <ScoreTrack points={opp.points} target={target} />
         {active && <span className="rounded bg-indigo-500/30 px-1.5 py-0.5 text-[10px] text-indigo-200">turn</span>}
         <span className="ml-auto flex items-center gap-1 text-white/40">
           {domains.map((d) => (
@@ -400,6 +429,7 @@ function OpponentMat({
 
 function PlayerMat({
   me,
+  target,
   myActionTurn,
   canRespond,
   selectedUnits,
@@ -414,6 +444,7 @@ function PlayerMat({
   onRevealTop,
 }: {
   me: PlayerState
+  target: number
   myActionTurn: boolean
   canRespond?: boolean
   selectedUnits: string[]
@@ -434,14 +465,16 @@ function PlayerMat({
     me.champion && myActionTurn && canAfford(me, getCard(me.champion.cardId)!)
   return (
     <div
-      className={`relative overflow-hidden rounded-xl border-2 border-indigo-400/30 p-3 ${domainAnimClass(domains)}`}
+      className={`relative overflow-hidden rounded-xl border-2 border-amber-600/30 p-3 ${domainAnimClass(domains)}`}
       style={{ background: matGradient(domains), ['--glow' as string]: domainGlow(domains) }}
     >
-      <div className="relative mb-2 flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold">
-          {me.name}{' '}
-          <span className="text-white/40">· {me.points} pts · ⚡{readyRunes}</span>
-        </span>
+      <div className="relative mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-semibold">
+            {me.name} <span className="text-white/40">· ⚡{readyRunes}</span>
+          </span>
+          <ScoreTrack points={me.points} target={target} />
+        </div>
         <div className="flex items-center gap-2">
           {myActionTurn && onConcede && (
             <button
@@ -463,9 +496,10 @@ function PlayerMat({
       </div>
 
       {/* Legend + Champion zone */}
-      <div className="relative mb-2 flex items-end gap-3">
+      <div className="relative mb-2 flex items-start gap-3">
         {me.legend && (
           <div className="flex flex-col items-center gap-0.5">
+            <ZoneLabel>Legend Zone</ZoneLabel>
             <button onClick={() => onInspect(me.legend!)}>
               <BoardCard ci={me.legend} size="sm" />
             </button>
@@ -483,6 +517,7 @@ function PlayerMat({
         )}
         {me.champion && (
           <div className="flex flex-col items-center gap-0.5">
+            <ZoneLabel>Champion Zone</ZoneLabel>
             <button onClick={() => onInspect(me.champion!)} className="relative">
               <BoardCard ci={me.champion} size="sm" />
               <span className="absolute left-0 top-0 rounded-br bg-amber-500/80 px-1 text-[8px] font-bold text-black">
@@ -518,7 +553,7 @@ function PlayerMat({
       </div>
 
       {/* Base */}
-      <ZoneLabel>Base ({me.zones.base.length})</ZoneLabel>
+      <ZoneLabel>Base: Units + Gears ({me.zones.base.length})</ZoneLabel>
       <div className="mb-2 flex min-h-[88px] flex-wrap gap-1.5">
         {me.zones.base.map((u) => {
           const isUnit = getCard(u.cardId)?.type === 'unit'
@@ -551,7 +586,7 @@ function PlayerMat({
       </div>
 
       {/* Rune pool as tokens */}
-      <ZoneLabel>Runes ({readyRunes}/{me.zones.runePool.length} ready)</ZoneLabel>
+      <ZoneLabel>Base: Runes ({readyRunes}/{me.zones.runePool.length} ready)</ZoneLabel>
       <div className="mb-2 flex flex-wrap gap-1">
         {me.zones.runePool.map((r) => {
           const d = getCard(r.cardId)
@@ -605,17 +640,28 @@ function PlayerMat({
         {me.zones.hand.length === 0 && <Empty />}
       </div>
 
-      {/* piles */}
-      <div className="mt-2 flex items-end gap-2">
-        <button
-          onClick={onRevealTop}
-          title="Reveal top card"
-          className="rounded transition hover:ring-2 hover:ring-indigo-400/50"
-        >
-          <CardBack size="sm" count={me.zones.mainDeck.length} label="deck" />
-        </button>
-        <CardBack size="sm" count={me.zones.runeDeck.length} label="runes" />
-        <div className="flex items-center gap-1 text-[10px] text-white/40">🗑 {me.zones.trash.length}</div>
+      {/* piles — Main Deck / Rune Deck / Trash */}
+      <div className="mt-2 flex items-end gap-3">
+        <div className="flex flex-col items-center gap-0.5">
+          <button
+            onClick={onRevealTop}
+            title="Reveal top card"
+            className="rounded transition hover:ring-2 hover:ring-indigo-400/50"
+          >
+            <CardBack size="sm" count={me.zones.mainDeck.length} />
+          </button>
+          <span className="text-[8px] uppercase tracking-wide text-amber-200/40">Main Deck</span>
+        </div>
+        <div className="flex flex-col items-center gap-0.5">
+          <CardBack size="sm" count={me.zones.runeDeck.length} />
+          <span className="text-[8px] uppercase tracking-wide text-amber-200/40">Rune Deck</span>
+        </div>
+        <div className="flex flex-col items-center gap-0.5">
+          <div className="flex h-[68px] w-12 items-center justify-center rounded-md border border-dashed border-white/15 text-sm text-white/40">
+            🗑 {me.zones.trash.length}
+          </div>
+          <span className="text-[8px] uppercase tracking-wide text-amber-200/40">Trash</span>
+        </div>
       </div>
 
       {selectedUnits.length > 0 && myActionTurn && (
@@ -628,6 +674,50 @@ function PlayerMat({
 }
 
 const ZoneLabel = ({ children }: { children: React.ReactNode }) => (
-  <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">{children}</div>
+  <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-200/40">
+    {children}
+  </div>
 )
 const Empty = () => <span className="text-xs text-white/25">—</span>
+
+/** A labeled, gold-bordered zone frame matching the official playmat. */
+function ZoneFrame({
+  label,
+  children,
+  className,
+}: {
+  label: string
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={`rounded-xl border border-amber-600/25 bg-[#0c1322]/70 p-2 ${className ?? ''}`}>
+      <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-amber-200/50">
+        {label}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+/** The 0 → target score track from the playmat (current point highlighted). */
+function ScoreTrack({ points, target }: { points: number; target: number }) {
+  return (
+    <div className="flex items-center gap-0.5" title={`${points} / ${target} points`}>
+      {Array.from({ length: target + 1 }).map((_, n) => (
+        <span
+          key={n}
+          className={`flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold ${
+            n === points
+              ? 'bg-emerald-400 text-black ring-2 ring-emerald-300'
+              : n < points
+                ? 'bg-emerald-500/40 text-emerald-100'
+                : 'bg-white/5 text-white/30'
+          }`}
+        >
+          {n}
+        </span>
+      ))}
+    </div>
+  )
+}
