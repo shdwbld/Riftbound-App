@@ -1,0 +1,15 @@
+# Netlify deploy config for the Riftbound simulator (Vite SPA).
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Single-page-app fallback: every route serves index.html so client-side
+# routing (e.g. /cards, /decks/:id, /online) works on refresh and deep links.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
