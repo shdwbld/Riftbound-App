@@ -19,8 +19,8 @@ export const RULES = {
   pointsPerBattlefield: 1,
   /** Points for taking control of a battlefield (Conquer). */
   pointsPerConquer: 1,
-  /** Battlefields contested in play (each player brings one in 1v1). */
-  battlefieldsInPlay: 2,
+  /** Points to win a multiplayer (3-4 player) game. */
+  pointsToWinMultiplayer: 11,
 }
 
 let counter = 0
@@ -84,35 +84,29 @@ function buildPlayer(
 }
 
 export interface MatchOptions {
-  names?: [string, string]
+  names?: string[]
   firstPlayer?: PlayerId
   pointsToWin?: number
   rng?: () => number
 }
 
-/** Build a fresh 2-player match. Battlefields come from player 0's deck for
- *  now (shared objective row); a draft step can be added later. */
-export function createMatch(
-  deckA: Deck,
-  deckB: Deck,
-  opts: MatchOptions = {},
-): MatchState {
+/** Build a fresh 2-4 player match. Each player contributes one battlefield to
+ *  the shared objective row (so N players → N battlefields in play). */
+export function createMatch(decks: Deck[], opts: MatchOptions = {}): MatchState {
+  if (decks.length < 2 || decks.length > 4)
+    throw new Error('A match needs 2-4 players.')
   const rng = opts.rng ?? Math.random
-  const names = opts.names ?? ['Player 1', 'Player 2']
+  const n = decks.length
+  const names = opts.names ?? decks.map((_, i) => `Player ${i + 1}`)
   const firstPlayer = opts.firstPlayer ?? 0
-  const players: [PlayerState, PlayerState] = [
-    buildPlayer(deckA, 0, names[0], rng),
-    buildPlayer(deckB, 1, names[1], rng),
-  ]
-  // Shared objective row: each player contributes one battlefield (2 in 1v1).
-  const bfIds = [
-    deckA.battlefields[0],
-    deckB.battlefields[0],
-    ...deckA.battlefields.slice(1),
-    ...deckB.battlefields.slice(1),
-  ]
+  const players: PlayerState[] = decks.map((d, i) =>
+    buildPlayer(d, i, names[i] ?? `Player ${i + 1}`, rng),
+  )
+  // Each player brings one battlefield to the shared row.
+  const bfIds = decks
+    .map((d) => d.battlefields[0])
     .filter(Boolean)
-    .slice(0, RULES.battlefieldsInPlay)
+    .slice(0, n)
 
   return {
     players,
@@ -125,10 +119,11 @@ export function createMatch(
       units: [],
       controller: null,
     })),
-    pointsToWin: opts.pointsToWin ?? RULES.pointsToWin,
+    pointsToWin:
+      opts.pointsToWin ?? (n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer),
     winner: null,
     showdown: null,
-    log: [{ turn: 1, player: null, text: 'Match created.' }],
+    log: [{ turn: 1, player: null, text: `Match created (${n} players).` }],
     seq: 0,
   }
 }

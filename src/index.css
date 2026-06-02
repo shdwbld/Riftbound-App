@@ -16,3 +16,112 @@ body {
   background: #0a0a0f;
   color: #e7e7ea;
 }
+
+/* ---- Domain ambient animations (battlefield / mats) ---------------------- */
+
+/* Ambient glow pulse, tinted by a per-element --glow color. */
+@keyframes riftPulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 18px -8px var(--glow, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 26px -4px var(--glow, transparent);
+  }
+}
+
+/* Fury: flickering ember overlay. */
+@keyframes fireFlicker {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  20% {
+    opacity: 0.6;
+  }
+  40% {
+    opacity: 0.3;
+  }
+  70% {
+    opacity: 0.55;
+  }
+}
+
+/* Order/Mind: slow light shimmer. */
+@keyframes lightSweep {
+  0% {
+    background-position: -150% 0;
+  }
+  100% {
+    background-position: 250% 0;
+  }
+}
+
+.anim-fury,
+.anim-order,
+.anim-mind,
+.anim-calm,
+.anim-chaos,
+.anim-body {
+  animation: riftPulse 4s ease-in-out infinite;
+}
+.anim-fury {
+  --glow: #e2433b;
+}
+.anim-order {
+  --glow: #d8c23f;
+}
+.anim-mind {
+  --glow: #3f87d6;
+}
+.anim-calm {
+  --glow: #3fae6e;
+}
+.anim-chaos {
+  --glow: #9a55d4;
+}
+.anim-body {
+  --glow: #e08a36;
+}
+
+/* Fire overlay element (place inside a Fury battlefield/mat). */
+.fire-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at 50% 110%,
+    rgba(226, 67, 59, 0.45),
+    rgba(224, 138, 54, 0.18) 40%,
+    transparent 70%
+  );
+  animation: fireFlicker 2.4s ease-in-out infinite;
+}
+
+/* Light sweep overlay (Order/Mind). */
+.light-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.12) 50%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: lightSweep 6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-fury,
+  .anim-order,
+  .anim-mind,
+  .anim-calm,
+  .anim-chaos,
+  .anim-body,
+  .fire-overlay,
+  .light-overlay {
+    animation: none;
+  }
+}

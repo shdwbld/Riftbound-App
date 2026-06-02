@@ -11,7 +11,8 @@ import type { Domain } from '../types/cards'
 // prompts / log entries instead.
 // ---------------------------------------------------------------------------
 
-export type PlayerId = 0 | 1
+/** Seat index, 0-based. 2 players for 1v1; up to 4 for multiplayer. */
+export type PlayerId = number
 
 export interface EngineCard {
   iid: string
@@ -76,9 +77,10 @@ export interface LogEntry {
 }
 
 export interface MatchState {
-  players: [PlayerState, PlayerState]
+  /** 2-4 players, seated by index. */
+  players: PlayerState[]
   activePlayer: PlayerId
-  /** Who took the first turn (the player going second gets +1 channel on T1). */
+  /** Who took the first turn (in 1v1 the player going second gets +1 channel T1). */
   firstPlayer: PlayerId
   phase: Phase
   turn: number

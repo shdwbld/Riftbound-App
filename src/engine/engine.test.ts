@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { reduce, beginTurn } from './engine'
-import { RULES } from './setup'
+import { RULES, createMatch } from './setup'
+import type { Deck } from '../types/deck'
 import {
   type MatchState,
   type PlayerState,
@@ -170,6 +171,46 @@ describe('battlefields, combat, scoring, win', () => {
     expect(state.activePlayer).toBe(0)
     expect(state.players[0].points).toBeGreaterThanOrEqual(2)
     expect(state.winner).toBe(0)
+  })
+})
+
+describe('multiplayer (3-4 players)', () => {
+  const miniDeck = (name: string): Deck => ({
+    id: name,
+    name,
+    legendId: null,
+    main: {},
+    runes: {},
+    battlefields: [battlefield.id],
+    updatedAt: 0,
+  })
+
+  it('creates a 3-player match: 11 pts, 3 battlefields, rotation', () => {
+    let s = createMatch([miniDeck('A'), miniDeck('B'), miniDeck('C')])
+    expect(s.players.length).toBe(3)
+    expect(s.pointsToWin).toBe(11)
+    expect(s.battlefields.length).toBe(3)
+    for (let i = 0; i < 3; i++)
+      s = reduce(s, { type: 'MULLIGAN', player: i, redraw: false }).state
+    expect(s.phase).toBe('action')
+    expect(s.activePlayer).toBe(0)
+    s = reduce(s, { type: 'END_TURN', player: 0 }).state
+    expect(s.activePlayer).toBe(1)
+    s = reduce(s, { type: 'END_TURN', player: 1 }).state
+    expect(s.activePlayer).toBe(2)
+    s = reduce(s, { type: 'END_TURN', player: 2 }).state
+    expect(s.activePlayer).toBe(0)
+  })
+
+  it('supports 4 players and rejects out-of-range counts', () => {
+    const four = createMatch([
+      miniDeck('A'),
+      miniDeck('B'),
+      miniDeck('C'),
+      miniDeck('D'),
+    ])
+    expect(four.players.length).toBe(4)
+    expect(() => createMatch([miniDeck('A')])).toThrow()
   })
 })
 

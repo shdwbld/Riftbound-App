@@ -3,18 +3,21 @@ import { Link, useLocation } from 'react-router-dom'
 import { listDecks, getDeck } from '../lib/deckStorage'
 import { getCard } from '../data/cards'
 import type { Deck } from '../types/deck'
+import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard } from '../engine/types'
 import { createMatch } from '../engine/setup'
 import { reduce } from '../engine/engine'
 import { autoPayForCard } from '../engine/autopay'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
+import CardDetailModal from '../components/CardDetailModal'
 
 export default function MatchPage() {
   const location = useLocation()
   const preDeckId = (location.state as { deckId?: string } | null)?.deckId
   const [match, setMatch] = useState<MatchState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [inspect, setInspect] = useState<Card | null>(null)
 
   if (!match) return <MatchSetup preDeckId={preDeckId} onStart={setMatch} />
 
@@ -35,13 +38,9 @@ export default function MatchPage() {
         <div className="text-5xl">🏆</div>
         <h2 className="text-3xl font-bold">{match.players[w].name} wins!</h2>
         <p className="text-white/50">
-          {match.players[0].name} {match.players[0].points} – {match.players[1].points}{' '}
-          {match.players[1].name}
+          {match.players.map((p) => `${p.name} ${p.points}`).join(' · ')}
         </p>
-        <button
-          onClick={() => setMatch(null)}
-          className="rounded-lg bg-indigo-500 px-4 py-2 font-semibold"
-        >
+        <button onClick={() => setMatch(null)} className="rounded-lg bg-indigo-500 px-4 py-2 font-semibold">
           New match
         </button>
       </div>
@@ -53,9 +52,7 @@ export default function MatchPage() {
 
   // Hotseat: control flips to whoever must decide.
   const controlling: PlayerId =
-    match.phase === 'showdown' && match.showdown
-      ? match.showdown.priority
-      : match.activePlayer
+    match.phase === 'showdown' && match.showdown ? match.showdown.priority : match.activePlayer
 
   const play = (c: EngineCard) => {
     const card = getCard(c.cardId)
@@ -63,13 +60,7 @@ export default function MatchPage() {
     const payment = autoPayForCard(match.players[controlling], card)
     if (!payment) return flash('Not enough resources.')
     const type =
-      card.type === 'unit'
-        ? 'PLAY_UNIT'
-        : card.type === 'gear'
-          ? 'PLAY_GEAR'
-          : card.type === 'spell'
-            ? 'PLAY_SPELL'
-            : null
+      card.type === 'unit' ? 'PLAY_UNIT' : card.type === 'gear' ? 'PLAY_GEAR' : card.type === 'spell' ? 'PLAY_SPELL' : null
     if (!type) return
     act({ type, player: controlling, iid: c.iid, payment })
   }
@@ -82,12 +73,12 @@ export default function MatchPage() {
         perspective={controlling}
         canAct
         onPlay={play}
-        onMove={(iid, bf) =>
-          act({ type: 'MOVE_UNIT', player: controlling, iid, toBattlefield: bf })
-        }
+        onMove={(iid, bf) => act({ type: 'MOVE_UNIT', player: controlling, iid, toBattlefield: bf })}
         onPass={() => act({ type: 'PASS', player: controlling })}
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
+        onInspect={setInspect}
       />
+      {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-rose-500/90 px-4 py-2 text-sm font-medium shadow-lg">
           {toast}
@@ -107,35 +98,29 @@ function Toolbar({
   onExit: () => void
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-[#15151f] p-2 text-sm">
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#15151f] p-2 text-sm">
       <span className="rounded bg-white/5 px-2 py-1 text-xs">Turn {match.turn}</span>
       <span className="rounded bg-white/5 px-2 py-1 text-xs capitalize">{match.phase}</span>
-      <span className="text-xs text-white/50">First to {match.pointsToWin} pts</span>
-      <Score p={match.players[0]} active={match.activePlayer === 0} />
-      <span className="text-white/30">vs</span>
-      <Score p={match.players[1]} active={match.activePlayer === 1} />
-      <span className="ml-2 rounded bg-indigo-500/20 px-2 py-1 text-xs text-indigo-200">
+      <span className="text-xs text-white/50">First to {match.pointsToWin}</span>
+      <div className="flex flex-wrap items-center gap-1">
+        {match.players.map((p) => (
+          <span
+            key={p.id}
+            className={`rounded px-2 py-1 text-xs font-semibold ${
+              match.activePlayer === p.id ? 'bg-indigo-500/30 text-indigo-100' : 'bg-white/5 text-white/60'
+            }`}
+          >
+            {p.name}: {p.points}
+          </span>
+        ))}
+      </div>
+      <span className="ml-auto rounded bg-indigo-500/20 px-2 py-1 text-xs text-indigo-200">
         Acting: {match.players[controlling].name}
       </span>
-      <button
-        onClick={onExit}
-        className="ml-auto rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/30"
-      >
+      <button onClick={onExit} className="rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/30">
         Exit
       </button>
     </div>
-  )
-}
-
-function Score({ p, active }: { p: MatchState['players'][number]; active: boolean }) {
-  return (
-    <span
-      className={`rounded px-2 py-1 text-xs font-semibold ${
-        active ? 'bg-indigo-500/30 text-indigo-100' : 'bg-white/5 text-white/60'
-      }`}
-    >
-      {p.name}: {p.points}
-    </span>
   )
 }
 
@@ -181,22 +166,22 @@ function MulliganPhase({
   )
 }
 
-function MatchSetup({
-  preDeckId,
-  onStart,
-}: {
-  preDeckId?: string
-  onStart: (m: MatchState) => void
-}) {
+function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: MatchState) => void }) {
   const decks = useMemo(() => listDecks(), [])
-  const [p1, setP1] = useState<string>(preDeckId ?? decks[0]?.id ?? '')
-  const [p2, setP2] = useState<string>(decks[0]?.id ?? '')
+  const [count, setCount] = useState(2)
+  const [seats, setSeats] = useState<string[]>(() => {
+    const first = preDeckId ?? decks[0]?.id ?? ''
+    return [first, decks[0]?.id ?? '', decks[0]?.id ?? '', decks[0]?.id ?? '']
+  })
+
+  const setSeat = (i: number, v: string) =>
+    setSeats((s) => s.map((x, idx) => (idx === i ? v : x)))
 
   const start = () => {
-    const d1 = getDeck(p1)
-    const d2 = getDeck(p2)
-    if (!d1 || !d2) return
-    onStart(createMatch(d1, d2, { names: [d1.name, d2.name] }))
+    const chosen = seats.slice(0, count).map(getDeck)
+    if (chosen.some((d) => !d)) return
+    const ds = chosen as Deck[]
+    onStart(createMatch(ds, { names: ds.map((d, i) => `${d.name}`.slice(0, 16) || `P${i + 1}`) }))
   }
 
   if (decks.length === 0)
@@ -218,20 +203,37 @@ function MatchSetup({
         </Link>
       </div>
       <p className="text-sm text-white/50">
-        Two players, one screen, full rules enforced (turn phases, resource
-        payment via auto-pay, combat, conquering, win condition). Card-specific
-        ability text is resolved manually.
+        2-4 players on one screen with full rules enforced. 1v1 plays to 8 points;
+        3-4 player free-for-all plays to 11. Card-specific ability text is resolved manually.
       </p>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <DeckSelect label="Player 1" decks={decks} value={p1} onChange={setP1} />
-        <DeckSelect label="Player 2" decks={decks} value={p2} onChange={setP2} />
+
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-white/60">Players:</span>
+        {[2, 3, 4].map((n) => (
+          <button
+            key={n}
+            onClick={() => setCount(n)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+              count === n ? 'bg-indigo-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
+            }`}
+          >
+            {n}
+          </button>
+        ))}
       </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {Array.from({ length: count }).map((_, i) => (
+          <DeckSelect key={i} label={`Player ${i + 1}`} decks={decks} value={seats[i]} onChange={(v) => setSeat(i, v)} />
+        ))}
+      </div>
+
       <button
         onClick={start}
-        disabled={!p1 || !p2}
+        disabled={seats.slice(0, count).some((s) => !s)}
         className="rounded-lg bg-indigo-500 px-5 py-2.5 font-semibold hover:bg-indigo-400 disabled:opacity-40"
       >
-        Start match ▶
+        Start {count}-player match ▶
       </button>
     </div>
   )

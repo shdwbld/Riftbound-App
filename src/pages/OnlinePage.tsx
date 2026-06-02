@@ -21,6 +21,8 @@ import {
 } from '../net/transport'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
+import CardDetailModal from '../components/CardDetailModal'
+import type { Card } from '../types/cards'
 
 type Role = 'host' | 'guest'
 type Status = 'lobby' | 'waiting' | 'connected'
@@ -32,6 +34,7 @@ export default function OnlinePage() {
   const [roomCode, setRoomCode] = useState('')
   const [match, setMatch] = useState<MatchState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [inspect, setInspect] = useState<Card | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
 
   const transportRef = useRef<Transport | null>(null)
@@ -57,7 +60,7 @@ export default function OnlinePage() {
         if (msg.kind === 'join') {
           const myDeck = myDeckRef.current
           if (!myDeck) return
-          const m = createMatch(myDeck, msg.deck, {
+          const m = createMatch([myDeck, msg.deck], {
             names: [myDeck.name, msg.name],
           })
           matchRef.current = m
@@ -247,12 +250,13 @@ export default function OnlinePage() {
         match={match}
         perspective={seat}
         canAct={myTurn}
-        hideOpponentHand
         onPlay={play}
         onMove={(iid, bf) => dispatch({ type: 'MOVE_UNIT', player: seat, iid, toBattlefield: bf })}
         onPass={() => dispatch({ type: 'PASS', player: seat })}
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
+        onInspect={setInspect}
       />
+      {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
       {toast && <Toast text={toast} />}
     </div>
   )

@@ -43,7 +43,7 @@ function clonePlayer(p: PlayerState): PlayerState {
 function clone(s: MatchState): MatchState {
   return {
     ...s,
-    players: [clonePlayer(s.players[0]), clonePlayer(s.players[1])],
+    players: s.players.map(clonePlayer),
     battlefields: s.battlefields.map((b) => ({ ...b, units: [...b.units] })),
     showdown: s.showdown ? { ...s.showdown } : null,
     log: s.log,
@@ -55,7 +55,9 @@ function log(s: MatchState, player: PlayerId | null, text: string): MatchState {
   return { ...s, log: [...s.log, { turn: s.turn, player, text }] }
 }
 
-const other = (p: PlayerId): PlayerId => (p === 0 ? 1 : 0)
+/** Next seat in turn order (wraps around the table). */
+const nextPlayer = (s: MatchState, p: PlayerId): PlayerId =>
+  (p + 1) % s.players.length
 const def = (ci: EngineCard): Card | undefined => getCard(ci.cardId)
 
 /** The resolved energy+power cost of a playable card. */
@@ -148,19 +150,29 @@ function applyPayment(
 
 // --- turn flow -------------------------------------------------------------
 
-/** Recompute controller for every battlefield from unit presence. */
+/** Recompute controller for every battlefield from unit presence (most units
+ *  present controls; ties keep the prior controller; empty = neutral). */
 function recomputeControllers(s: MatchState): void {
   for (const bf of s.battlefields) {
-    const counts: [number, number] = [0, 0]
-    for (const u of bf.units) counts[u.owner]++
-    bf.controller =
-      counts[0] === 0 && counts[1] === 0
-        ? null
-        : counts[0] > counts[1]
-          ? 0
-          : counts[1] > counts[0]
-            ? 1
-            : bf.controller // tie keeps prior controller
+    if (bf.units.length === 0) {
+      bf.controller = null
+      continue
+    }
+    const counts = new Map<PlayerId, number>()
+    for (const u of bf.units) counts.set(u.owner, (counts.get(u.owner) ?? 0) + 1)
+    let best: PlayerId | null = null
+    let bestN = 0
+    let tied = false
+    for (const [owner, n] of counts) {
+      if (n > bestN) {
+        best = owner
+        bestN = n
+        tied = false
+      } else if (n === bestN) {
+        tied = true
+      }
+    }
+    bf.controller = tied ? bf.controller : best
   }
 }
 
@@ -189,8 +201,9 @@ export function beginTurn(state: MatchState): MatchState {
   }
   if (p.points >= s.pointsToWin) return endGame(s, ap)
 
-  // Channel runes. The player going second channels +1 on their first turn.
-  const isSecondPlayersFirstTurn = ap !== s.firstPlayer && s.turn <= 2
+  // Channel runes. In 1v1, the player going second channels +1 on turn 1.
+  const isSecondPlayersFirstTurn =
+    s.players.length === 2 && ap !== s.firstPlayer && s.turn <= 2
   const channelCount = isSecondPlayersFirstTurn
     ? RULES.channelSecondPlayerFirstTurn
     : RULES.channelPerTurn
@@ -280,11 +293,12 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
 
   const mover = s.showdown?.movedUnit
   const moverOwner = bf.units.find((u) => u.iid === mover)?.owner ?? s.activePlayer
-  const defender = other(moverOwner)
   const prevController = state.battlefields[bfIndex].controller
 
+  // Free-for-all: the mover is the attacker; everyone else at the battlefield
+  // defends as a combined force.
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
-  const defenders = bf.units.filter((u) => u.owner === defender)
+  const defenders = bf.units.filter((u) => u.owner !== moverOwner)
   const attackMight = attackers.reduce((a, u) => a + mightOf(u), 0)
   const defendMight = defenders.reduce((a, u) => a + mightOf(u), 0)
 
@@ -295,7 +309,7 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   const survivors: EngineCard[] = []
   for (const u of bf.units) {
     const dead =
-      (u.owner === defender && defendersDefeated.has(u.iid)) ||
+      (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
       (u.owner === moverOwner && attackersDefeated.has(u.iid))
     if (dead) s.players[u.owner].zones.trash.push({ ...u, damage: 0, exhausted: false })
     else survivors.push({ ...u, damage: 0 })
@@ -340,7 +354,7 @@ export function reduce(state: MatchState, action: Action): EngineResult {
         s = log(s, action.player, `${p.name} kept.`)
       }
       p.mulliganed = true
-      if (s.players[0].mulliganed && s.players[1].mulliganed) {
+      if (s.players.every((pl) => pl.mulliganed)) {
         return ok(beginTurn(s))
       }
       return ok(s)
@@ -415,11 +429,11 @@ export function reduce(state: MatchState, action: Action): EngineResult {
         s2.phase = 'showdown'
         s2.showdown = {
           battlefield: action.toBattlefield,
-          priority: other(action.player),
+          priority: nextPlayer(s2, action.player),
           passes: 0,
           movedUnit: unit.iid,
         }
-        s2 = log(s2, action.player, 'Showdown opened — opponent may respond.')
+        s2 = log(s2, action.player, 'Showdown opened — opponents may respond.')
       } else if (
         s2.battlefields[action.toBattlefield].controller === action.player &&
         prevController !== action.player
@@ -461,8 +475,9 @@ export function reduce(state: MatchState, action: Action): EngineResult {
         return fail(state, 'Not your priority.')
       const s = clone(state)
       s.showdown!.passes += 1
-      s.showdown!.priority = other(action.player)
-      if (s.showdown!.passes >= 2) {
+      s.showdown!.priority = nextPlayer(s, action.player)
+      // Resolve once everyone (attacker + all defenders) has passed.
+      if (s.showdown!.passes >= s.players.length) {
         return ok(resolveShowdown(s, s.showdown!.battlefield))
       }
       return ok(s)
@@ -472,13 +487,18 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
       let s = clone(state)
-      s.activePlayer = other(state.activePlayer)
+      s.activePlayer = nextPlayer(s, state.activePlayer)
       s.turn = state.turn + 1
       return ok(beginTurn(s))
     }
 
-    case 'CONCEDE':
-      return ok(endGame(state, other(action.player)))
+    case 'CONCEDE': {
+      // The conceding player drops; if one player remains they win, otherwise
+      // the current points leader among the rest is declared the winner.
+      const remaining = state.players.filter((p) => p.id !== action.player)
+      const winner = remaining.reduce((a, b) => (b.points > a.points ? b : a))
+      return ok(endGame(state, winner.id))
+    }
 
     default:
       return fail(state, 'Unknown action.')
