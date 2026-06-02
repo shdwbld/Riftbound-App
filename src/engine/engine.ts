@@ -16,6 +16,7 @@ import {
 import { RULES, TOKEN_PILE_IDS } from './setup'
 import { parseKeywords } from './keywords'
 import { spellEffect, onPlayEffect, type ParsedEffect } from './effects'
+import { battlefieldPassive } from './battlefields'
 
 // ---------------------------------------------------------------------------
 // Pure engine: reduce(state, action) -> { state, error? }
@@ -206,6 +207,20 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect): string[] {
   return lines
 }
 
+/** Apply a battlefield's "when you conquer here" passive to the conqueror. */
+function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number): MatchState {
+  if (s.winner !== null) return s
+  const bf = s.battlefields[bfIndex]
+  const passive = battlefieldPassive(bf.cardId)
+  const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
+  if (passive.onConquer)
+    for (const line of applyParsed(s, s.players[player], passive.onConquer))
+      s = log(s, player, `${bfName} (conquer): ${line}`)
+  else if (passive.manualConquer)
+    s = log(s, player, `${bfName} (conquer): resolve its effect manually.`)
+  return s
+}
+
 /** Deal `amount` damage to a target unit anywhere; defeat it if lethal. */
 function applyTargetDamage(s: MatchState, targetIid: string, amount: number): void {
   for (let i = 0; i < s.battlefields.length; i++) {
@@ -306,6 +321,24 @@ export function beginTurn(state: MatchState): MatchState {
       s = log(s, ap, `Scored ${held} point(s) (holding ${held} battlefield(s)).`)
     }
   }
+
+  // Battlefield "when you hold here" passives for the active player.
+  for (const bf of s.battlefields) {
+    if (bf.controller !== ap) continue
+    const passive = battlefieldPassive(bf.cardId)
+    const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
+    if (passive.onHold)
+      for (const line of applyParsed(s, p, passive.onHold))
+        s = log(s, ap, `${bfName} (hold): ${line}`)
+    if (passive.buffOnHold) {
+      const target = bf.units.find((u) => u.owner === ap)
+      if (target) {
+        target.buffs = (target.buffs ?? 0) + 1
+        s = log(s, ap, `${bfName} (hold): buffed ${getCard(target.cardId)?.name} (+1).`)
+      }
+    }
+    if (passive.manualHold) s = log(s, ap, `${bfName} (hold): resolve its effect manually.`)
+  }
   if (p.points >= s.pointsToWin) return endGame(s, ap)
 
   // Channel runes. In 1v1, the player going second channels +1 on turn 1.
@@ -388,7 +421,7 @@ function mightOf(ci: EngineCard, role: CombatRole = null): number {
   if (!d || !isUnit(d)) return 0
   const k = parseKeywords(d)
   if (k.backline) return 0
-  let m = d.might - ci.damage + gearMight(ci)
+  let m = d.might - ci.damage + gearMight(ci) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
   if (role === 'attacker') m += k.assault
   if (role === 'defender') m += k.shield
   return Math.max(0, m)
@@ -505,6 +538,7 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   const nowController = s.battlefields[bfIndex].controller
   if (nowController === moverOwner && prevController !== moverOwner) {
     s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    s = applyConquerPassive(s, moverOwner, bfIndex)
   }
   return s
 }
@@ -739,6 +773,7 @@ export function reduce(state: MatchState, action: Action): EngineResult {
           `conquered ${getCard(bf.cardId)?.name ?? 'battlefield'}`,
           'conquer',
         )
+        s2 = applyConquerPassive(s2, action.player, action.toBattlefield)
       }
       return ok(s2)
     }
@@ -781,6 +816,13 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
       let s = clone(state)
+      // End-of-turn cleanup: clear "this turn" Might modifiers everywhere.
+      for (const pl of s.players) {
+        for (const z of Object.keys(pl.zones) as ZoneId[])
+          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0 }))
+      }
+      for (const bf of s.battlefields)
+        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0 }))
       s.activePlayer = nextPlayer(s, state.activePlayer)
       s.turn = state.turn + 1
       return ok(beginTurn(s))

@@ -1,5 +1,6 @@
 import type { Deck } from '../types/deck'
 import { getCard, CARDS } from '../data/cards'
+import { battlefieldPassive } from './battlefields'
 import {
   type MatchState,
   type PlayerState,
@@ -156,7 +157,9 @@ export function createMatch(decks: Deck[], opts: MatchOptions = {}): MatchState 
       controller: null,
     })),
     pointsToWin:
-      opts.pointsToWin ?? (n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer),
+      (opts.pointsToWin ?? (n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer)) +
+      // Static battlefield rule-changers (e.g. "increase points to win by 1").
+      bfIds.reduce((sum, id) => sum + battlefieldPassive(id).winDelta, 0),
     winner: null,
     showdown: null,
     log: [{ turn: 1, player: null, text: `Match created (${n} players).` }],

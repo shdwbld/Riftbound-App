@@ -296,6 +296,35 @@ describe('tokens (Recruit)', () => {
   })
 })
 
+describe('interactions & battlefield passives', () => {
+  it('parses static and on-hold battlefield passives', async () => {
+    const { battlefieldPassive } = await import('./battlefields')
+    const climb = CARDS.find((c) => c.type === 'battlefield' && c.name.includes('Aspirant'))
+    const grove = CARDS.find((c) => c.type === 'battlefield' && c.name.includes('Grove of the God'))
+    if (climb) expect(battlefieldPassive(climb.id).winDelta).toBe(1)
+    if (grove) expect(battlefieldPassive(grove.id).onHold?.draw).toBe(1)
+  })
+
+  it('buffs increase a unit\'s combat Might', () => {
+    const s = baseState()
+    s.battlefields[0].units.push(mk(furyUnit.id, 1, { exhausted: true }))
+    const attacker = mk(furyUnit.id, 0, { buffs: 5 })
+    s.players[0].zones.base.push(attacker)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.battlefields[0].controller).toBe(0)
+  })
+
+  it('clears temp Might at end of turn', () => {
+    const s = baseState()
+    const u = mk(furyUnit.id, 0, { tempMight: 3 })
+    s.players[0].zones.base.push(u)
+    const { state } = reduce(s, { type: 'END_TURN', player: 0 })
+    expect(state.players[0].zones.base[0].tempMight).toBe(0)
+  })
+})
+
 describe('guards', () => {
   it("rejects acting out of turn", () => {
     const s = baseState()

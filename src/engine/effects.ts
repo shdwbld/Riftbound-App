@@ -67,6 +67,11 @@ export function spellEffect(card: Card): ParsedEffect {
   return parse(card.text ?? '')
 }
 
+/** Parse an arbitrary effect clause (used by battlefield passives). */
+export function parseEffectText(text: string): ParsedEffect {
+  return parse(text)
+}
+
 /** On-play effect for a unit/gear — only the unambiguous on-play triggers. */
 export function onPlayEffect(card: Card): ParsedEffect {
   const t = (card.text ?? '').toLowerCase()

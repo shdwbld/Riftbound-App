@@ -22,6 +22,10 @@ export interface EngineCard {
   damage: number
   /** Gear attached to this unit, stored as "cardId|iid". */
   attached: string[]
+  /** Persistent +1 Might "buff" counters on this unit. */
+  buffs?: number
+  /** Temporary Might modifier that lasts until end of turn (+ or −). */
+  tempMight?: number
   /** Turn number this card entered play (for Temporary expiry). */
   enteredTurn?: number
   /** Facedown (Hidden keyword) — not yet revealed. */
