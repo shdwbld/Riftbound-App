@@ -1,11 +1,15 @@
-# Riftbound Rules Audit (runesandrift) — 4-phase
+# Riftbound Rules Audit — 4-phase
 
-A line-by-line audit of the Riftbound rules (gathered from runesandrift.com)
-against this engine, then a plan to close the gaps.
+A line-by-line audit of the Riftbound rules against this engine, then a plan to
+close the gaps.
 
-**Source caveat:** runesandrift is a fan site citing official rule numbers
-inconsistently; treat numbers as approximate and verify against Riot's official
-rulebook before shipping competitive thresholds. Conflicts flagged inline.
+**Sources:** The Phase-1 structure was scaffolded from runesandrift.com (fan
+site), then **verified against the official Core Rules v1.2** (Riot, 2025-12-01),
+whose full text is saved in this repo at `docs/core-rules-v1.2.txt`. Where the
+fan site and the official rules differ, **the official rules win** — see the
+"Authoritative addendum (Core Rules v1.2)" at the bottom, which corrects the
+keyword glossary, resolves the conflicts, and adds mechanics the fan summary
+missed (Bonus Damage, token persistence, Attach system, buff removal).
 
 Status key: ✅ implemented · ◑ partial · ❌ absent. Engine files in `src/engine`.
 
@@ -323,3 +327,64 @@ Recommended order: **G → A → B → C → D → E → F** (G is quick wins; A
 3. **Batch B → C** (targeting → triggers/effects) — the bulk of card behavior.
 4. **Batch D, E, F** (zones, pool, attach) — depth.
 5. **Batch H** throughout — verify numbers against Riot's official rulebook.
+
+---
+
+# Authoritative addendum (Core Rules v1.2)
+
+Read directly from the official PDF (`docs/core-rules-v1.2.txt`, 4,738 lines).
+This supersedes the fan-site numbers above where they differ.
+
+## Conflicts — resolved by the official rules
+1. **"Counts as played" when Countered/impossible?** — Rule **100**: "do as much
+   as you can, ignoring impossible instructions. If all of a card's instructions
+   are impossible, it is still **played and resolved**, but nothing happens." A
+   card placed on the Chain *is* played; Counter negates its **resolution**, but
+   global "when you play a card" triggers still fire. → **Played = on the Chain.**
+2. **Showdown — phase or state?** — Rules **339–342**: a Showdown is a **State /
+   Window of Opportunity** inside the Action Phase, *not* a phase. ✅ engine uses
+   `phase==='showdown'` as a state — correct.
+3. **First-turn channel** — Mode-of-Play / First Turn Process (rule **461**): the
+   player on the draw channels extra on turn 1. ✅ engine: P2 channels 3 on T1.
+
+## Keyword glossary — official functional text + engine status
+| Keyword | Official functional text (default X=1) | Engine |
+|---|---|---|
+| **Accelerate** (731.6) | "As you play me, pay [1] + 1 Power; if you do, I enter ready." | ◑ enters ready; extra cost not enforced |
+| **Action** (732) | "Can be played/activated during showdowns on any player's turn." | ◑ |
+| **Assault X** (734?) | "While I'm an attacker, +X Might." Sums. | ✅ |
+| **Deathknell** (734) | "When I die [Killed→Trash], [Effect]." NOT on recall-replacement; each instance on the Chain before moving to trash. | ✅ (no Chain ◑) |
+| **Deflect X** (735.3) | "Opponent spells/abilities that **choose** me cost X more Power (any domain)." | ❌ |
+| **Ganking** (736.1) | "I may move to a battlefield from another battlefield." No cost; redundant. | ✅ |
+| **Hidden** (737.1d) | Pay [A] to hide facedown at a controlled BF; next turn gains Reaction, play ignoring base cost; targets restricted to that BF. | ❌ |
+| **Legion** (738) | On-play: "if you played another Main Deck card **before this** this turn"; other abilities: "if you played a Main Deck card this turn." | ✅ on-play variant |
+| **Reaction** (739) | Action + "can be played during Closed States on any player's turn." | ◑ |
+| **Shield X** (740) | "While I'm a defender, +X Might." Sums. | ✅ |
+| **Tank** (741) | "Must be assigned lethal before any same-controller non-Tank unit." Order only; redundant. | ✅ |
+| **Temporary** (742) | "At start of my controller's Beginning Phase, **before scoring**, kill me." | ✅ |
+| **Vision** (743) | "When played, look at top of Main Deck; you may recycle it." Each instance separate. | ◑ logged |
+| **Equip** (744) | Activated: "[Cost]: Attach this gear to a unit you control." | ◑ gear attaches |
+| **Quick-Draw** (744.1) | Reaction + "when you play this, attach it to a unit you control." | ❌ |
+| **Repeat** (746) | "Pay [Cost] extra to execute this spell's instructions one additional time." Spell still played once. | ❌ |
+| **Weaponmaster** (747) | "When you play me, choose an Equipment you control; pay its Equip cost reduced by [A] to attach it to me." | ❌ |
+
+## Mechanics the fan summary missed (now captured)
+| Rule | Mechanic | Engine |
+|---|---|---|
+| 701–712 | **Buffs**: max **1** per unit; +1 Might each; removed when the unit leaves play; champions don't retain buffs in the Champion Zone. | ◑ (max-1 + Might ✅; removal-on-leave/champion-zone ❌) |
+| 713–715 | **Mighty**: Might ≥5; board uses **current** Might, non-board uses **printed**. | ◑ (`isMighty` uses current; not wired to triggers) |
+| 715.1–718 | **Bonus Damage**: intrinsic, additive across sources, positive-only, applied per-target. | ❌ |
+| 716–722 | **Attach / Detach / Top-Most / Inactive text**: attached card's Effect Text appends to top-most, Might Bonus modulates it, rules text Inactive; detach on zone change. | ◑ (gear +Might only) |
+| 161–164 | **Rune Pool**: conceptual Energy/Power; **empties end of Draw and end of turn**; unspent lost. | ❌ |
+| 177–183 | **Tokens cease to exist** the moment they enter any Non-Board Zone. | ❌ (our tokens persist in trash) |
+| 300–345 | **Chain / Open-Closed / Neutral-Showdown / Priority / Focus / Windows** — the full timing model. | ❌ (Batch A) |
+| 437–451 | **Combat**: Attacker/Defender designations, damage assignment, lethal, conquer vs Recall, Cleanup; **Marked Damage clears only end-of-combat and end-of-turn** (cumulative otherwise). | ◑ (we clear after each combat; no designations/triggers) |
+
+## Number corrections to apply (Batch H)
+- Default keyword value **X = 1** when omitted (Assault/Shield/Deflect) — ✅ matches engine.
+- **Buffs cap = 1** ✅. **Mighty = 5** ✅. **Victory Score = 8** ✅ (some battlefields raise it; ✅ winDelta).
+- Token-in-non-board → cease to exist: **engine gap** (tokens currently sit in trash; should be removed).
+- Buff removal on leave-play: **engine gap**.
+
+These corrections are folded into the batches: token-cease + buff-removal → **Batch G**;
+Bonus Damage + Attach → **Batch C/F**; Rune Pool → **Batch E**; everything else as mapped.
