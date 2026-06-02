@@ -144,10 +144,14 @@ export function createMatch(decks: Deck[], opts: MatchOptions = {}): MatchState 
   const players: PlayerState[] = decks.map((d, i) =>
     buildPlayer(d, i, names[i] ?? `Player ${i + 1}`, rng),
   )
-  // Each player brings one battlefield to the shared row.
+  // Each player brings 3 battlefields and places one (Bo1: a random pick).
   const bfIds = decks
-    .map((d) => d.battlefields[0])
-    .filter(Boolean)
+    .map((d) =>
+      d.battlefields.length
+        ? d.battlefields[Math.floor(rng() * d.battlefields.length)]
+        : undefined,
+    )
+    .filter((x): x is string => !!x)
     .slice(0, n)
 
   return {

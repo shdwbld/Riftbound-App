@@ -17,6 +17,9 @@ export interface BattlefieldPassive {
   /** Buff a friendly unit here when you hold. */
   buffOnHold: boolean
   onConquer: ParsedEffect | null
+  /** "At the start of each player's first Beginning Phase, …" (e.g. Obelisk). */
+  firstBeginning: ParsedEffect | null
+  firstBeginningPoints: number
   /** Raw text that we recognized a trigger for but couldn't fully resolve. */
   manualHold: boolean
   manualConquer: boolean
@@ -41,6 +44,8 @@ export function battlefieldPassive(cardId: string): BattlefieldPassive {
     onHold: null,
     buffOnHold: false,
     onConquer: null,
+    firstBeginning: null,
+    firstBeginningPoints: 0,
     manualHold: false,
     manualConquer: false,
   }
@@ -49,6 +54,13 @@ export function battlefieldPassive(cardId: string): BattlefieldPassive {
     const s = raw.toLowerCase()
     const winM = s.match(/increase the points needed to win.*?by (\d+)/)
     if (winM) out.winDelta += parseInt(winM[1], 10)
+
+    if (s.includes("each player's first beginning")) {
+      const e = parseEffectText(raw)
+      if (e.draw || e.channel || e.recruits) out.firstBeginning = e
+      const ptM = s.match(/gains? (\d+) points?/)
+      if (ptM) out.firstBeginningPoints += parseInt(ptM[1], 10)
+    }
 
     if (s.startsWith('when you hold here')) {
       const e = parseEffectText(raw)

@@ -87,16 +87,20 @@ export function validateDeck(deck: Deck): DeckValidation {
       err(`${card.name} is off-identity for this legend.`)
   }
 
-  // Signature limit: at most 3 Signature cards total across the deck.
+  // Signature: at most 3 total, and each must share the legend's champion tag.
+  const legendCard = deck.legendId ? getCard(deck.legendId) : undefined
+  const champTag = legendCard ? legendCard.name.split(/\s+[-–,(]/)[0].trim() : ''
   let signatureCount = 0
-  for (const [id, count] of Object.entries(deck.main)) {
-    if (getCard(id)?.supertype === 'signature') signatureCount += count
-  }
-  for (const [id, count] of Object.entries(deck.runes)) {
-    if (getCard(id)?.supertype === 'signature') signatureCount += count
+  for (const [id, count] of Object.entries({ ...deck.main, ...deck.runes })) {
+    const card = getCard(id)
+    if (card?.supertype === 'signature') {
+      signatureCount += count
+      if (champTag && !(card.tags ?? []).some((t) => t.includes(champTag)) && !card.name.includes(champTag))
+        err(`${card.name} is a Signature card for another champion (not ${champTag}).`)
+    }
   }
   if (signatureCount > 3)
-    err(`Too many Signature cards: ${signatureCount} (max 3 total).`)
+    err(`Too many Signature cards: ${signatureCount} (max 3).`)
 
   for (const id of deck.battlefields) {
     const card = getCard(id)

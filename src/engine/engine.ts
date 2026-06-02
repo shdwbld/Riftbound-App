@@ -379,6 +379,20 @@ export function beginTurn(state: MatchState): MatchState {
     bf.units = bf.units.map((u) => (u.owner === ap ? { ...u, exhausted: false } : u))
   s = log(s, ap, `— Turn ${s.turn}: ${p.name} · Awaken —`)
 
+  // Battlefield "first Beginning Phase" passives (e.g. Obelisk channels 1).
+  if (s.turn <= s.players.length) {
+    for (const bf of s.battlefields) {
+      const passive = battlefieldPassive(bf.cardId)
+      const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
+      if (passive.firstBeginning)
+        for (const line of applyParsed(s, p, passive.firstBeginning))
+          s = log(s, ap, `${bfName} (first turn): ${line}`)
+      if (passive.firstBeginningPoints)
+        s = awardPoints(s, ap, passive.firstBeginningPoints, `gained from ${bfName}`, 'hold')
+    }
+    if (s.winner !== null) return s
+  }
+
   // Temporary: kill the active player's Temporary units that have lived a round.
   for (const bf of s.battlefields) {
     const expired = bf.units.filter(
