@@ -149,6 +149,7 @@ export function MulliganView({
   onExit?: () => void
 }) {
   const [aside, setAside] = useState<string[]>([])
+  const [view, setView] = useState<Card | null>(null)
   if (!pending) return null
   const toggle = (iid: string) =>
     setAside((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : s.length < 2 ? [...s, iid] : s))
@@ -163,18 +164,29 @@ export function MulliganView({
         )}
       </div>
       <p className="text-sm text-white/50">
-        Click up to 2 cards to set aside (sent to the bottom of your deck, then
-        you redraw that many). {aside.length}/2 selected.
+        Tap a card to view it. Mark up to 2 to set aside (sent to the bottom of
+        your deck, then redraw that many). {aside.length}/2 marked.
       </p>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-3">
         {pending.zones.hand.map((c) => (
-          <button
-            key={c.iid}
-            onClick={() => toggle(c.iid)}
-            className={`rounded ${aside.includes(c.iid) ? 'opacity-40 ring-2 ring-rose-400' : ''}`}
-          >
-            <BoardCard ci={c} />
-          </button>
+          <div key={c.iid} className="flex flex-col items-center gap-1">
+            <button
+              onClick={() => setView(getCard(c.cardId) ?? null)}
+              className={`rounded ${aside.includes(c.iid) ? 'opacity-40 ring-2 ring-rose-400' : ''}`}
+            >
+              <BoardCard ci={c} />
+            </button>
+            <button
+              onClick={() => toggle(c.iid)}
+              className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
+                aside.includes(c.iid)
+                  ? 'bg-rose-500/30 text-rose-200'
+                  : 'bg-white/10 text-white/70 hover:bg-white/20'
+              }`}
+            >
+              {aside.includes(c.iid) ? '↩ Set aside' : 'Set aside'}
+            </button>
+          </div>
         ))}
       </div>
       <div className="flex gap-2">
@@ -185,6 +197,7 @@ export function MulliganView({
           {aside.length ? `Mulligan ${aside.length}` : 'Keep hand'}
         </button>
       </div>
+      {view && <CardDetailModal card={view} onClose={() => setView(null)} />}
     </div>
   )
 }
