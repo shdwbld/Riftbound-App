@@ -388,3 +388,39 @@ This supersedes the fan-site numbers above where they differ.
 
 These corrections are folded into the batches: token-cease + buff-removal → **Batch G**;
 Bonus Damage + Attach → **Batch C/F**; Rune Pool → **Batch E**; everything else as mapped.
+
+## Official FAQ (2025-11-04) — clarifications
+Read from `docs/core-rules-faq.txt`. (Doc is "retired" in favor of Patch
+Notes/Errata, but the rulings still clarify core interactions.)
+
+### Confirms the engine is CORRECT (no change needed)
+- **Combat tie** → both sides assign full Might, all units die, battlefield goes
+  neutral, nobody scores. ✅ matches.
+- **Both survive** (stun/Kayn) → stunned deal 0; survivors → **attacker recalled,
+  defender keeps control, no score**. ✅ matches our Stun + Recall.
+- **Damage heals at the end of EVERY combat** (and end of turn). ✅ our
+  per-combat clear is **correct** — *corrects the earlier "cumulative" ◑ note above.*
+- **Legion**: tokens are not cards and abilities don't count — only playing a
+  Main Deck card turns it on. ✅ our `cardsPlayedThisTurn` only counts plays.
+- **Chosen Champion does NOT return** to the Champion Zone; once played it's a
+  normal card and dies to Trash. ✅ matches.
+- **No maximum hand size; no maximum units** in a location. ✅ (we don't cap).
+- **Rune deck empty** → no penalty, just can't channel. ✅.
+- **Recycle an exhausted rune** for power is legal (exhaust for energy, then
+  recycle same rune). ✅ our one-rune-both.
+- **Last point**: conquering the last point only scores if you've scored **all**
+  battlefields this turn, else draw. ◑ we approximate via "controls all BFs."
+
+### New gaps the FAQ reveals
+| Ruling | Status | Note |
+|---|---|---|
+| **Burn Out** = recycle Trash into deck → shuffle → chosen opponent +1; if **no Trash**, grant infinite points (opponent wins). | ◑ | we only award +1; no reshuffle, no no-trash-loss |
+| **Group move**: move multiple units together with the standard move (all exhaust) to one destination **before** the showdown opens. | ◑ | we move one unit → showdown opens immediately (can't pre-group) |
+| **Free-for-all showdown**: players with **no units** at the battlefield may still play Actions/Reactions; priority rotates in turn order until all pass on an empty chain. | ◑ | our pass loop rotates all players (close) but no chain |
+| **Seals** (resource permanent): exhaust for 1 Power of its domain (not recycled), ready again next turn — a card type distinct from Runes. | ❌ | not modeled |
+| **Accelerate cost** = 1 Energy + 1 Power of the unit's domain. | ◑ | enters ready; cost not enforced |
+| **Reaction timing**: can't play a Reaction at the end of the opponent's turn unless an ability creates a window. | ◑ | our reactions only in showdowns |
+
+Batch placement: Burn Out reshuffle + group move → **Batch G**; free-for-all
+showdown chain + reaction windows → **Batch A**; Seals → **Batch E**; Accelerate
+cost → **Batch H**.

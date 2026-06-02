@@ -1,0 +1,1255 @@
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Riftbound Origins FAQ
+
+Hi everyone! It's been a little bit since we released the Core Rules and in that time, we have received
+really valuable feedback and helpful questions that led to some refinements and updates to the
+Riftbound rules. We have a full rules update coming soon, but we want you to know how to play your
+cards--so we're releasing this FAQ earlier than the rules update!
+
+This document has two sections:
+     Frequently Asked Questions about the rules and interactions you'll commonly encounter
+     Revised and Clarified Rulings about more complicated interactions and cards we've reviewed
+         since the original Core Rules were released
+
+As part of these revised and clarified rulings, we have also updated some card wordings (this is called
+errata) and we'll put those updated wordings into our database of official card wordings, Watcher.
+(You'll soon be able to access Watcher and its official wordings through our website and also the
+Riftbound API.)
+
+What's in this document is our current best representation of the upcoming errata, but the final
+wordings may vary slightly from those described here. . The upcoming full rules update will be
+accompanied by definitive Watcher errata text.
+
+One other note about errata: Errata may impact the effective power level of cards, but we have no plans
+to issue errata strictly for power level reasons--only to make cards work within the rules and as
+intended.
+
+Throughout this document, we use some specific shorthand to represent symbols in card text. Here's a
+short guide:
+
+     [E] means "exhaust" (previously, you may have seen this as [T])
+     [M] means "Might" (previously, you may have seen this as [S])
+     [A] means "one power of any domain/color"
+     [C] means "one power of this card's domain/color"
+
+Ok, let's get into it!
+
+SECTION 1 -- Frequently Asked Questions
+
+Scoring
+
+Q: How do I score? How are conquer and hold different?
+When you take control of a battlefield you didn't already control and which you haven't scored yet this
+turn, you score 1 point. This is called conquering.
+
+If you control a battlefield at the start of your turn, you score 1 point. This is called holding.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+Q: How does the last point work?
+In order to win the game, you need to score the last point (the 8th point in most games, 11th in 2v2). If
+you try to score the last point by conquering, you will only get the last point if you have already scored
+all of the other battlefields this turn. Otherwise, you'll draw a card instead.
+
+So, in an 8 point 1v1 game with two battlefields:
+     If you are at 6 points and conquer both battlefields, you'll go to 7 and then to 8 and win.
+     If you are at 7 points and conquer both battlefields, you'll draw a card for the first one, and then
+         go to 8 and win.
+     If you are at 6 points, hold one battlefield to 7, and conquer the other to go to 8 and win.
+     If you are at 7 points, you can hold one to go to 8 and win.
+
+In an 8 point 4 player Free-for-All game with three battlefields:
+     If you are at 5 points and conquer all 3 battlefields, you'll go to 6 then 7 then 8 and win.
+     If you are at 6 points and conquer all 3 battlefields, you'll go to 7 then draw 1, then 8 and win.
+     If you are at 5 points, hold 1 battlefield to 6, then conquer the other two, you'll go to 7 and then 8
+         and win.
+
+Movement
+
+Q: What's the standard move?
+Every unit has the natural ability to move itself from base to battlefield, or back from battlefield to base,
+during your Main Phase (on your own turn, outside of a showdown). To do this, you pay the cost
+(exhausting the unit) and then move the unit. If a unit is exhausted, you can't move it using the standard
+move.
+
+Q: Do I have to exhaust a unit when I move it with a spell or ability?
+Moving a unit with a spell or ability won't change its ready or exhausted state unless the effect specifies
+that it does. The cost of using a unit's standard move is to exhaust that unit, but that isn't a cost or
+effect of other moves.
+
+Q: Can I move multiple units together to a battlefield?
+Yes, you can use the standard move of your units all at once to move them as a group together to the
+same legal destination. To do this, exhaust them all (the cost of the standard move) and then move them
+to the destination, then resolve any move effects, then start a showdown if needed.
+
+Q: Does Ganking allow a unit to move an extra time? When can I use the Ganking ability?
+No, Ganking is an extra way to use the standard move. Normally, when a unit uses the standard move, it
+can only move between base and battlefield. If a unit has Ganking, it can also move between two
+battlefields. You can move units with Ganking alongside other units that are moving with the standard
+move, as long as the destination is legal for all units moving as a group.
+
+Q: Can I move more units in before a combat starts using a spell or ability?
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+If you don't move units together as a group using the standard move, then you can only move additional
+units afterward if you use a spell or ability with the Action or Reaction keywords, after the combat starts
+as part of the showdown.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Combat
+
+Q: What happens when both sides in combat have the same total Might?
+In this case, both sides will assign damage to the other side equal to the total Might of all units there,
+which will end up killing all units on both sides. No units will remain to control the battlefield, leaving it
+open and nobody will score a point.
+
+Q: What happens if units from both sides in combat survive, either because of Kayn or a stun?
+In this case, both sides will still assign damage to the other side as normal (stunned units will not deal
+damage). Units will still die if they are assigned damage equal to or greater than their Might (unless they
+don't die, for example because of Kayn's ability). Then if units from both sides remain alive at the
+battlefield, any remaining attacking units will be recalled to base and the defending player will maintain
+control (no score, though).
+
+Q: Do units heal from combat damage? When?
+Yes, units everywhere will heal from damage at the end of every combat and at the end of every turn.
+That means if a unit survives through damage assignment, it'll be back to zero damage at the end of the
+combat.
+
+Resources
+
+Q: How do runes work? What are energy and power? Can I recycle an exhausted rune?
+Yes, each rune has two abilities, and you can use both of them in the same turn:
+
+     You can exhaust a rune to produce 1 energy. Energy is used to pay numerical costs, and doesn't
+         have a domain/color associated with it, even though the runes used to generate it do.
+
+     You can recycle a rune (even an exhausted one) to produce 1 power of that rune's domain/color.
+         Power is used to pay color symbol costs.
+
+Rune abilities have the Reaction keyword, which means they can be used anytime.
+
+Q: Is there a limit to how many runes I can have?
+Yes, all Riftbound decks are built with exactly 12 runes, so once you have channeled all of them, you
+can't get more runes on the board.
+
+Q: Do Seals add energy? Do Seals enter exhausted like units do?
+No, Seals can't generate energy. They can be exhausted to produce 1 power of Seal's domain/color.
+Since you don't recycle them to make the power resource, you will be able to ready them and use them
+again on future turns.
+
+Q: How much do I pay for an Accelerate cost?
+Accelerate costs 1 energy and also 1 power of the unit's domain/color. Usually you'll do this by taking an
+additional ready rune of the appropriate domain/color, exhaust it, and then recycle that same rune.
+
+For example, if a fury/red unit normally costs [3] (or 3 energy) and you want to accelerate it, its total
+cost would be [4][R] (or 4 energy and 1 power of the fury/red domain).
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Keywords
+
+Q: What does Mighty mean?
+A unit is Mighty if it has 5 or more Might. Units don't have the keyword "Mighty"--as long as a unit has 5
+or more Might, the unit is Mighty. When you play a unit with 5 or more Might, you can exhaust your
+Relentless Storm Legend to channel a rune exhausted.
+
+Q: Do I get my Legion effect when I play a token or use an ability?
+No, Legion will only be active if you've played a card this turn. Tokens are not cards, and abilities aren't
+either.
+
+Hidden
+
+Q: How do I hide a card with Hidden?
+You can hide a card with the Hidden keyword from your hand instead of paying its normal cost. To do
+this, you must already control a battlefield (have units there) to hide the card at. Hiding a card costs [A]
+(one power of any domain/color) and you place the card face down at that battlefield.
+
+Q: When I hide a card, does that count for Legion?
+Hiding isn't playing, and doesn't count as playing a card for abilities like Legion.
+
+Q: If I hide a card, and then my opponent uses a spell to move a unit to that battlefield that same turn,
+can I play the card I hid?
+No. You can't play cards the same turn you hide them.
+
+Q: If I hid a card last turn, can I play that card even if I'm not reacting to another spell or ability?
+You can play them any time you can normally play a reaction, which includes when you're not actually
+reacting to anything. You're not restricted to playing them during showdowns at their own battlefield.
+
+Q: Do I have to play a unit I hid to that battlefield? Or can I play it to my base?
+A hidden unit must be played to that battlefield if able.
+
+Q: If I play a spell with targets that I hid, do I have to choose those targets from the battlefield I hid it
+at?
+Yes. If a hidden spell or a play effect of a hidden permanent chooses any targets, those targets must be
+chosen from among options at that battlefield, unless the ability explicitly restricts targeting in a way
+that makes this impossible. (We'll talk more about this later for specific cards.)
+
+Q: If I play a card I hid, and that card's effects include playing additional units (for example, tokens),
+can I play them anywhere?
+No. If a hidden spell or a play effect of a hidden permanent causes you to play a unit, you must choose
+to have that unit enter the board at that battlefield.
+
+Timing
+
+Q: Can I use the exhaust ability of a unit in combat?
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+The cost of using an ability with the exhaust symbol is to exhaust that unit. If you just moved a unit into
+combat using the standard move, then you already exhausted the unit as the cost to do that, so you
+won't be able to use its ability with the exhaust symbol that same turn. If the unit is defending, it might
+be ready and then you can use abilities that require exhausting it in combat (as long as those abilities
+have the Action or Reaction keyword).
+
+Q: When can I use Vi's ability to recycle cards from my trash to increase her Might?
+Abilities can only be used in your Main Phase, outside of a showdown, unless they have the Action or
+Reaction keyword. Vi's ability does not, so it can't be used in combat/showdown.
+
+Q: Can I use my Legend ability on my opponent's turn?
+Abilities can only be used in your Main Phase, outside of a showdown, unless they have the Action or
+Reaction keyword. Some Legends don't have these keywords, so those can't be used on an opponent's
+turn.
+
+Q: I have a Reaction spell. Can I play it at the end of my opponent's turn?
+No. The only time you can do this is if another ability triggers at the end of your opponent's turn, such
+as the Dark Child - Starter legend.
+
+Q: In a free-for-all, can I play Actions and Reactions in a showdown that I don't have units at?
+Yes. Starting with the player who contested control/the attack, players each get a chance to play an
+Action or Reaction. Other players can then react with Reactions, but once everyone passes, the next
+player in turn order can play their own Action or Reaction. Continue like this until all players have
+passed on an empty chain, and then move to the end of the showdown.
+
+Miscellaneous
+
+Q: Is there a maximum hand size?
+No, you can have any number of cards in your hand.
+
+Q: Is there a maximum number of units I can have in my base? On a battlefield?
+No. You can have any number of units in a location.
+
+Q: What happens when I run out of cards in my Main Deck?
+If you run out of cards in your Main Deck, and then you need to draw 1, you will Burn Out. This means
+you take your Trash, recycle it into your deck, shuffle, and then choose an opponent to score 1 point.
+
+If you have no Trash to recycle when you Burn Out, then you'll grant an infinite number of points and
+pick an opponent to win the game.
+
+Q: What happens when I run out of cards in my Rune Deck?
+Nothing. You can't channel any more runes, but there's no penalty beyond that.
+
+Q: Do I put my Chosen Champion back in the Champion Zone when it leaves the board?
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+No. Once you play a Champion from your Champion Zone, it acts like any other card from your Main
+Deck. When it dies, it goes to the Trash.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+SECTION 2 -- Revised and Clarified Rulings
+
+Cards that Tell You Play Other Cards
+
+Q: What happens when a card like The Harrowing instructs me to play another card during its
+resolution? Do I play it while the other spell or ability is still resolving? What if I can't play it?
+To clarify the timing of these and other effects, we're introducing
+the idea of pending items on the chain. When you play a spell, or
+use an ability, they will be pending until you finish the steps of
+playing them before priority passes. When a spell or ability
+instructs you to play a card or play a token--or when a triggered
+ability has its trigger condition met--during the playing or
+resolution of another card or ability, you'll perform the very first
+step of playing that card or using that ability by putting it on the
+chain, then stop. This chain item is still pending for now. You'll then
+process the rest of whatever is currently happening, including
+putting any other pending items on the chain above it.
+
+Then, in the order the items were put on the chain, each pending
+item's controller goes through the other steps of putting it on the
+chain: Make choices, pay costs, and evaluate legality. Only then is
+the pending item considered to have entered the chain. If it's legal
+to play and it's a unit or gear, it resolves immediately as usual.
+Once all pending items are done being fully added to the chain, play continues, and any items that
+remain on the chain can be reacted to. The most recent items to be placed on the chain will resolve first
+as usual.
+
+If at any point during that process that player is unable to proceed with playing the pending chain item
+for any reason, the item is removed from the chain and, if it's a card, is put back where it came from.
+This won't happen very often--if you start the process of playing a card, you'll almost always be able to
+legally finish it--but it's a necessary failsafe to handle corner cases.
+
+Q: What about cards like Blind Fury and Promising Future, which let players look at or reveal cards
+from the top of a deck, play one, and recycle the rest? If I can't play that card, where does it go? It
+sounds like it's too late for it to be recycled as part of "the rest."
+Hey, you're pretty sharp! For most cards that let you play something, it's easy to put the card back
+where it came from if you can't play it. The Harrowing would put it back in your trash, Ava Achiever
+would put it back in your hand, and so on. But when the card came out of a deck, which is both secret
+and randomized, it's not so simple.
+
+To provide a clear and easy answer to this question, four cards in set 1 that let you play other cards
+from decks are receiving errata. They'll each banish the card before instructing a player to play it. If the
+card can't be played for any reason, it just stays banished. This is a small functional change, but it's one
+we feel is well worth it to avoid the fuss of getting these cards back into a deck somehow.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Baited Hook (revised text)
+
+     [1][C], [E]: Kill a friendly unit. Look at the top 5 cards of
+     your Main Deck. You may banish a unit from among them
+     that has Might up to 1 more than the killed unit and play it,
+     ignoring its cost. Then recycle the rest.
+
+ Blind Fury (revised text)
+     [Action] (Play on your turn or in showdowns.)
+     Each opponent reveals the top card of their Main Deck.
+     Choose one and banish it, then play it, ignoring its cost.
+     Then recycle the rest.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Dazzling Aurora (revised text)
+
+     At the end of your turn, reveal cards from the top of your
+     Main Deck until you reveal a unit and banish it. Play it,
+     ignoring its cost, and recycle the rest.
+
+ Promising Future (revised text)
+     Each player looks at the top 5 cards of their Main Deck,
+     banishes one, then recycles the rest. Starting with the next
+     player, each player plays those cards, ignoring Energy
+     costs. (They must still pay Power costs.)
+
+Q: So what exactly happens when someone plays Promising Future?
+Start with the player whose turn it is--probably Promising Future's controller. That player looks at their
+top 5 cards, banishes one of them, and recycles the other 4. Then each other player in turn order
+repeats this process. Each player can see which cards the players before them have chosen. Then,
+starting with the next player in turn order this time, those players put the cards they chose onto the
+chain as pending items, with the player whose turn it is putting their item on the chain last.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+Then Promising Future finishes resolving, and the players finish adding their pending items to the chain
+in the same order they were put there, ignoring Energy costs but still paying Power costs. They must
+pay mandatory additional costs (like the cost of Cruel Patron), and may choose to pay optional
+additional costs (like Accelerate).
+
+Each card that's a unit or gear resolves immediately, which may cause other things (such as play
+effects) to be added to the top of the chain as pending items. Any cards that can't be played for any
+reason remain banished.
+
+Once this process is done, any units or gear that were successfully played this way will be on the
+board, while spells chosen this way will all be on the chain in the same order they were put onto it. (This
+may result in spells that don't have Action or Reaction being on the chain above other items, which is
+usually not possible. That's fine.) Then, resolve the chain as normal.
+
+Q: What about Nocturne? Doesn't he also let you play a card from the top of a deck?
+Great question! Nocturne is his own thing. Speaking of which...
+
+Nocturne, Horrifying
+
+Q: OK, so what about Nocturne? How does his ability work? Is it a triggered ability? Can I use it if I
+"reveal" him, or only if I "look at" him?
+Nocturne has a few problems we'd like to address.
+
+     His ability is worded like a triggered ability ("when"), but it can't really work like one. By the time
+         a triggered ability could go on the chain, be reacted to, and resolve, you wouldn't be looking at
+         Nocturne anymore.
+
+     He has the same problem that the above cards do: you're trying to play a card from a deck (in
+         this case, Nocturne himself), and it's hard to put him back there if you try to play him but can't for
+         some reason.
+
+     He is intended to be usable any time you're looking at the front faces of cards from the top of
+         your deck, whether the effect in question says to "look at" them or "reveal" them. The rules will
+         be changed to clarify that last one--they will now explain that to "reveal" means the same thing
+         as "allow all players to look at."
+
+Nocturne is receiving errata to solve these problems and bring him in line with his intended function.
+This errata makes it clear that this ability is not a triggered ability, and it uses banishment as a holding
+zone. It also specifies that revealing and looking both count; although we are handling that part at the
+rules level, we also want card text to reflect it unambiguously.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Nocturne, Horrifying (revised text)
+
+     [Ganking] (I can move from battlefield to battlefield.)
+     As you look at or reveal me from the top of your deck, you
+     may banish me. If you do, you may play me for [A].
+
+Q: So how exactly does this ability work?
+The process starts as you look at or reveal cards from the top of your
+Main Deck due to an effect. Let's use Stacked Deck as an example.
+You play Stacked Deck and look at the top 3 cards of your deck.
+Nocturne is among them. You now get to choose whether to banish
+him or not. If you choose to banish him, you immediately begin the
+process of playing him from banishment, placing him on the chain as
+a pending item. Then you continue resolving Stacked Deck. There
+are only 2 cards left of the original 3; you'll choose one to put into
+your hand and recycle the other one. Then, since Stacked Deck has
+finished resolving, you'll finish the steps of putting Nocturne onto the
+chain from banishment, paying [A] (that's one power of any type)
+instead of his base cost. As usual for units, he'll resolve immediately
+and enter the board exhausted. If you weren't able to play him for
+any reason, he'll just stay banished.
+
+Q: If I reveal multiple Nocturnes, can I play more than one? What if
+all 3 of the cards I look at for Stacked Deck are Nocturnes and I play all of them?
+Yes, you can play more than one Nocturne at a time this way. If there aren't any eligible cards left for the
+original effect you were resolving, any further instructions will be ignored. So if you reveal Stacked
+Deck, see 3 Nocturnes, and opt to banish and play all of them, you won't put any cards into your hand,
+nor will you recycle any cards. You will, however, have 3 Nocturnes.
+
+Q: So if Promising Future resolves and one or more players choose to banish Nocturne from the
+cards they looked at, what happens?
+As you go around in turn order and each player looks at their top 5, they can choose to banish one or
+more Nocturnes before they banish a card with Promising Future. Any such Nocturnes will go on the
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+chain as pending items before whatever that player chooses with Promising Future. They'll remain
+pending through the whole process of resolving Promising Future, then at the appropriate point they'll
+be fully placed on the chain and (because they're units) will resolve immediately.
+
+Q: What about Dazzling Aurora? If I reveal Nocturne, do I get to play him and keep going?
+No, Dazzling Aurora stops when it finds Nocturne. Nocturne is revealed, then you may choose to banish
+him or not. If you banish him, you can play him for [A] using his own ability. If you don't, you can play
+him for free using Dazzling Aurora's ability (probably better, but you do you). Either way, you revealed a
+unit, so you don't keep going.
+
+Baited Hook
+
+Q: What happens if I use an effect like Unlicensed Armory to
+prevent the death of the friendly unit I chose to kill with Baited
+Hook?
+Baited Hook kills a unit, then uses information about "the killed
+unit." If you prevent that unit's death, there's no killed unit, so
+Baited Hook can't evaluate its Might. As a result, the check for the
+Might of the "killed unit" returns a null value, and you're not able to
+play any unit. If the unit is killed before the ability of Baited Hook
+resolves, the outcome is the same.
+
+Printing Errors
+Convergent Mutation
+
+Q: The English version of this card is missing "this turn," but the Chinese version includes it. Which
+is correct?
+The English version is a printing error. Convergent Mutation will receive errata to correct this oversight.
+Meanwhile, the Chinese version uses "becomes" language where the English version uses "increase."
+We have opted to keep the "increase" wording from English, as these wordings work slightly differently.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Convergent Mutation (revised text)
+
+     [Reaction] (Play any time, even before spells and abilities
+     resolve.)
+     Choose a friendly unit. This turn, increase its Might to the
+     Might of another friendly unit.
+
+Dune Drake
+
+Q: What about Dune Drake? It's missing "this turn" in both English and Chinese.
+This is also a printing error, one that wasn't caught in time to fix the Chinese version. It will also receive
+errata.
+ Dune Drake (revised text)
+
+     When I attack, give me +2 [M] this turn if there is a ready
+     enemy unit here.
+
+Ravenborn Tome
+
+Q: Is Ravenborn Tome supposed to be able to grant bonus damage to spells I play on later turns?
+No. This is another card that's missing "this turn."
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Ravenborn Tome (revised text)
+
+     [E]: The next spell you play this turn deals 1 Bonus Damage.
+     (Each instance of damage the spell deals is increased by
+     1.)
+
+Making Choices for Spells and Abilities (Targeting)
+
+Q: Some spells and abilities require choosing units, gear, or other things for them to affect. The rules
+say some of these choices are made when I put the spell or ability on the chain, but it seems like
+some of them can't be or shouldn't be. How do I know the difference?
+Riftbound uses a set of contextual rules rather than specific words on cards to determine which choices
+are made as a card is played. When a spell or ability chooses something else to affect, the rules refer to
+those choices as "targets." Targets must be chosen as the spell or ability is placed on the chain, and
+they must still meet all targeting requirements as the spell or ability resolves.
+
+The next version of the rules will have more rigorous guidelines on which choices are targets, which
+we'll summarize here. For the most part, these rules don't change what choices are targets, they just
+spell it out more.
+
+An object or player mentioned in a spell or ability is a target if all of the following are true:
+    1. something publicly visible to all players;
+    2. that you and you alone choose;
+    3. that isn't part of a targeting restriction, cost, trigger condition, replacement effect, or an action
+         that "must" be taken.
+
+This explanation sounds complicated, but in general, most things that are affected by a spell or ability
+are targets. For a more precise breakdown of what each of those entails, see the Appendix.
+
+There are two other choices that are not considered targets, but are made while putting something on
+the chain. Those are:
+
+    1. The location to which a unit will be played (normally either your base or a battlefield you control).
+    2. The destination or destinations for any spell or ability whose effect is moving one or more units,
+
+         whether or not it mentions a destination by name.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Charm
+
+Q: So as I play Charm, I have to say not only what unit I'm moving it,
+but where I'm moving it to?
+Yes. This is a change from prior rulings. This means that move effects
+that don't mention a destination (like Charm) work the same way as
+those that do (like Showstopper).
+
+Q: What about when I use a unit's standard move? Does that target?
+No. The standard move is a special action that doesn't use the chain
+and can't be reacted to, so the concept of targeting doesn't apply. You
+announce which units are moving and what destination they're moving
+to, then move those units there immediately.
+
+Spells with Multiple Targets
+
+Q: If a spell has multiple targets, like Back to Back, do I need to
+choose targets for all of them to put the spell on the chain?
+
+Yes. You must choose two different friendly units to play Back to Back,
+although it still resolves even if one or both of its targets are no longer
+valid when it resolves.
+
+This is also true for activated abilities that have multiple targets.
+
+Abilities with Multiple Targets
+
+Q: What about triggered abilities with multiple targets, like Sona,
+Harmonious?
+The same is true of triggered abilities with multiple targets. For
+triggered abilities, however, this causes some cards--Sona in
+particular--to work in unintended ways.
+
+Going forward, we'll put the words "up to" on most triggered abilities.
+In the meantime, several cards are receiving errata so that their
+triggered abilities behave intuitively.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Sona, Harmonious (revised text)
+
+     At the end of your turn, if I'm at a battlefield, ready up to 4
+     friendly runes.
+
+ Targon's Peak (revised text)
+     When you conquer here, ready up to 2 runes at the end of
+     this turn.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Dark Child - Starter (revised text)
+
+     At the end of your turn, ready up to 2 runes.
+
+ Kinkou Monk (revised text)
+     When you play me, buff up to two other friendly units.
+     (Each one that doesn't have a buff gets a +1 [M] buff.)
+
+Sigil of the Storm
+
+Q: Does Sigil of the Storm target? If it does, can I react to the trigger by recycling the chosen rune for
+Power? That seems weird.
+Sigil of the Storm is receiving errata using a new wording to make sure that it doesn't target. This uses a
+new wording, "must," that indicates an action that must be taken. None of the choices made for such an
+ability are targets, and they are chosen as the ability resolves.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Sigil of the Storm (revised text)
+
+     When you conquer here, you must recycle one of your
+     runes.
+
+Fox-Fire
+
+Q: Are the units I choose for Fox-Fire targets? What happens if some of them gain Might as a
+reaction?
+Fox-Fire is unusual (currently unique) in that its targets' legality is evaluated as a group rather than
+individually. The updated rules will explain how to handle this.
+
+As you play Fox-Fire, you'll choose any number of units at a single
+battlefield whose current total Might is 4 or less. Then, after any
+appropriate Reactions, Fox-Fire resolves and checks target legality
+again. If the units no longer meet the group targeting restriction
+because some of them have gained Might, you choose any number of
+the original targets whose Might adds up to no more than 4.
+
+Here are a few examples to illustrate. In all of them, Fox-Fire initially
+chooses 4 Recruits with 1 Might each, and some of those Recruits
+have gained Might before Fox-Fire resolves.
+
+     One Recruit gets +1 Might. You can choose either to exclude
+         that Recruit and kill the other three (total Might 3), or exclude
+         one other Recruit and kill the 2 Might Recruit and two 1 Might
+         Recruits (total Might 4).
+
+     One Recruit gets +3 Might. You can choose either to exclude
+         that Recruit and kill the other three (total Might 3), or exclude
+         the other three and kill just that one (total Might 4).
+
+     One Recruit gets +6 Might. You must choose to exclude that Recruit, because its Might alone
+         takes you above your total. You must kill the other three (total Might 3).
+
+     Two Recruits get +1 Might. You can either kill the two 2 Might Recruits, or one 2 Might Recruit
+         and the two 1 Might Recruits.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+     All four Recruits get +1 Might. You must choose two of the Recruits to kill, and the other two will
+         survive.
+
+     All four Recruits get +3 Might. You choose one Recruit to kill (total Might 4) and exclude the rest.
+     All four Recruits get +6 Might. You no longer have a valid subset of targets, because even a
+
+         single Recruit takes you over the Might limit. Fox-Fire does nothing.
+
+Q: Does that mean if the units I originally chose die, move, or lose Might as a Reaction, I can pick
+additional units at that battlefield to kill?
+No. You can only kill units from among the ones you initially chose.
+
+Dragon's Rage
+
+Q: Dragon's Rage also seems a little confusing under these targeting rules. What do I have to choose
+as I play it?
+Dragon's Rage works a little better now that move destinations are chosen at the same time as targets,
+but it's still kind of strange. Accordingly, it will receive errata with a new template for "reflexive
+triggers"--triggered abilities within another spell or ability that create a new ability that goes on the
+chain separately from the original spell or ability. To show you what that looks like, here's the updated
+text:
+
+ Dragon's Rage (revised text)
+     Move an enemy unit. Then do this: Choose another enemy
+     unit at its destination. They deal damage equal to their
+     Mights to each other.
+
+That "do this" wording (or similar) tells you that what follows is a separate instruction from the original.
+As you start to play Dragon's Rage, you only need to choose an enemy unit and a battlefield to move it
+to. Then, assuming Dragon's Rage resolves, you'll put a separate triggered ability on the chain,
+choosing another enemy unit at its destination (if one is available). That triggered ability can then be
+responded to separately. If there's no enemy there, or if you didn't actually move the unit you chose for
+any reason (and therefore there's no "its destination" to reference), the trigger isn't put on the chain at
+all.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+This isn't a tool we expect to use often, but it lets us make sure that cards like Dragon's Rage offer
+chances for interaction and decision at points that feel appropriate.
+
+Disintegrate
+
+Q: How does Disintegrate work? Doesn't the damage kill the unit after the spell has resolved?
+Disintegrate is a funny one--it looks like it works, but the more you understand the rules, the more it
+looks like it might not work after all. Units dealt lethal damage by a spell aren't killed immediately,
+they're killed right after that spell resolves. To solve this little rules conundrum, we're using the new
+reflexive trigger wording here as well.
+
+ Disintegrate (revised text)
+     Action (Play on your turn or in showdowns.)
+     Deal 3 to a unit at a battlefield. If this kills it, do this: draw 1.
+
+Falling Star & Icathian Rain
+
+Q: That "do this" wording is a lot like the one on Falling Star and Icathian Rain. Are those reflexive
+triggers too?
+Yes! This means that these two spells no longer actually have any targets of their own--you play them
+with no choices. If they resolve, you then put each instance of their reflexive trigger on the chain
+separately, choosing the same or
+different units as you like. You'll pay
+Deflect costs for each one as you put
+each trigger on the chain, and then the
+triggered abilities will resolve one at a
+time in the opposite order they were
+put on the chain. This is a big change
+to how those two cards work, but we
+think it actually matches how many
+people expected them to work when
+they first saw them.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Twisted Fate
+
+Q: Twisted Fate too?
+Yes, Twisted Fate's "do one of the following" is also a reflexive trigger.
+
+2v2 and Friendly Units
+
+Q: In 2v2, can my ally and I bring the same legend? What about the same battlefields?
+No and no. The updated rules will clarify that you and your ally must bring different legends and
+different battlefields.
+
+Q: When a card refers to a friendly unit, what does that mean?
+In most games of Riftbound, "friendly [something]" means the same thing as "[something] you control."
+In our 2v2 team format, however, "friendly" includes both things you control and things your ally
+controls.
+
+Q: What about "your units?" Is that shared between teammates too?
+No. "Your" refers exclusively to things you control (on the board or on the chain) or things you own
+(everywhere else). Your units are the units you control, your spells are the spells you play, your trash is
+the one where you put the cards you own, and so on.
+
+Q: Can my ally and I share control of battlefields?
+No, you and your ally can never have units at the same battlefield. A maximum of two players can have
+units at a battlefield. Those players must be opponents, and a combat will result.
+
+Q: Can I move my ally's unit to my own base with Unforgiven, the Yasuo legend? Does that mean it's
+mine now?
+No, you can't do this. Any time you try to move something you don't control into your base, it moves to
+its controller's base instead. This is hard-coded in the rules, similar to how cards you own can ever be
+in your own hand, trash, or deck, even if something tries to put them in a different when. Similarly, you
+and your ally can never both have units at the same battlefield; the rules prevent any move that tries to
+make that happen.
+
+A few cards, including Unforgiven, were printed with English text that suggests misleading outcomes in
+these situations (but were printed correctly in Chinese). Those cards are receiving errata to clarify what
+they can and can't do.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ The Syren (revised text)
+
+     [1], [E]: Move a friendly unit at a battlefield to its base.
+
+ Unforgiven (revised text)
+     [2], [E]: Move a friendly unit to or from its base.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Portal Rescue (revised text)
+
+     Banish a friendly unit, then its owner plays it to their base,
+     ignoring its cost.
+
+For The Syren and Unforgiven, this is not functional errata, just a clarification. For Portal Rescue, this is
+a slight functional change to its interaction with cards like Possession. Previously, you could use Portal
+Rescue to re-play a card you took with Possession and retain control of it, but under the new wording
+this would give it back to its owner.
+Another card, Tideturner, is receiving similar errata and another clarification (see below).
+
+Cards with Hidden
+
+Q: When you play a card from hidden, it gains several additional restrictions. The rules were
+somewhat unclear on this.
+That's not a question. But alright, let's spell out the restrictions more clearly:
+
+     A hidden unit must be played to that battlefield if able.
+     If a hidden spell or a play effect of a hidden permanent chooses any targets, those targets must
+
+         be chosen from among options at that battlefield, unless the ability explicitly restricts targeting in
+         a way that makes this impossible. If a hidden spell or a play effect of a hidden permanent causes
+         you to play a unit, you must choose to have that unit enter the board at that battlefield.
+
+Tideturner
+
+Q: What do the Hidden changes mean for Tideturner? It seems like I'm supposed to be able to choose
+a unit at another location.
+Tideturner is receiving minor errata, both to restrict its targeting to a unit you control and to make sure
+that it can target a unit at another location under these rules.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Tideturner (revised text)
+
+     [Hidden] (Hide now for [A] to react with later for [0].)
+     When you play me, you may choose a unit you control at
+     another location. Move me to its location and it to my
+     original location.
+
+Zhonya's Hourglass & Stand United
+
+Q: What about Zhonya's Hourglass and Stand United? When they're
+played from hidden, are their effects restricted to the battlefield
+where they were played?
+Only effects that choose are restricted. Zhonya's Hourglass saves the
+next friendly unit that dies anywhere. Stand United can only give a
+buff to a unit at the battlefield where it was hidden, but its other effect,
+which causes buffs to grant an additional bonus, applies everywhere.
+This is a change from previous rulings on these cards, intended to
+simplify the question of what hidden cards can and can't do.
+
+Zhonya's Hourglass has additional rulings and minor errata related to
+saving dying units; see below.
+
+Ava Achiever
+
+Q: Does Ava's ability let me hide cards?
+No, it lets you play cards with Hidden from your hand.
+
+Q: What restrictions does Ava place on the card I play? What does "here" mean?
+Ava's restriction of "here" is meant to apply only to units. She will receive minor errata to make this
+clearer:
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Ava Achiever (revised text)
+
+     When I attack, you may pay [C] to play a card with [Hidden]
+     from your hand, ignoring its cost. If it's a unit, play it here.
+
+Pack of Wonders
+
+Q: What can Pack of Wonders return to my hand?
+Pack of Wonders can choose a friendly gear, a friendly unit, or a friendly facedown card hidden at a
+battlefield. It cannot return a card with the [Hidden] keyword from anywhere else, such as a player's
+trash. To make that clearer, it's receiving minor errata to say "facedown card" rather than "[Hidden]
+card."
+ Pack of Wonders (revised text)
+
+     [E]: Return another friendly gear, unit, or facedown card to
+     its owner's hand.
+
+Q: Does this mean it can return a card from my deck to my hand? Those are face down...
+No. (Nice try, though.) "Facedown card" always means a card that's hidden facedown on the board
+unless a card's text specifies otherwise.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Cards that Replace Units Dying
+
+Q: When I replace a unit's death with a card like Unlicensed Armory, does damage on the unit stay? If
+the unit died to lethal damage, doesn't it just die again?
+The intent behind these four cards is to save your unit from dying, whether it died due to direct kill like
+Hidden Blade or due to lethal damage. To better communicate this, these cards will receive updated
+wordings. Two of them, Highlander (from the Proving Grounds boxed set) and Unlicensed Armory, have
+straightforward fixes, adding "heal" and listing "exhaust" and "recall" as separate actions.
+ Highlander (revised text)
+
+     [Reaction] (Play any time, even before spells and abilities
+     resolve.)
+     Choose a friendly unit. The next time it dies this turn, heal
+     it, exhaust it, and recall it instead. (Send it to base. This
+     isn't a move.)
+
+ Unlicensed Armory (revised text)
+     Discard 1, [E]: Choose a friendly unit. The next time it would
+     die this turn, you may pay [C] to heal it, exhaust it, and
+     recall it instead. (Send it to base. This isn't a move.)
+
+Zhonya's Hourglass also has a slightly updated wording making it clearer that its ability applies any time
+a friendly unit dies, not just on the turn you play it.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Zhonya's Hourglass (revised text)
+
+     [Hidden] (Hide now for [A] to react with later for [0].)
+     If a friendly unit would die, kill this instead. Heal that unit,
+     exhaust it, and recall it. (Send it to base. This isn't a move.)
+
+The Boss was mistakenly worded like a triggered ability. It's receiving updated wording to make it clear
+that its ability is a replacement effect.
+ The Boss (revised text)
+
+     If a buffed unit you control would die, you may pay [C],
+     exhaust me, and spend its buff to heal it, exhaust it, and
+     recall it instead. (Send it to base. This isn't a move.)
+     When you conquer, ready me.
+
+Q: Can I use these cards to save a unit that's already in its base? What about one that's already
+exhausted? If I can't recall it, do I still exhaust it?
+Yes. You can save any unit that meets the description in the replacement ability's condition. For
+Highlander and Unlicensed Armory, that's any friendly unit. The actions you perform on that unit as a
+replacement are like the effects of a spell or ability; you'll do as much as you can: heal the unit (if it's
+damaged), exhaust it (if it's ready), and recall it (if it's somewhere other than its base). And yes, you
+exhaust the unit even if you don't recall it; as per the above wordings, we've changed the "recall it
+exhausted" language to make that clearer.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Q: If I play Cruel Patron and kill one
+of my units for its additional cost,
+but one of these cards replaces that
+unit's death, does the cost still
+count as paid?
+Yes. You made the decision to pay
+the cost and took the action to pay it.
+What happened after that doesn't
+matter.
+
+Q: If a unit would be killed by Hidden
+Blade, but one of these cards
+replaces that unit's death, does the
+unit's controller still draw 2?
+Yes. Hidden Blade attempts to kill a
+unit, then says that "its controller"
+draws 2. Even if the unit doesn't die,
+it's still on the board and information about its controller is still
+available, so that player draws 2. This is different from Baited Hook,
+which requests information about "the killed unit," and can't find any
+information if no unit was actually killed.
+
+Timing of Healing Damage at End of Combat
+
+Q: I have Garen, Commander at a battlefield along with a Recruit
+token. Thanks to Garen, the Recruit has 2 Might. My opponent's
+total Might during the combat damage step is 6, so they deal 5
+damage to Garen and 1 to the Recruit. Does the Recruit die?
+No. Under the revised rules, combat damage is dealt, any units with
+lethal damage on them are killed, and then units are immediately
+healed of all damage before lethal damage is checked again.
+
+This means that if one of your units that died was providing a Might
+boost to other units, they're healed of any damage before losing that
+Might boost. This is a change from previous rulings that impacts cards
+including Captain Farron; Taric, Protector; Garen, Commander; and
+Darius, Executioner.
+
+Q: Does the damage from Kog'Maw's Deathknell ability happen
+before or after combat damage is healed?
+After. Kog'Maw, Caustic has a Deathknell ability that says "Deal 4 to all
+units at my battlefield." Under the revised rules, all damage currently
+on units will be healed before Kog'Maw's Deathknell ability resolves.
+This does mean, however, that any units that survive his Deathknell
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+will still have 4 damage on them after combat, and you can use a spell or another combat to finish them
+off. This is a change from previous rulings.
+
+Dealing Damage with Spells and Abilities
+
+Unyielding Spirit
+
+Q: What counts as "spell and ability damage?" What does this card do?
+"Spell and ability damage" on Unyielding Spirit is meant to encompass damage dealt by spells and
+abilities, but not damage dealt by other things as a result of spells or abilities. It will receive errata to
+clarify this.
+
+ Unyielding Spirit (revised text)
+     Prevent all damage that would be dealt this turn by spells
+     and abilities.
+
+Q: So... What does this card do?
+Most spells and abilities that deal damage just say "Deal 3" or similar. Unyielding Spirit stops damage
+from all such spells and abilities. Other cards, though, specify a source of the damage.
+
+     Damage dealt by spells is damage that a spell instructs you to deal without specifying that some
+         other object deals it.
+
+     Damage dealt by abilities is damage that an ability instructs you to deal without specifying that
+         some other object deals it. (All damage dealt by abilities is also dealt by the object that's the
+         source of the ability.)
+
+If a spell or ability instructs a particular object to deal damage, including the card the ability is on, then
+that object is dealing the damage, not the spell or ability. So Unyielding Spirit does stop damage from
+Void Seeker, Stormbringer, or Yasuo, Remorseless, but does not stop damage from Challenge, Last
+Breath, or Carnivorous Snapvine.
+
+Immortal Phoenix
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+Q: What does it mean to "kill a unit with a spell?" It seems like Hidden Blade counts, but what about a
+spell that deals damage? A spell that causes a unit to deal damage? A spell that causes a unit to die
+in some other way, like Stupefy on a unit that has 1 more Might than it has damage currently marked
+on it?
+This is unclear under existing rules, so the updated rules will clarify.
+"When you kill a unit with a spell" triggers immediately after a spell
+you control resolves if either of the following is true:
+
+    1. That spell instructs you to kill a unit during its resolution, and
+         that unit is put into the trash this way.
+
+    2. A spell instructs you to deal damage to a unit during its
+         resolution, and that unit is put into the trash during the cleanup
+         immediately following that spell's resolution.
+
+This includes "direct kill" spells you control like Hidden Blade. It also
+includes damage spells like Void Seeker, provided they mark lethal
+damage on the unit that immediately causes it to die. In all cases, the
+unit has to actually die--if that death is replaced by a card like
+Unlicensed Armory, then you didn't kill a unit with a spell.
+
+Notably, the following do not count as you killing a unit with a spell:
+
+     You are instructed to kill a unit by a spell another player controls, even if the spell instructs you to
+         kill the unit (e.g., another player's Cull the Weak).
+
+     Another player is instructed to kill a unit by a spell you control (e.g., your Cull the Weak, if you
+         don't kill any of your own units with it).
+
+     You play a spell like Challenge that causes a unit to deal lethal damage to another unit.
+     You use a spell to mark damage on a unit and the unit dies later in the turn, even if that damage
+
+         later became lethal damage for any reason.
+     You use a spell to directly or indirectly lower the Might of a unit, causing damage it's already
+
+         taken to become lethal damage. For example:
+               You use a spell like Stupefy to lower the Might of a unit that has already taken damage,
+                   causing that damage to become lethal damage.
+               You use a spell like Charm to move a unit with damage on it away from Trifarian War
+                   Camp, indirectly lowering its Might and causing that damage to become lethal damage.
+               You use a spell like Rebuke to return Lee Sin, Centered to its owner's hand, indirectly
+                   lowering the Might of a buffed unit at the same
+                   battlefield that has damage on it, causing that damage
+                   to become lethal damage.
+
+     You do anything else with a spell that causes a unit to die in
+         any other way than the two methods listed above, or at any
+         time other than during or immediately after the spell's
+         resolution.
+
+     You do any of the above, but the unit doesn't actually die.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+Q: Can Immortal Phoenix return if it is the unit that was killed? Or if it and other units were killed at
+the same time? For example, can I Hidden Blade on my own Phoenix and immediately replay it?
+Yes. Triggers like this are evaluated immediately after the event that takes place, at which point Phoenix
+is in the trash.
+
+Void Gate
+
+Q: If a spell deals damage to one or more units at Void Gate and one or more units somewhere else,
+which parts of that deal Bonus Damage?
+The Bonus Damage from Void Gate is only for damage being dealt to units at Void Gate. It will receive
+errata to clarify this. (As a bonus, Bonus Damage will now be fully defined in the rules.)
+
+ Void Gate (revised text)
+     Spells and abilities deal 1 Bonus Damage to units here.
+     (Each instance of damage the spell deals to a unit here is
+     increased by 1.)
+
+Other Cards
+
+Darius, Trifarian
+
+Q: If I play Darius, Trifarian as my second card in a turn, does he ready and gain 2 Might?
+Yes, this works. Triggers like this are evaluated immediately after the event that takes place, at which
+point Darius is on the board.
+
+Q: If I play Darius as my third card, does he ready and gain 2 Might?
+What if I play another card after him?
+No. If Darius isn't present immediately after you play your second
+card, he won't trigger that turn.
+
+Hallowed Tomb
+
+Q: Can this card only return the specific card I picked as my Chosen
+Champion? What about another copy of the same card?
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+You can return another copy of the same card. Hallowed Tomb refers to "your Chosen Champion," but
+it's quite possible that you won't be able to verify whether a card in your trash is the specific card you
+chose. For example, your Chosen Champion might have been played, returned to your hand, and then
+discarded; you wouldn't be able to prove to your opponent that it wasn't another copy of the same card.
+Because of this, the updated rules treat all copies of the card you designated as your Chosen Champion
+as interchangeable.
+
+Q: What about a different card with the same Champion tag? If Jinx,
+Rebel is my Chosen Champion, can I get back a Jinx, Demolitionist,
+because Jinx is my Chosen Champion?
+No. You can only get back a card with the exact full card name of the
+one you chose at the start of the game.
+
+Karma, Channeler
+
+Q: Does Karma trigger off of recycling runes?
+No. When the text of Riftbound cards refers to "cards," it means Main Deck cards only. Karma's
+reminder text reflects this.
+
+Q: Does Karma trigger off of recycling cards into other players' Main Deck due to a card like
+Sabotage?
+No. The updated rules will clarify that regardless of who is instructed to do the recycling in card text,
+players always recycle their own cards. To reflect this, Karma is receiving errata.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+ Karma, Channeler (revised text)
+
+     [Vision] (When you play me, look at the top card of your
+     Main Deck. You may recycle it.)
+     When you recycle one or more cards to your Main Deck,
+     buff a friendly unit. (If it doesn't have a buff, it gets a +1 [M]
+     buff.)
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+Sun Disc
+
+Q: Can I use Sun Disc's ability the turn I play it, counting itself for its
+Legion ability?
+Yes. Although Legion normally requires "another" card for spells and
+play effects, Sun Disc's activated ability is not Sun Disc. On
+subsequent turns, you'll need to play another card to turn on Legion.
+
+Symbol of the Solari
+
+Q: What does it mean for combat to be a "tie?"
+The updated rules will more clearly define what it means to win, lose,
+or tie a combat.
+
+     A player wins a combat if only their units are present after
+         combat damage has been dealt.
+
+     A player loses a combat if the other player in combat still has
+         units present and they do not (ie, if the other player wins).
+
+     A combat ends in a tie if either:
+               Neither player has units left at the battlefield (e.g. they all died to combat damage).
+               Both players have units left at the battlefield (e.g. one or more units was ineligible to deal
+                   or receive combat damage--stunned units, Kayn, etc).
+
+Winning a combat is not the same as conquering, although ordinarily the attacking player must win in
+order to conquer. Either the attacker or the defender can win, and each combat either ends in a tie, or
+has exactly one winner and one loser.
+
+When combat ends in a tie, all attacking units are recalled to their base and the defender retains control
+of the battlefield. This doesn't cause the defender to win the combat; it's too late for that.
+
+Q: Does Symbol of the Solari recall all units everywhere?
+No, just the units that were involved in the tie. It's receiving minor errata to clarify this.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Symbol of the Solari (revised text)
+
+     If a combat where you are the attacker ends in a tie that
+     would recall any of your units, recall all units at that
+     battlefield instead. (Send them to base. This isn't a move.
+     Ties are calculated after combat damage is dealt.)
+
+Q: So what does Symbol of the Solari do?
+Symbol of the Solari has a replacement effect that applies to a combat if 1) you are the attacker, and 2)
+the combat ends in a tie because both players have units remaining. Ordinarily this would result in your
+units being recalled and the defender retaining control, but Symbol of the Solari instead causes all units
+at that battlefield to be recalled, leaving the battlefield open and uncontested.
+
+Teemo, Strategist
+
+Q: What does this card do, and when can it do it? If I play him from Hidden during combat, does his
+ability trigger twice?
+We're issuing a rules update that changes how Teemo and other defend and attack triggers work, and
+we're issuing a minor errata for Teemo in accordance with it. We're also clarifying what his ability does
+and how many targets it has. This contradicts some previous guidance we've given on this card, as
+we've examined what it says, what it's intended to do, and what our rules can support.
+
+Teemo has a "when I defend" trigger. Under previous rules, attack and defend triggers happened only
+at the beginning of combat. Teemo's dual trigger condition was meant to cover this--he either triggered
+at the beginning of combat, or he triggered when you played him into combat.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+ Teemo, Strategist (revised text)
+
+     [Hidden] (Hide now for [A] to react with later for [0].)
+     When I defend, choose an enemy unit here and reveal the
+     top 5 cards of your Main Deck. Deal 1 to that unit for each
+     card with [Hidden] revealed this way, then recycle the
+     revealed cards.
+
+Under the updated rules, attack and defend triggers trigger any time a unit becomes an attacker or
+defender--whether that's because combat began, because the unit was moved into combat using a
+spell or ability, or because the unit was played into combat somehow. (And yes, this means that a unit
+that starts in combat, moves out somehow, and then moves back can trigger these abilities twice. We
+think this is fine--moving a unit at Action speed isn't easy to do, and doing it twice is even harder, so we
+don't mind there being a substantial reward.)
+
+One thing to note about this change that doesn't apply to Teemo directly: Assault and Shield are not
+attack or defend triggers, so they'll work the same way they did before. They apply while a unit is an
+attacker or defender in combat as appropriate, stop applying once the unit is no longer in combat, and
+start applying if it joins or rejoins combat partway through.
+
+This rules change makes the "played from [Hidden]" part of Teemo's text redundant. And since the
+ability only does anything if enemy units are present, we're issuing errata to clarify that it only triggers
+once as intended, whether Teemo is played into combat or was there from the start. We're also
+rephrasing the ability to make it clearer that it only has one target.
+
+Q: How many enemy units do I target with Teemo, and when do I choose them?
+Teemo has only a single target, an enemy unit, chosen when his triggered ability is placed on the chain.
+That ability will deal a variable amount of damage to that unit based on how many units with Hidden you
+reveal. This is a change from previous rulings.
+
+Q: Which cards count for Teemo? Does Ember Monk count? What about Noxus Saboteur?
+Teemo counts cards that have the Hidden keyword, but not cards that mention Hidden but don't actually
+have it. Ember Monk and Noxus Saboteur do not have the Hidden keyword.
+
+Wraith of Echoes
+
+Q: Does Wraith of Echoes trigger on its own death?
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+No. Units don't "see" themselves die unless they have an ability such as Deathknell that explicitly allows
+them to. For clarity, we are issuing an errata that adds the word "another" to Wraith of Echoes.
+
+ Wraith of Echoes (revised text)
+     The first time another friendly unit dies each turn, draw 1.
+
+Q: What about other units that die at the same time as Wraith of Echoes, such as to a mass damage
+spell like Unchecked Power?
+A: No. Units that die also don't "see" anything else that dies at the same time they do.
+Q: What happens if the first time a unit dies in a turn is actually two or more units dying
+simultaneously? Does it trigger twice?
+A: Just once. If an ability triggers "the first time" something happens and that trigger condition is met
+multiple times simultaneously, you'll pick one to count as the first.
+
+Appendix: Targeting
+
+This section features a full breakdown of the rules for what constitutes a target. As we said above, most
+things that are affected by a spell or ability are targets.
+An object or player mentioned in a spell or ability is a target if all of the following are true:
+
+    1. something publicly visible to all players;
+    2. that you and you alone choose;
+    3. that isn't part of a targeting restriction, cost, trigger condition, replacement effect, or an action
+
+         that "must" be taken.
+Breaking that down a bit:
+1) "Something publicly visible to all players" means a player, or a game object that's in a zone whose
+information level is Public.
+[Last updated: 2025-11-04] - This document is now retired, please reference the Core Rules: Patch
+Notes and Card Errata.
+
+     For example, a unit on the board, a spell on the chain, a card in the trash, or a player can all be
+         targets.
+
+     A card in your hand cannot be a target, because it's not in a Public zone. If you're required to
+         choose a card in your hand, you'll do it as the spell or ability resolves.
+
+     A facedown card at a battlefield can be a target, because while the card's face is Private
+         information, its presence as a facedown card in that zone is Public.
+
+     "You may play a unit from your hand, ignoring its costs" doesn't have a target; "You may play a
+         unit from your trash, ignoring its costs" targets a unit in your trash.
+
+2) "That you and you alone choose" means two things:
+     First, it excludes choices that are made in whole or in part by other players, like the units killed by
+         Cull the Weak. Cull the Weak doesn't have any targets, because you're instructed to kill a unit as
+         part of an instruction for all players to choose and kill a unit.
+     Second, it excludes anything that is not a choice. Some examples: something that affects "all"
+         objects that meet some set of criteria (no choice to be made because all of them are affected); a
+         reference to "[something's] controller" (no choice to be made because it only has one
+         controller); or a reference to "your legend" (because you can only have one legend).
+     This exception does not apply to things that are currently the only legal option for what would
+         otherwise be a choice; for example, a spell that says "Kill an enemy unit" always targets that
+         enemy unit, even if it's currently the only enemy unit on the board.
+
+3) "that isn't part of a targeting restriction, cost, trigger condition, replacement effect, or an action that
+`must' be taken" means that an object isn't a target just because it's mentioned in text, it has to be acted
+upon directly or instructed to act by the spell or ability's instructions.
+
+     "Targeting restriction" excludes objects that are mentioned in order to identify other targets. A
+         spell that refers to a "unit at a battlefield" targets the unit, but not the battlefield.
+
+     "Cost" excludes anything that's listed before the colon in an activated ability or as part of an
+         additional cost. Cruel Patron's additional cost and Malzahar's activated ability don't have any
+         targets. They are chosen as the card or ability is placed on the chain, but that's because they're
+         costs, not because they're targets.
+
+     "Trigger condition" excludes anything that's identified as part of a triggered ability's conditions;
+         "When an enemy unit attacks, give it -1 Might this turn." doesn't have any targets.
+
+     "Replacement effect" excludes anything that is part of the condition or the effect of a
+         replacement effect. A hypothetical card that said "The next time a friendly unit would die, you
+         may kill another friendly unit instead" wouldn't target anything; it would apply the next time any
+         friendly unit died, and you could choose to kill any other friendly unit without it being a target
+         either. If it instead said "Choose a friendly unit. The next time it would die...", then it would target
+         a specific unit, and would look for the next time that unit died.
+
+     Actions that "must" be taken are a new category to handle cards like Sigil of the Storm. It
+         excludes only units that use this wording, and its purpose is to make sure that we can make
+         cards that require something to happen and make sure it actually does.
+
