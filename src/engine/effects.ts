@@ -72,6 +72,11 @@ export function parseEffectText(text: string): ParsedEffect {
   return parse(text)
 }
 
+/** True if a spell needs the player to choose a target unit (deal N to a unit). */
+export function needsTarget(card: Card): boolean {
+  return card.type === 'spell' && spellEffect(card).damage > 0
+}
+
 /** On-play effect for a unit/gear — only the unambiguous on-play triggers. */
 export function onPlayEffect(card: Card): ParsedEffect {
   const t = (card.text ?? '').toLowerCase()

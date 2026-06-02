@@ -34,6 +34,10 @@ export interface MatchBoardProps {
   onCreateToken?: (cardId: string) => void
   /** Right-click card actions (buff / recycle / trash). */
   onCardAction?: (action: Action) => void
+  /** Targeting mode: clicking a unit picks it as a spell target. */
+  targetingActive?: boolean
+  onTarget?: (iid: string) => void
+  onCancelTarget?: () => void
   /** Open the card detail modal for any card on the board. */
   onInspect?: (card: Card) => void
 }
@@ -58,6 +62,9 @@ export default function MatchBoard({
   onConcede,
   onCreateToken,
   onCardAction,
+  targetingActive,
+  onTarget,
+  onCancelTarget,
   onInspect,
 }: MatchBoardProps) {
   // Multi-select for group moves.
@@ -96,6 +103,11 @@ export default function MatchBoard({
     canAct && match.phase === 'showdown' && match.showdown?.priority === perspective
 
   const inspect = (ci: EngineCard) => {
+    // In targeting mode, clicking a unit selects it as the spell target.
+    if (targetingActive && onTarget && getCard(ci.cardId)?.type === 'unit') {
+      onTarget(ci.iid)
+      return
+    }
     const c = getCard(ci.cardId)
     if (c && onInspect) onInspect(c)
   }
@@ -107,7 +119,20 @@ export default function MatchBoard({
   }
 
   return (
-    <div className="space-y-3">
+    <div className={`space-y-3 ${targetingActive ? 'ring-2 ring-rose-400/40 rounded-xl' : ''}`}>
+      {/* Targeting banner */}
+      {targetingActive && (
+        <div className="flex items-center justify-between rounded-xl border border-rose-400/50 bg-rose-500/10 p-3">
+          <span className="text-sm font-semibold text-rose-200">🎯 Choose a target unit…</span>
+          <button
+            onClick={onCancelTarget}
+            className="rounded bg-white/10 px-3 py-1 text-sm hover:bg-white/20"
+          >
+            Cancel (Esc)
+          </button>
+        </div>
+      )}
+
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
         {opponents.map((opp) => (

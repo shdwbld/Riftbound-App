@@ -4,10 +4,11 @@ import { listDecks, getDeck } from '../lib/deckStorage'
 import { getCard } from '../data/cards'
 import type { Deck } from '../types/deck'
 import type { Card } from '../types/cards'
-import { type MatchState, type PlayerId, type EngineCard, type Action } from '../engine/types'
+import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment } from '../engine/types'
 import { createMatch } from '../engine/setup'
 import { reduce } from '../engine/engine'
 import { autoPayForCard, canAfford } from '../engine/autopay'
+import { needsTarget } from '../engine/effects'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
@@ -20,6 +21,7 @@ export default function MatchPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [targeting, setTargeting] = useState<{ iid: string; payment: Payment; player: PlayerId } | null>(null)
 
   // Stable refs so the keyboard handler always sees current state.
   const matchRef = useRef<MatchState | null>(match)
@@ -61,6 +63,10 @@ export default function MatchPage() {
       const k = e.key.toLowerCase()
       if (k === '?' || k === 'h') {
         setShowHelp((v) => !v)
+        return
+      }
+      if (k === 'escape') {
+        setTargeting(null)
         return
       }
       if (m.phase === 'gameover' || m.phase === 'mulligan') return
@@ -153,7 +159,19 @@ export default function MatchPage() {
     const type =
       card.type === 'unit' ? 'PLAY_UNIT' : card.type === 'gear' ? 'PLAY_GEAR' : card.type === 'spell' ? 'PLAY_SPELL' : null
     if (!type) return
+    // Damage spells need a target — enter targeting mode first.
+    if (type === 'PLAY_SPELL' && needsTarget(card)) {
+      setTargeting({ iid: c.iid, payment, player: controlling })
+      flash('Pick a target unit.')
+      return
+    }
     act({ type, player: controlling, iid: c.iid, payment })
+  }
+
+  const onTarget = (targetIid: string) => {
+    if (!targeting) return
+    act({ type: 'PLAY_SPELL', player: targeting.player, iid: targeting.iid, payment: targeting.payment, targets: [targetIid] })
+    setTargeting(null)
   }
 
   return (
@@ -173,6 +191,9 @@ export default function MatchPage() {
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
         onCreateToken={(cardId) => act({ type: 'CREATE_TOKEN', player: controlling, cardId })}
         onCardAction={(a) => act(a)}
+        targetingActive={!!targeting}
+        onTarget={onTarget}
+        onCancelTarget={() => setTargeting(null)}
         onInspect={setInspect}
       />
       <div className="flex justify-end">

@@ -9,10 +9,12 @@ import {
   type PlayerId,
   type EngineCard,
   type Action,
+  type Payment,
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
 import { reduce } from '../engine/engine'
 import { autoPayForCard, canAfford } from '../engine/autopay'
+import { needsTarget } from '../engine/effects'
 import {
   type Transport,
   type NetMessage,
@@ -41,6 +43,7 @@ export default function OnlinePage() {
   const [match, setMatch] = useState<MatchState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
+  const [targeting, setTargeting] = useState<{ iid: string; payment: Payment } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
   const [seat, setSeat] = useState<PlayerId>(0)
   const [lobbyInfo, setLobbyInfo] = useState<{ joined: number; needed: number }>({
@@ -272,7 +275,17 @@ export default function OnlinePage() {
     const type =
       card.type === 'unit' ? 'PLAY_UNIT' : card.type === 'gear' ? 'PLAY_GEAR' : card.type === 'spell' ? 'PLAY_SPELL' : null
     if (!type) return
+    if (type === 'PLAY_SPELL' && needsTarget(card)) {
+      setTargeting({ iid: c.iid, payment })
+      flash('Pick a target unit.')
+      return
+    }
     dispatch({ type, player: seat, iid: c.iid, payment })
+  }
+  const onTarget = (targetIid: string) => {
+    if (!targeting) return
+    dispatch({ type: 'PLAY_SPELL', player: seat, iid: targeting.iid, payment: targeting.payment, targets: [targetIid] })
+    setTargeting(null)
   }
 
   return (
@@ -300,6 +313,9 @@ export default function OnlinePage() {
         onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}
         onCreateToken={(cardId) => dispatch({ type: 'CREATE_TOKEN', player: seat, cardId })}
         onCardAction={(a) => dispatch(a)}
+        targetingActive={!!targeting}
+        onTarget={onTarget}
+        onCancelTarget={() => setTargeting(null)}
         onInspect={setInspect}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}

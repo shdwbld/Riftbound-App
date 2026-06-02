@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { reduce } from './engine'
 import { parseKeywords } from './keywords'
 import { autoPayForCard } from './autopay'
+import { needsTarget } from './effects'
 import { CARDS } from '../data/cards'
 import {
   type MatchState,
@@ -259,6 +260,28 @@ describe('chain (Batch A)', () => {
     // The draw spell was countered → its draw never happened (deck untouched).
     expect(r.state.players[0].zones.mainDeck.length).toBe(1)
     expect(r.state.players[0].zones.trash.some((c) => c.cardId === drawSpell.id)).toBe(true)
+  })
+})
+
+describe('targeting (Batch B)', () => {
+  it('a damage spell resolves onto its chosen target', () => {
+    const dmgSpell = CARDS.find((c) => c.type === 'spell' && !c.alternateArt && needsTarget(c))
+    if (!dmgSpell) return
+    const s = baseState()
+    const target = mk(vanilla.id, 1, { exhausted: true })
+    s.battlefields[0].units.push(target)
+    const sp = mk(dmgSpell.id, 0)
+    s.players[0].zones.hand.push(sp)
+    giveRunes(s.players[0], dmgSpell)
+    const pay = autoPayForCard(s.players[0], dmgSpell)
+    if (!pay) return
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, payment: pay, targets: [target.iid] })
+    expect(r.state.chain.length).toBe(1)
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    const still = r.state.battlefields[0].units.find((u) => u.iid === target.iid)
+    // Either the unit died (removed) or it has marked damage.
+    expect(!still || still.damage > 0).toBe(true)
   })
 })
 
