@@ -13,7 +13,7 @@ import {
   ok,
   fail,
 } from './types'
-import { RULES, TOKEN_PILE_IDS } from './setup'
+import { RULES, TOKEN_PILE_IDS, shuffle } from './setup'
 import { parseKeywords } from './keywords'
 import { spellEffect, onPlayEffect, type ParsedEffect } from './effects'
 import { battlefieldPassive } from './battlefields'
@@ -30,19 +30,23 @@ import { battlefieldPassive } from './battlefields'
 
 let tokenCounter = 0
 
+// Deep-copy card instances so in-place mutations (buff/stun/damage) never leak
+// into prior states kept for undo history.
+const copyCard = (c: EngineCard): EngineCard => ({ ...c, attached: [...c.attached] })
+
 function clonePlayer(p: PlayerState): PlayerState {
   return {
     ...p,
-    legend: p.legend ? { ...p.legend } : null,
-    champion: p.champion ? { ...p.champion } : null,
+    legend: p.legend ? copyCard(p.legend) : null,
+    champion: p.champion ? copyCard(p.champion) : null,
     tokenPile: [...p.tokenPile],
     zones: {
-      mainDeck: [...p.zones.mainDeck],
-      runeDeck: [...p.zones.runeDeck],
-      hand: [...p.zones.hand],
-      base: [...p.zones.base],
-      runePool: [...p.zones.runePool],
-      trash: [...p.zones.trash],
+      mainDeck: p.zones.mainDeck.map(copyCard),
+      runeDeck: p.zones.runeDeck.map(copyCard),
+      hand: p.zones.hand.map(copyCard),
+      base: p.zones.base.map(copyCard),
+      runePool: p.zones.runePool.map(copyCard),
+      trash: p.zones.trash.map(copyCard),
     },
   }
 }
@@ -51,7 +55,7 @@ function clone(s: MatchState): MatchState {
   return {
     ...s,
     players: s.players.map(clonePlayer),
-    battlefields: s.battlefields.map((b) => ({ ...b, units: [...b.units] })),
+    battlefields: s.battlefields.map((b) => ({ ...b, units: b.units.map(copyCard) })),
     showdown: s.showdown ? { ...s.showdown } : null,
     log: s.log,
     seq: s.seq + 1,
@@ -181,6 +185,20 @@ function channelN(p: PlayerState, n: number): number {
   return ch
 }
 
+/** Send a card to a player's Trash as it leaves play. Tokens cease to exist
+ *  (they don't go to the Trash), and buffs/temp modifiers are cleared. */
+function sendToTrash(p: PlayerState, card: EngineCard): void {
+  if (getCard(card.cardId)?.supertype === 'token') return // tokens cease to exist
+  p.zones.trash.push({
+    ...card,
+    damage: 0,
+    exhausted: false,
+    buffs: 0,
+    tempMight: 0,
+    attached: [],
+  })
+}
+
 /** Create N Recruit tokens onto a player's Base (from card effects). */
 function spawnRecruits(p: PlayerState, n: number, turn: number): number {
   const id = TOKEN_PILE_IDS[0]
@@ -230,7 +248,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number): vo
       u.damage += amount
       if (u.damage >= mightOf(u)) {
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
-        s.players[u.owner].zones.trash.push({ ...u, damage: 0 })
+        sendToTrash(s.players[u.owner], u)
       }
       recomputeControllers(s)
       return
@@ -242,11 +260,74 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number): vo
       u.damage += amount
       if (u.damage >= mightOf(u)) {
         p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
-        p.zones.trash.push({ ...u, damage: 0 })
+        sendToTrash(p, u)
       }
       return
     }
   }
+}
+
+/** Standard move of one or more ready units to a battlefield (group move). All
+ *  exhaust; a single showdown opens if the destination is contested. */
+function moveUnits(
+  state: MatchState,
+  player: PlayerId,
+  iids: string[],
+  toBattlefield: number,
+): EngineResult {
+  const guard = requireActiveAction(state, player)
+  if (guard) return fail(state, guard)
+  if (toBattlefield < 0 || toBattlefield >= state.battlefields.length)
+    return fail(state, 'Invalid battlefield.')
+  if (iids.length === 0) return fail(state, 'No units selected.')
+  const prevController = state.battlefields[toBattlefield].controller
+  const s = clone(state)
+  const p = s.players[player]
+  const moved: EngineCard[] = []
+  for (const iid of iids) {
+    let unit = removeFromZone(p, 'base', iid)
+    if (!unit) {
+      for (let i = 0; i < s.battlefields.length; i++) {
+        if (i === toBattlefield) continue
+        const idx = s.battlefields[i].units.findIndex(
+          (u) => u.iid === iid && u.owner === player,
+        )
+        if (idx >= 0) {
+          if (!parseKeywords(def(s.battlefields[i].units[idx])).ganking)
+            return fail(state, 'Only units with Ganking can move between battlefields.')
+          unit = s.battlefields[i].units.splice(idx, 1)[0]
+          break
+        }
+      }
+    }
+    if (!unit) return fail(state, 'Unit not found at your base.')
+    if (unit.exhausted) return fail(state, `${def(unit)?.name} is exhausted.`)
+    unit.exhausted = true
+    s.battlefields[toBattlefield].units.push(unit)
+    moved.push(unit)
+  }
+  recomputeControllers(s)
+  const bf = s.battlefields[toBattlefield]
+  const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
+  let s2 = log(s, player, `Moved ${moved.length} unit(s) to ${bfName}.`)
+  const contested = bf.units.some((u) => u.owner !== player)
+  if (contested) {
+    s2.phase = 'showdown'
+    s2.showdown = {
+      battlefield: toBattlefield,
+      priority: nextPlayer(s2, player),
+      passes: 0,
+      movedUnit: moved[0].iid,
+    }
+    s2 = log(s2, player, 'Showdown opened — opponents may respond.')
+  } else if (
+    s2.battlefields[toBattlefield].controller === player &&
+    prevController !== player
+  ) {
+    s2 = awardPoints(s2, player, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    s2 = applyConquerPassive(s2, player, toBattlefield)
+  }
+  return ok(s2)
 }
 
 // --- turn flow -------------------------------------------------------------
@@ -304,7 +385,7 @@ export function beginTurn(state: MatchState): MatchState {
     )
     if (expired.length) {
       bf.units = bf.units.filter((u) => !expired.includes(u))
-      for (const u of expired) p.zones.trash.push({ ...u, damage: 0 })
+      for (const u of expired) sendToTrash(p, u)
       s = log(s, ap, `${expired.length} Temporary unit(s) expired.`)
     }
   }
@@ -312,7 +393,7 @@ export function beginTurn(state: MatchState): MatchState {
     (u) => parseKeywords(def(u)).temporary && (u.enteredTurn ?? 0) < s.turn,
   )) {
     p.zones.base = p.zones.base.filter((x) => x.iid !== u.iid)
-    p.zones.trash.push({ ...u, damage: 0 })
+    sendToTrash(p, u)
   }
 
   // Score: 1 point per held battlefield (skip the very first turn).
@@ -358,20 +439,33 @@ export function beginTurn(state: MatchState): MatchState {
   }
   if (channeled) s = log(s, ap, `Channeled ${channeled} rune(s).`)
 
-  // Draw — with Burn Out: drawing from an empty deck gives the next player +1.
+  // Draw — empty deck triggers Burn Out (reshuffle Trash, opponent scores).
   for (let i = 0; i < RULES.drawPerTurn; i++) {
-    if (p.zones.mainDeck.length > 0) {
-      p.zones.hand.push(p.zones.mainDeck.shift()!)
-    } else {
-      const beneficiary = nextPlayer(s, ap)
-      s = log(s, ap, `${p.name} burned out (empty deck).`)
-      s = awardPoints(s, beneficiary, 1, 'scored from Burn Out', 'hold')
+    if (s.players[ap].zones.mainDeck.length === 0) {
+      s = burnOut(s, ap)
       if (s.winner !== null) return s
     }
+    const deck = s.players[ap].zones.mainDeck
+    if (deck.length > 0) s.players[ap].zones.hand.push(deck.shift()!)
   }
 
   s.phase = 'action'
   return s
+}
+
+/** Burn Out (empty-deck draw): recycle Trash into the Main Deck, shuffle, and a
+ *  chosen opponent scores 1. With no Trash to recycle, that opponent wins. */
+function burnOut(state: MatchState, player: PlayerId): MatchState {
+  const beneficiary = nextPlayer(state, player)
+  const p = state.players[player]
+  if (p.zones.trash.length === 0) {
+    const s = log(state, player, `${p.name} burned out with no Trash — ${state.players[beneficiary].name} wins!`)
+    return endGame(s, beneficiary)
+  }
+  p.zones.mainDeck = shuffle([...p.zones.mainDeck, ...p.zones.trash])
+  p.zones.trash = []
+  const s = log(state, player, `${p.name} burned out — Trash reshuffled into the deck.`)
+  return awardPoints(s, beneficiary, 1, 'scored from Burn Out', 'hold')
 }
 
 function endGame(state: MatchState, winner: PlayerId): MatchState {
@@ -521,7 +615,7 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
       (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
       (u.owner === moverOwner && attackersDefeated.has(u.iid))
     if (dead) {
-      s.players[u.owner].zones.trash.push({ ...u, damage: 0, exhausted: false })
+      sendToTrash(s.players[u.owner], u)
       if (parseKeywords(def(u)).deathknell) deathknells.push(u)
     } else survivors.push({ ...u, damage: 0 })
   }
@@ -745,72 +839,22 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       return ok(s1)
     }
 
-    case 'MOVE_UNIT': {
+    case 'MOVE_UNIT':
+      return moveUnits(state, action.player, [action.iid], action.toBattlefield)
+
+    case 'MOVE_UNITS':
+      return moveUnits(state, action.player, action.iids, action.toBattlefield)
+
+    case 'STUN_UNIT': {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
-      if (action.toBattlefield < 0 || action.toBattlefield >= state.battlefields.length)
-        return fail(state, 'Invalid battlefield.')
-      const prevController = state.battlefields[action.toBattlefield].controller
       const s = clone(state)
-      const p = s.players[action.player]
-      // Move from base, or from another battlefield if the unit has Ganking.
-      let unit = removeFromZone(p, 'base', action.iid)
-      let fromBattlefield = -1
-      if (!unit) {
-        for (let i = 0; i < s.battlefields.length; i++) {
-          if (i === action.toBattlefield) continue
-          const idx = s.battlefields[i].units.findIndex(
-            (u) => u.iid === action.iid && u.owner === action.player,
-          )
-          if (idx >= 0) {
-            if (!parseKeywords(def(s.battlefields[i].units[idx])).ganking)
-              return fail(state, 'Only units with Ganking can move between battlefields.')
-            unit = s.battlefields[i].units.splice(idx, 1)[0]
-            fromBattlefield = i
-            break
-          }
-        }
-      }
-      if (!unit) return fail(state, 'Unit not found at your base.')
-      if (unit.exhausted) {
-        if (fromBattlefield >= 0) s.battlefields[fromBattlefield].units.push(unit)
-        else p.zones.base.push(unit)
-        return fail(state, 'Unit is exhausted.')
-      }
-      unit.exhausted = true
-      const bf = s.battlefields[action.toBattlefield]
-      bf.units.push(unit)
-      recomputeControllers(s)
-      const contested = bf.units.some((u) => u.owner !== action.player)
-      let s2 = log(
-        s,
-        action.player,
-        `Moved ${def(unit)?.name} to ${getCard(bf.cardId)?.name ?? 'battlefield'}.`,
-      )
-      if (contested) {
-        s2.phase = 'showdown'
-        s2.showdown = {
-          battlefield: action.toBattlefield,
-          priority: nextPlayer(s2, action.player),
-          passes: 0,
-          movedUnit: unit.iid,
-        }
-        s2 = log(s2, action.player, 'Showdown opened — opponents may respond.')
-      } else if (
-        s2.battlefields[action.toBattlefield].controller === action.player &&
-        prevController !== action.player
-      ) {
-        // Uncontested takeover of a battlefield you didn't hold = Conquer.
-        s2 = awardPoints(
-          s2,
-          action.player,
-          RULES.pointsPerConquer,
-          `conquered ${getCard(bf.cardId)?.name ?? 'battlefield'}`,
-          'conquer',
-        )
-        s2 = applyConquerPassive(s2, action.player, action.toBattlefield)
-      }
-      return ok(s2)
+      const target =
+        s.battlefields.flatMap((b) => b.units).find((u) => u.iid === action.iid) ??
+        s.players.flatMap((pl) => pl.zones.base).find((u) => u.iid === action.iid)
+      if (!target) return fail(state, 'No such unit to stun.')
+      target.stunned = true
+      return ok(log(s, action.player, `Stunned ${getCard(target.cardId)?.name}.`))
     }
 
     case 'RETREAT': {
@@ -864,12 +908,14 @@ export function reduce(state: MatchState, action: Action): EngineResult {
     }
 
     case 'DRAW': {
-      const s = clone(state)
-      const p = s.players[action.player]
-      if (p.zones.mainDeck.length === 0)
-        return ok(awardPoints(s, nextPlayer(s, action.player), 1, 'scored from Burn Out', 'hold'))
-      drawN(p, 1)
-      return ok(log(s, action.player, `${p.name} drew a card.`))
+      let s = clone(state)
+      if (s.players[action.player].zones.mainDeck.length === 0) {
+        s = burnOut(s, action.player)
+        if (s.winner !== null) return ok(s)
+      }
+      const deck = s.players[action.player].zones.mainDeck
+      if (deck.length > 0) s.players[action.player].zones.hand.push(deck.shift()!)
+      return ok(log(s, action.player, `${s.players[action.player].name} drew a card.`))
     }
 
     case 'BUFF_UNIT': {
@@ -902,7 +948,7 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       for (const z of ['hand', 'base', 'runePool'] as ZoneId[]) {
         const c = removeFromZone(p, z, action.iid)
         if (c) {
-          p.zones.trash.push({ ...c, exhausted: false, damage: 0 })
+          sendToTrash(p, c)
           return ok(log(s, action.player, `Trashed ${getCard(c.cardId)?.name}.`))
         }
       }
@@ -910,7 +956,7 @@ export function reduce(state: MatchState, action: Action): EngineResult {
         const idx = bf.units.findIndex((u) => u.iid === action.iid && u.owner === action.player)
         if (idx >= 0) {
           const [c] = bf.units.splice(idx, 1)
-          p.zones.trash.push({ ...c, exhausted: false, damage: 0 })
+          sendToTrash(p, c)
           recomputeControllers(s)
           return ok(log(s, action.player, `Trashed ${getCard(c.cardId)?.name}.`))
         }

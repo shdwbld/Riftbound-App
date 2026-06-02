@@ -139,7 +139,7 @@ export default function MatchPage() {
         perspective={controlling}
         canAct
         onPlay={play}
-        onMove={(iid, bf) => act({ type: 'MOVE_UNIT', player: controlling, iid, toBattlefield: bf })}
+        onMove={(iids, bf) => act({ type: 'MOVE_UNITS', player: controlling, iids, toBattlefield: bf })}
         onPass={() => act({ type: 'PASS', player: controlling })}
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
         onActivateLegend={() => act({ type: 'ACTIVATE_LEGEND', player: controlling })}

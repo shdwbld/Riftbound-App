@@ -157,6 +157,9 @@ export type Action =
       iid: string
       toBattlefield: number
     }
+  /** Move several units together (one showdown) — group standard move. */
+  | { type: 'MOVE_UNITS'; player: PlayerId; iids: string[]; toBattlefield: number }
+  | { type: 'STUN_UNIT'; player: PlayerId; iid: string }
   | { type: 'RETREAT'; player: PlayerId; iid: string }
   | { type: 'PASS'; player: PlayerId }
   | { type: 'END_TURN'; player: PlayerId }

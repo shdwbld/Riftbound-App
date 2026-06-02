@@ -22,7 +22,8 @@ export interface MatchBoardProps {
   perspective: PlayerId
   canAct: boolean
   onPlay: (c: EngineCard) => void
-  onMove: (iid: string, bf: number) => void
+  /** Move one or more selected units to a battlefield (group standard move). */
+  onMove: (iids: string[], bf: number) => void
   onPass: () => void
   onEndTurn: () => void
   onActivateLegend?: () => void
@@ -54,21 +55,28 @@ export default function MatchBoard({
   onCardAction,
   onInspect,
 }: MatchBoardProps) {
-  const [selectedUnit, setSelectedUnit] = useState<string | null>(null)
+  // Multi-select for group moves.
+  const [selectedUnits, setSelectedUnits] = useState<string[]>([])
+  const toggleSelected = (iid: string) =>
+    setSelectedUnits((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : [...s, iid]))
   const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action: Action }[] } | null>(null)
   const me = match.players[perspective]
 
-  const openMenu = (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand') => {
+  const openMenu = (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield') => {
     e.preventDefault()
     if (!onCardAction) return
     const card = getCard(ci.cardId)
     const items: { label: string; action: Action }[] = []
-    if (card?.type === 'rune' && zone === 'runePool')
-      items.push({ label: '♺ Recycle rune', action: { type: 'RECYCLE_RUNE', player: perspective, iid: ci.iid } })
     if (card?.type === 'unit')
-      items.push({ label: '✦ Buff +1', action: { type: 'BUFF_UNIT', player: perspective, iid: ci.iid } })
-    items.push({ label: '🗑 Trash', action: { type: 'TRASH_CARD', player: perspective, iid: ci.iid } })
-    setMenu({ x: e.clientX, y: e.clientY, items })
+      items.push({ label: '⊘ Stun', action: { type: 'STUN_UNIT', player: perspective, iid: ci.iid } })
+    if (ci.owner === perspective) {
+      if (card?.type === 'rune' && zone === 'runePool')
+        items.push({ label: '♺ Recycle rune', action: { type: 'RECYCLE_RUNE', player: perspective, iid: ci.iid } })
+      if (card?.type === 'unit')
+        items.push({ label: '✦ Buff +1', action: { type: 'BUFF_UNIT', player: perspective, iid: ci.iid } })
+      items.push({ label: '🗑 Trash', action: { type: 'TRASH_CARD', player: perspective, iid: ci.iid } })
+    }
+    if (items.length) setMenu({ x: e.clientX, y: e.clientY, items })
   }
   // Opponents in seating order, starting just after the local player.
   const opponents: PlayerState[] = []
@@ -85,9 +93,9 @@ export default function MatchBoard({
     if (c && onInspect) onInspect(c)
   }
   const move = (bf: number) => {
-    if (selectedUnit) {
-      onMove(selectedUnit, bf)
-      setSelectedUnit(null)
+    if (selectedUnits.length) {
+      onMove(selectedUnits, bf)
+      setSelectedUnits([])
     }
   }
 
@@ -106,7 +114,7 @@ export default function MatchBoard({
           const bfCard = getCard(bf.cardId)
           const ctrl = bf.controller
           const ctrlDomains = ctrl != null ? playerDomains(match.players[ctrl]) : []
-          const targetable = selectedUnit !== null && myActionTurn
+          const targetable = selectedUnits.length > 0 && myActionTurn
           const isFury = ctrlDomains[0] === 'fury'
           const isLight = ctrlDomains[0] === 'order' || ctrlDomains[0] === 'mind'
           return (
@@ -150,6 +158,10 @@ export default function MatchBoard({
                       e.stopPropagation()
                       inspect(u)
                     }}
+                    onContextMenu={(e) => {
+                      e.stopPropagation()
+                      openMenu(e, u, 'battlefield')
+                    }}
                     className={u.owner === perspective ? '' : 'opacity-90'}
                   >
                     <BoardCard ci={u} size="sm" />
@@ -188,8 +200,8 @@ export default function MatchBoard({
       <PlayerMat
         me={me}
         myActionTurn={myActionTurn}
-        selectedUnit={selectedUnit}
-        onSelectUnit={setSelectedUnit}
+        selectedUnits={selectedUnits}
+        onToggleUnit={toggleSelected}
         onInspect={inspect}
         onPlay={onPlay}
         onEndTurn={onEndTurn}
@@ -299,8 +311,8 @@ function OpponentMat({
 function PlayerMat({
   me,
   myActionTurn,
-  selectedUnit,
-  onSelectUnit,
+  selectedUnits,
+  onToggleUnit,
   onInspect,
   onPlay,
   onEndTurn,
@@ -312,8 +324,8 @@ function PlayerMat({
 }: {
   me: PlayerState
   myActionTurn: boolean
-  selectedUnit: string | null
-  onSelectUnit: (iid: string | null) => void
+  selectedUnits: string[]
+  onToggleUnit: (iid: string) => void
   onInspect: (ci: EngineCard) => void
   onPlay: (c: EngineCard) => void
   onEndTurn: () => void
@@ -424,15 +436,15 @@ function PlayerMat({
               <button
                 onClick={() => onInspect(u)}
                 onContextMenu={(e) => onContext?.(e, u, 'base')}
-                className={selectedUnit === u.iid ? 'rounded ring-2 ring-indigo-400' : ''}
+                className={selectedUnits.includes(u.iid) ? 'rounded ring-2 ring-indigo-400' : ''}
               >
-                <BoardCard ci={u} selected={selectedUnit === u.iid} />
+                <BoardCard ci={u} selected={selectedUnits.includes(u.iid)} />
               </button>
               {movable && (
                 <button
-                  onClick={() => onSelectUnit(selectedUnit === u.iid ? null : u.iid)}
+                  onClick={() => onToggleUnit(u.iid)}
                   className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
-                    selectedUnit === u.iid
+                    selectedUnits.includes(u.iid)
                       ? 'bg-indigo-500 text-white'
                       : 'bg-white/10 text-white/70 hover:bg-white/20'
                   }`}
@@ -511,8 +523,10 @@ function PlayerMat({
         <div className="flex items-center gap-1 text-[10px] text-white/40">🗑 {me.zones.trash.length}</div>
       </div>
 
-      {selectedUnit && myActionTurn && (
-        <p className="mt-2 text-xs text-indigo-300">Click a battlefield above to move the selected unit.</p>
+      {selectedUnits.length > 0 && myActionTurn && (
+        <p className="mt-2 text-xs text-indigo-300">
+          {selectedUnits.length} unit(s) selected — click a battlefield above to move them together.
+        </p>
       )}
     </div>
   )

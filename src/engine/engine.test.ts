@@ -123,6 +123,7 @@ describe('turn flow', () => {
   it('end turn passes to opponent and runs their begin-turn', () => {
     const s = baseState()
     for (let i = 0; i < 3; i++) s.players[1].zones.runeDeck.push(mk(furyRune.id, 1))
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1)) // avoid Burn Out
     const { state } = reduce(s, { type: 'END_TURN', player: 0 })
     expect(state.activePlayer).toBe(1)
     expect(state.phase).toBe('action')
@@ -181,7 +182,7 @@ describe('multiplayer (3-4 players)', () => {
     id: name,
     name,
     legendId: null,
-    main: {},
+    main: { [furyUnit.id]: 10 }, // enough cards to avoid Burn Out during the test
     runes: {},
     battlefields: [battlefield.id],
     updatedAt: 0,
@@ -274,13 +275,26 @@ describe('keywords & new mechanics', () => {
     expect(bottom).toEqual(aside)
   })
 
-  it('burn out awards a point to the next player', () => {
+  it('burn out reshuffles trash and awards a point to the next player', () => {
     const s = baseState()
     s.activePlayer = 1
     s.turn = 4
     s.players[0].zones.mainDeck = [] // player 0 will draw from an empty deck
+    s.players[0].zones.trash = [mk(furyUnit.id, 0)] // has trash to recycle
     const { state } = reduce(s, { type: 'END_TURN', player: 1 })
     expect(state.players[1].points).toBeGreaterThanOrEqual(1)
+    // trash was reshuffled back into the deck
+    expect(state.players[0].zones.trash.length).toBe(0)
+  })
+
+  it('burn out with no trash makes the opponent win', () => {
+    const s = baseState()
+    s.activePlayer = 1
+    s.turn = 4
+    s.players[0].zones.mainDeck = []
+    s.players[0].zones.trash = []
+    const { state } = reduce(s, { type: 'END_TURN', player: 1 })
+    expect(state.winner).toBe(1)
   })
 })
 
@@ -377,6 +391,42 @@ describe('utility actions (hotkeys / context menu)', () => {
     s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
     const r = reduce(s, { type: 'DRAW', player: 0 })
     expect(r.state.players[0].zones.hand.length).toBe(1)
+  })
+})
+
+describe('Batch G mechanics', () => {
+  it('STUN_UNIT stuns a target unit', () => {
+    const s = baseState()
+    const u = mk(furyUnit.id, 1)
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'STUN_UNIT', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units[0].stunned).toBe(true)
+  })
+
+  it('MOVE_UNITS moves a group together to one battlefield', () => {
+    const s = baseState()
+    const a = mk(furyUnit.id, 0)
+    const b = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(a, b)
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [a.iid, b.iid], toBattlefield: 0 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.length).toBe(2)
+    expect(r.state.players[0].zones.base.length).toBe(0)
+  })
+
+  it('a defeated token ceases to exist (not sent to trash)', () => {
+    if (TOKEN_PILE_IDS.length === 0) return
+    const s = baseState()
+    // token defender with might 1 vs a stronger attacker
+    s.battlefields[0].units.push(mk(TOKEN_PILE_IDS[0], 1, { exhausted: true }))
+    const attacker = mk(furyUnit.id, 0, { buffs: 5 })
+    s.players[0].zones.base.push(attacker)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    // token defeated → not in player 1's trash
+    expect(r.state.players[1].zones.trash.some((c) => c.cardId === TOKEN_PILE_IDS[0])).toBe(false)
   })
 })
 

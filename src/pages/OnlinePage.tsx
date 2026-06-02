@@ -274,7 +274,7 @@ export default function OnlinePage() {
         perspective={seat}
         canAct={myTurn}
         onPlay={play}
-        onMove={(iid, bf) => dispatch({ type: 'MOVE_UNIT', player: seat, iid, toBattlefield: bf })}
+        onMove={(iids, bf) => dispatch({ type: 'MOVE_UNITS', player: seat, iids, toBattlefield: bf })}
         onPass={() => dispatch({ type: 'PASS', player: seat })}
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
         onActivateLegend={() => dispatch({ type: 'ACTIVATE_LEGEND', player: seat })}
