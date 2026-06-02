@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
 import CardsPage from './pages/CardsPage'
 import DecksPage from './pages/DecksPage'
+import DeckBuilderPage from './pages/DeckBuilderPage'
 import PlayPage from './pages/PlayPage'
 
 export default function App() {
@@ -12,6 +13,7 @@ export default function App() {
         <Route index element={<HomePage />} />
         <Route path="cards" element={<CardsPage />} />
         <Route path="decks" element={<DecksPage />} />
+        <Route path="decks/:id" element={<DeckBuilderPage />} />
         <Route path="play" element={<PlayPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
