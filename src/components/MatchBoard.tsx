@@ -26,6 +26,7 @@ export interface MatchBoardProps {
   onEndTurn: () => void
   onActivateLegend?: () => void
   onConcede?: () => void
+  onCreateToken?: (cardId: string) => void
   /** Open the card detail modal for any card on the board. */
   onInspect?: (card: Card) => void
 }
@@ -46,6 +47,7 @@ export default function MatchBoard({
   onEndTurn,
   onActivateLegend,
   onConcede,
+  onCreateToken,
   onInspect,
 }: MatchBoardProps) {
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null)
@@ -175,6 +177,7 @@ export default function MatchBoard({
         onEndTurn={onEndTurn}
         onActivateLegend={onActivateLegend}
         onConcede={onConcede}
+        onCreateToken={onCreateToken}
       />
 
       {/* Log */}
@@ -259,6 +262,7 @@ function PlayerMat({
   onEndTurn,
   onActivateLegend,
   onConcede,
+  onCreateToken,
 }: {
   me: PlayerState
   myActionTurn: boolean
@@ -269,6 +273,7 @@ function PlayerMat({
   onEndTurn: () => void
   onActivateLegend?: () => void
   onConcede?: () => void
+  onCreateToken?: (cardId: string) => void
 }) {
   const domains = playerDomains(me)
   const readyRunes = me.zones.runePool.filter((r) => !r.exhausted).length
@@ -339,6 +344,23 @@ function PlayerMat({
             >
               Play
             </button>
+          </div>
+        )}
+
+        {/* Token pile (Recruit etc.) — generated, not drawn */}
+        {me.tokenPile.length > 0 && onCreateToken && (
+          <div className="flex flex-col gap-1 self-center">
+            <span className="text-[9px] uppercase tracking-wide text-white/30">Tokens</span>
+            {me.tokenPile.map((tid) => (
+              <button
+                key={tid}
+                disabled={!myActionTurn}
+                onClick={() => onCreateToken(tid)}
+                className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20 disabled:opacity-30"
+              >
+                + {getCard(tid)?.name.split(' //')[0] ?? 'Token'}
+              </button>
+            ))}
           </div>
         )}
       </div>

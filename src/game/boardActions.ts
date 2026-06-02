@@ -115,11 +115,18 @@ export function recycle(state: GameState, iid: string): GameState {
 }
 
 export function toggleExhaust(state: GameState, iid: string): GameState {
+  // Constraint: Legends only exhaust via their own ability (not free tapping),
+  // and Spells are never on the board to exhaust (they resolve to the trash).
+  if (state.legend?.iid === iid) return state
+  const def = getCard(
+    [
+      ...Object.values(state.zones).flat(),
+      ...state.battlefields.flatMap((b) => b.units),
+    ].find((c) => c.iid === iid)?.cardId ?? '',
+  )
+  if (def && def.type === 'spell') return state
+
   const next = clone(state)
-  if (next.legend?.iid === iid) {
-    next.legend = { ...next.legend, exhausted: !next.legend.exhausted }
-    return next
-  }
   for (const zone of Object.keys(next.zones) as ZoneId[]) {
     const c = next.zones[zone].find((x) => x.iid === iid)
     if (c) {

@@ -453,6 +453,7 @@ function CardPool({
     const q = query.trim().toLowerCase()
     return CARDS.filter((c) => {
       if (c.type === 'legend') return false // legends picked separately
+      if (c.supertype === 'token') return false // tokens are generated, not decked
       if (poolType !== 'all' && c.type !== poolType) return false
       if (poolDomain !== 'all' && !c.domains.includes(poolDomain)) return false
       if (onIdentityOnly && identity.length && !isOnIdentity(c, identity))

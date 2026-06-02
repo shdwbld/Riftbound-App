@@ -68,6 +68,8 @@ export function validateDeck(deck: Deck): DeckValidation {
     }
     if (count > DECK_RULES.maxCopiesPerCard)
       err(`${card.name}: ${count} copies (max ${DECK_RULES.maxCopiesPerCard}).`)
+    if (card.supertype === 'token')
+      err(`${card.name} is a token — it's generated in play, not decked.`)
     if (card.type === 'rune' || card.type === 'battlefield' || card.type === 'legend')
       err(`${card.name} can't go in the main deck.`)
     if (identity.length && !isOnIdentity(card, identity))

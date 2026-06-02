@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { reduce, beginTurn } from './engine'
-import { RULES, createMatch } from './setup'
+import { RULES, createMatch, TOKEN_PILE_IDS } from './setup'
 import type { Deck } from '../types/deck'
 import {
   type MatchState,
@@ -35,6 +35,7 @@ function player(id: PlayerId): PlayerState {
     name: `P${id + 1}`,
     legend: null,
     champion: null,
+    tokenPile: [],
     points: 0,
     zones: emptyZones(),
     mulliganed: true,
@@ -261,6 +262,29 @@ describe('keywords & new mechanics', () => {
     s.players[0].zones.mainDeck = [] // player 0 will draw from an empty deck
     const { state } = reduce(s, { type: 'END_TURN', player: 1 })
     expect(state.players[1].points).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('tokens (Recruit)', () => {
+  it('creates a token from the pile onto the base', () => {
+    if (TOKEN_PILE_IDS.length === 0) return // dataset has no Recruit token
+    const s = baseState()
+    s.players[0].tokenPile = [...TOKEN_PILE_IDS]
+    const { state, error } = reduce(s, {
+      type: 'CREATE_TOKEN',
+      player: 0,
+      cardId: TOKEN_PILE_IDS[0],
+    })
+    expect(error).toBeUndefined()
+    expect(state.players[0].zones.base.length).toBe(1)
+    expect(state.players[0].zones.base[0].cardId).toBe(TOKEN_PILE_IDS[0])
+  })
+
+  it('rejects creating a token not in your pile', () => {
+    const s = baseState()
+    s.players[0].tokenPile = []
+    const { error } = reduce(s, { type: 'CREATE_TOKEN', player: 0, cardId: 'nope' })
+    expect(error).toBeDefined()
   })
 })
 

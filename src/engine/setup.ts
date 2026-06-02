@@ -1,5 +1,5 @@
 import type { Deck } from '../types/deck'
-import { getCard } from '../data/cards'
+import { getCard, CARDS } from '../data/cards'
 import {
   type MatchState,
   type PlayerState,
@@ -52,10 +52,18 @@ export function shuffle<T>(arr: T[], rng: () => number = Math.random): T[] {
 
 function expand(pile: Record<string, number>, owner: PlayerId): EngineCard[] {
   const out: EngineCard[] = []
-  for (const [cardId, n] of Object.entries(pile))
+  for (const [cardId, n] of Object.entries(pile)) {
+    if (getCard(cardId)?.supertype === 'token') continue // tokens never go in a deck
     for (let i = 0; i < n; i++) out.push(inst(cardId, owner))
+  }
   return out
 }
+
+// The baseline Recruit token, available to every player's token pile.
+const RECRUIT = CARDS.find(
+  (c) => c.supertype === 'token' && c.type === 'unit' && (c.tags ?? []).includes('Recruit'),
+)
+export const TOKEN_PILE_IDS = RECRUIT ? [RECRUIT.id] : []
 
 /** The champion name a Legend builds around (text before " - " / "," / "("). */
 function championName(legendId: string | null): string | null {
@@ -104,6 +112,7 @@ function buildPlayer(
     name,
     legend: deck.legendId ? inst(deck.legendId, id) : null,
     champion,
+    tokenPile: [...TOKEN_PILE_IDS],
     points: 0,
     zones,
     mulliganed: false,

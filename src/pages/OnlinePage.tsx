@@ -279,6 +279,7 @@ export default function OnlinePage() {
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
         onActivateLegend={() => dispatch({ type: 'ACTIVATE_LEGEND', player: seat })}
         onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}
+        onCreateToken={(cardId) => dispatch({ type: 'CREATE_TOKEN', player: seat, cardId })}
         onInspect={setInspect}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}

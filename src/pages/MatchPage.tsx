@@ -78,6 +78,7 @@ export default function MatchPage() {
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
         onActivateLegend={() => act({ type: 'ACTIVATE_LEGEND', player: controlling })}
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
+        onCreateToken={(cardId) => act({ type: 'CREATE_TOKEN', player: controlling, cardId })}
         onInspect={setInspect}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}

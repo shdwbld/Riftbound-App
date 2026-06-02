@@ -74,6 +74,10 @@ function normalize(raw) {
     imageUrl: raw.media?.image_url || undefined,
     artist: raw.media?.artist || undefined,
     alternateArt: raw.metadata?.alternate_art === true || undefined,
+    // Supertype (Token / Champion / Signature / Basic) — drives card-type rules.
+    supertype: raw.classification?.supertype
+      ? String(raw.classification.supertype).toLowerCase()
+      : undefined,
   }
 
   const energy = raw.attributes?.energy ?? 0

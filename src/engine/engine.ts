@@ -27,11 +27,14 @@ import { spellEffect, onPlayEffect } from './effects'
 
 // --- immutable helpers -----------------------------------------------------
 
+let tokenCounter = 0
+
 function clonePlayer(p: PlayerState): PlayerState {
   return {
     ...p,
     legend: p.legend ? { ...p.legend } : null,
     champion: p.champion ? { ...p.champion } : null,
+    tokenPile: [...p.tokenPile],
     zones: {
       mainDeck: [...p.zones.mainDeck],
       runeDeck: [...p.zones.runeDeck],
@@ -518,6 +521,30 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       return ok(
         log(s, action.player, `${getCard(p.legend.cardId)?.name ?? 'Legend'} ability used (resolve effect manually).`),
       )
+    }
+
+    case 'CREATE_TOKEN': {
+      const guard = requireActiveAction(state, action.player)
+      if (guard) return fail(state, guard)
+      const s = clone(state)
+      const p = s.players[action.player]
+      if (!p.tokenPile.includes(action.cardId))
+        return fail(state, 'That token is not available to you.')
+      const card = getCard(action.cardId)
+      if (!card || card.supertype !== 'token')
+        return fail(state, 'Not a valid token.')
+      // Tokens enter the Base exhausted (like a played unit), Accelerate aside.
+      const token: EngineCard = {
+        iid: `${action.player}:tok:${card.id}#${(tokenCounter++).toString(36)}`,
+        cardId: card.id,
+        owner: action.player,
+        exhausted: !parseKeywords(card).accelerate,
+        damage: 0,
+        attached: [],
+        enteredTurn: s.turn,
+      }
+      p.zones.base.push(token)
+      return ok(log(s, action.player, `Created token: ${card.name}.`))
     }
 
     case 'PLAY_UNIT':

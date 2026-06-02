@@ -42,6 +42,9 @@ export interface PlayerState {
   legend: EngineCard | null
   /** The Chosen Champion, set aside and always playable from here. */
   champion: EngineCard | null
+  /** Token cards this player can generate (e.g. Recruit) — a separate pile
+   *  that is never drawn from. Tokens are created onto the board by effects. */
+  tokenPile: string[]
   points: number
   zones: Record<ZoneId, EngineCard[]>
   /** Set true once the player has taken their mulligan decision. */
@@ -117,6 +120,8 @@ export type Action =
    *  many. Empty array = keep. */
   | { type: 'MULLIGAN'; player: PlayerId; toBottom: string[] }
   | { type: 'ACTIVATE_LEGEND'; player: PlayerId }
+  /** Generate a token (e.g. Recruit) from the token pile onto your Base. */
+  | { type: 'CREATE_TOKEN'; player: PlayerId; cardId: string }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment }
   | {
       type: 'PLAY_SPELL'

@@ -62,7 +62,11 @@ function buildDeck({ champ, group, archetype, starter }) {
   // Candidate pool: on-identity playable cards. Champion-tagged first, then a
   // cost-balanced spread of support cards.
   const pool = cards.filter(
-    (c) => !c.alternateArt && isPlayable(c) && onIdentity(c, identity),
+    (c) =>
+      !c.alternateArt &&
+      c.supertype !== 'token' && // tokens are generated, never decked
+      isPlayable(c) &&
+      onIdentity(c, identity),
   )
   const tagged = pool.filter((c) => (c.tags || []).some((t) => t.includes(champ)))
   const support = pool
