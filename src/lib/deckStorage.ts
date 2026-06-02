@@ -56,6 +56,23 @@ export function deleteDeck(id: string) {
   writeAll(all)
 }
 
+/** Copy a template (e.g. a featured starter deck) into the local library as a
+ *  fresh, independently-editable deck. */
+export function cloneIntoLibrary(template: {
+  name: string
+  legendId: string | null
+  main: Record<string, number>
+  runes: Record<string, number>
+  battlefields: string[]
+}): Deck {
+  const deck = emptyDeck(newId(), template.name)
+  deck.legendId = template.legendId
+  deck.main = { ...template.main }
+  deck.runes = { ...template.runes }
+  deck.battlefields = [...template.battlefields]
+  return saveDeck(deck)
+}
+
 // --- Import / export -------------------------------------------------------
 //
 // A human-readable, round-trippable text format:

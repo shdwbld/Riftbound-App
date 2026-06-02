@@ -6,11 +6,13 @@ import {
   createDeck,
   deleteDeck,
   importDeck,
+  cloneIntoLibrary,
 } from '../lib/deckStorage'
 import { getCard } from '../data/cards'
 import { pileSize } from '../types/deck'
 import { validateDeck } from '../lib/deckValidation'
-import { DOMAIN_META } from '../types/cards'
+import { DOMAIN_META, type Domain } from '../types/cards'
+import { FEATURED_DECKS, type FeaturedDeck } from '../data/featuredDecks'
 
 export default function DecksPage() {
   const navigate = useNavigate()
@@ -162,6 +164,83 @@ export default function DecksPage() {
           })}
         </div>
       )}
+
+      <FeaturedDecks
+        onCopy={(f) => {
+          const deck = cloneIntoLibrary({
+            name: f.name,
+            legendId: f.legendId,
+            main: f.main,
+            runes: f.runes,
+            battlefields: f.battlefields,
+          })
+          navigate(`/decks/${deck.id}`)
+        }}
+      />
     </div>
+  )
+}
+
+function FeaturedDecks({ onCopy }: { onCopy: (f: FeaturedDeck) => void }) {
+  const groups: FeaturedDeck['group'][] = ['Champion Deck', 'Proving Grounds']
+  return (
+    <section className="space-y-4 pt-4">
+      <div>
+        <h2 className="text-xl font-bold">Starter Decks</h2>
+        <p className="text-xs text-white/40">
+          The 7 official champions — legal, on-theme builds you can copy and tweak.
+          Not Riot's exact preconstructed lists.
+        </p>
+      </div>
+      {groups.map((g) => (
+        <div key={g} className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-white/50">
+            {g === 'Champion Deck' ? 'Champion Decks' : 'Proving Grounds'}
+          </h3>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {FEATURED_DECKS.filter((f) => f.group === g).map((f) => {
+              const legend = getCard(f.legendId)
+              const identity =
+                legend && legend.type === 'legend' ? legend.identity : []
+              return (
+                <div
+                  key={f.id}
+                  className="flex gap-3 overflow-hidden rounded-xl border border-white/10 bg-[#15151f] p-3 transition hover:border-white/25"
+                >
+                  {legend?.imageUrl && (
+                    <img
+                      src={legend.imageUrl}
+                      alt=""
+                      loading="lazy"
+                      className="h-24 w-[68px] shrink-0 rounded object-cover"
+                    />
+                  )}
+                  <div className="flex min-w-0 flex-col">
+                    <div className="truncate text-sm font-semibold">{f.champion}</div>
+                    <div className="text-[11px] text-white/50">{f.archetype}</div>
+                    <div className="mt-1 flex gap-1">
+                      {(identity as Domain[]).map((d) => (
+                        <span
+                          key={d}
+                          className="h-2 w-6 rounded-full"
+                          style={{ background: DOMAIN_META[d].color }}
+                          title={DOMAIN_META[d].label}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => onCopy(f)}
+                      className="mt-auto rounded-lg bg-indigo-500/80 px-3 py-1.5 text-xs font-semibold hover:bg-indigo-500"
+                    >
+                      Copy to my decks
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </section>
   )
 }
