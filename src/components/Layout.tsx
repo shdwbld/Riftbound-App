@@ -4,7 +4,8 @@ const navItems = [
   { to: '/', label: 'Home', end: true },
   { to: '/cards', label: 'Cards' },
   { to: '/decks', label: 'Decks' },
-  { to: '/play', label: 'Play' },
+  { to: '/play', label: 'Goldfish' },
+  { to: '/match', label: 'Match' },
 ]
 
 export default function Layout() {

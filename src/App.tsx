@@ -5,6 +5,7 @@ import CardsPage from './pages/CardsPage'
 import DecksPage from './pages/DecksPage'
 import DeckBuilderPage from './pages/DeckBuilderPage'
 import PlayPage from './pages/PlayPage'
+import MatchPage from './pages/MatchPage'
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="decks" element={<DecksPage />} />
         <Route path="decks/:id" element={<DeckBuilderPage />} />
         <Route path="play" element={<PlayPage />} />
+        <Route path="match" element={<MatchPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
