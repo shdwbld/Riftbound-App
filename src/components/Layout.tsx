@@ -6,6 +6,7 @@ const navItems = [
   { to: '/decks', label: 'Decks' },
   { to: '/play', label: 'Goldfish' },
   { to: '/match', label: 'Match' },
+  { to: '/online', label: 'Online' },
 ]
 
 export default function Layout() {

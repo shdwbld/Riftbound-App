@@ -6,6 +6,7 @@ import DecksPage from './pages/DecksPage'
 import DeckBuilderPage from './pages/DeckBuilderPage'
 import PlayPage from './pages/PlayPage'
 import MatchPage from './pages/MatchPage'
+import OnlinePage from './pages/OnlinePage'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="decks/:id" element={<DeckBuilderPage />} />
         <Route path="play" element={<PlayPage />} />
         <Route path="match" element={<MatchPage />} />
+        <Route path="online" element={<OnlinePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
