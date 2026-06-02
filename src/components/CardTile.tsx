@@ -7,6 +7,7 @@ import {
   isGear,
   totalPower,
 } from '../types/cards'
+import CardText from './CardText'
 
 function DomainStripe({ card }: { card: Card }) {
   const colors =
@@ -107,7 +108,7 @@ export default function CardTile({
         <CostBadge card={card} />
         {!showImage && card.text && (
           <p className="line-clamp-3 text-xs leading-snug text-white/60">
-            {card.text}
+            <CardText text={card.text} />
           </p>
         )}
         {card.tags && card.tags.length > 0 && (

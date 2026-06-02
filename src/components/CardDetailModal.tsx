@@ -7,6 +7,7 @@ import {
   totalPower,
 } from '../types/cards'
 import { keywordLabels } from '../engine/keywords'
+import CardText from './CardText'
 
 export default function CardDetailModal({
   card,
@@ -121,11 +122,13 @@ export default function CardDetailModal({
           )}
           {card.text && (
             <p className="whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-sm leading-relaxed text-white/80">
-              {card.text}
+              <CardText text={card.text} />
             </p>
           )}
           {card.flavor && (
-            <p className="text-sm italic text-white/45">{card.flavor}</p>
+            <p className="text-sm italic text-white/45">
+              <CardText text={card.flavor} />
+            </p>
           )}
 
           {card.tags && card.tags.length > 0 && (

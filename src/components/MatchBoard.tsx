@@ -13,6 +13,7 @@ import { type Card, type Domain, DOMAIN_META } from '../types/cards'
 import { matGradient, domainGlow, domainAnimClass } from '../lib/theme'
 import BoardCard from './BoardCard'
 import CardBack from './CardBack'
+import CardText from './CardText'
 
 // Rift Atlas-style board: opponents at the top (face-down hands), shared
 // battlefields in the prominent center, the local player's domain-themed mat at
@@ -168,44 +169,46 @@ export default function MatchBoard({
                 ['--glow' as string]: ctrl != null ? domainGlow(ctrlDomains) : 'transparent',
               }}
             >
+              {/* battlefield card art as a fitted background */}
+              {bfCard?.imageUrl && (
+                <>
+                  <img
+                    src={bfCard.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
+                  />
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/30" />
+                </>
+              )}
               {isFury && <div className="fire-overlay" />}
               {isLight && <div className="light-overlay" />}
-              {/* art + name + effect text */}
+              {/* name + effect text overlaid on the art */}
               <button
                 onClick={(e) => {
                   e.stopPropagation()
                   if (bfCard && onInspect && !targetable) onInspect(bfCard)
                 }}
-                className="relative mb-1 flex w-full items-start gap-2 text-left"
+                className="relative mb-1 block w-full text-left"
               >
-                {bfCard?.imageUrl && (
-                  <img
-                    src={bfCard.imageUrl}
-                    alt=""
-                    loading="lazy"
-                    className="h-14 w-10 shrink-0 rounded object-cover ring-1 ring-amber-600/30"
-                  />
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="truncate text-[11px] font-bold text-amber-100">
-                      {bfCard?.name ?? `Battlefield ${i + 1}`}
+                <div className="flex items-center justify-between gap-1">
+                  <span className="truncate text-[11px] font-bold text-amber-100 drop-shadow">
+                    {bfCard?.name ?? `Battlefield ${i + 1}`}
+                  </span>
+                  {ctrl != null && (
+                    <span
+                      className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold"
+                      style={{ background: '#000a', color: domainGlow(ctrlDomains) }}
+                    >
+                      {match.players[ctrl].name}
                     </span>
-                    {ctrl != null && (
-                      <span
-                        className="shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold"
-                        style={{ background: '#0008', color: domainGlow(ctrlDomains) }}
-                      >
-                        {match.players[ctrl].name}
-                      </span>
-                    )}
-                  </div>
-                  {bfCard?.text && (
-                    <p className="mt-0.5 line-clamp-3 text-[10px] leading-tight text-white/65">
-                      {bfCard.text}
-                    </p>
                   )}
                 </div>
+                {bfCard?.text && (
+                  <p className="mt-0.5 line-clamp-3 text-[10px] leading-tight text-white/85 drop-shadow">
+                    <CardText text={bfCard.text} />
+                  </p>
+                )}
               </button>
               <div className="relative flex min-h-[92px] flex-wrap content-start gap-1">
                 {bf.units.map((u) => (
