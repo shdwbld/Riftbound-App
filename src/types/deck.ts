@@ -11,6 +11,10 @@ export interface Deck {
   id: string
   name: string
   legendId: string | null
+  /** The declared Chosen Champion (a champion unit set aside in the Champion
+   *  Zone at game start). Must be a champion unit in the main deck matching the
+   *  legend's champion tag. If unset, setup auto-picks the first match. */
+  championId?: string | null
   /** Map of cardId -> copies in the main deck. */
   main: Record<string, number>
   /** Map of runeCardId -> copies in the rune deck. */

@@ -83,12 +83,17 @@ function buildPlayer(
   const main = shuffle(expand(deck.main, id), rng)
   const runeDeck = shuffle(expand(deck.runes, id), rng)
 
-  // Chosen Champion: pull one matching champion unit out of the deck and set it
-  // aside in the Champion Zone (always replayable from there).
+  // Chosen Champion: pull one champion unit out of the deck into the Champion
+  // Zone. Prefer the player's declared `championId`; otherwise auto-pick the
+  // first champion unit matching the legend's champion tag.
   let champion: EngineCard | null = null
   const champ = championName(deck.legendId)
-  if (champ) {
-    const idx = main.findIndex((c) => {
+  let idx = -1
+  if (deck.championId) {
+    idx = main.findIndex((c) => c.cardId === deck.championId)
+  }
+  if (idx < 0 && champ) {
+    idx = main.findIndex((c) => {
       const card = getCard(c.cardId)
       return (
         card?.type === 'unit' &&
@@ -96,8 +101,8 @@ function buildPlayer(
           card.name.includes(champ))
       )
     })
-    if (idx >= 0) champion = main.splice(idx, 1)[0]
   }
+  if (idx >= 0) champion = main.splice(idx, 1)[0]
 
   const hand = main.splice(0, RULES.openingHand)
   const zones: Record<ZoneId, EngineCard[]> = {

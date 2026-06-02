@@ -60,6 +60,11 @@ export default function DeckBuilderPage() {
   const legend = deck.legendId ? getCard(deck.legendId) : undefined
   const v = validateDeck(deck)
 
+  // Eligible Chosen Champions: champion-supertype units currently in the main deck.
+  const eligibleChampions = Object.keys(deck.main)
+    .map((id) => getCard(id))
+    .filter((c): c is NonNullable<typeof c> => !!c && c.type === 'unit' && c.supertype === 'champion')
+
   const update = (patch: Partial<Deck>) => setDeck((d) => (d ? { ...d, ...patch } : d))
 
   const setCount = (pile: 'main' | 'runes', cardId: string, next: number) => {
@@ -234,6 +239,45 @@ export default function DeckBuilderPage() {
               >
                 + Choose a legend
               </button>
+            )}
+          </Section>
+
+          {/* Chosen Champion */}
+          <Section title="Chosen Champion">
+            {eligibleChampions.length === 0 ? (
+              <p className="text-xs text-white/40">
+                Add a champion unit (matching your legend) to your deck to choose
+                one. It's set aside in the Champion Zone at game start.
+              </p>
+            ) : (
+              <>
+                <select
+                  value={deck.championId ?? ''}
+                  onChange={(e) => update({ championId: e.target.value || null })}
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm outline-none focus:border-indigo-400"
+                >
+                  <option value="">Auto (first match)</option>
+                  {eligibleChampions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                {deck.championId && getCard(deck.championId) && (
+                  <div className="mt-2 flex items-center gap-2">
+                    {getCard(deck.championId)!.imageUrl && (
+                      <img
+                        src={getCard(deck.championId)!.imageUrl}
+                        alt=""
+                        className="h-12 w-[34px] rounded object-cover"
+                      />
+                    )}
+                    <span className="text-xs text-white/60">
+                      Set aside in the Champion Zone
+                    </span>
+                  </div>
+                )}
+              </>
             )}
           </Section>
 

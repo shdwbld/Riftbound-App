@@ -204,6 +204,25 @@ describe('multiplayer (3-4 players)', () => {
     expect(s.activePlayer).toBe(0)
   })
 
+  it('setup honors the declared Chosen Champion', () => {
+    const champ = CARDS.find((c) => c.type === 'unit' && c.supertype === 'champion')
+    if (!champ) return
+    const deck = (championId?: string): Deck => ({
+      id: 'cd',
+      name: 'CD',
+      legendId: null,
+      championId,
+      main: { [champ.id]: 1, [furyUnit.id]: 2 },
+      runes: {},
+      battlefields: [battlefield.id],
+      updatedAt: 0,
+    })
+    const m = createMatch([deck(champ.id), deck()])
+    expect(m.players[0].champion?.cardId).toBe(champ.id)
+    // The champion is pulled OUT of the main deck (set aside in the Champion Zone).
+    expect(m.players[0].zones.mainDeck.concat(m.players[0].zones.hand).filter((c) => c.cardId === champ.id).length).toBe(0)
+  })
+
   it('supports 4 players and rejects out-of-range counts', () => {
     const four = createMatch([
       miniDeck('A'),
