@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { reduce } from './engine'
 import { parseKeywords } from './keywords'
+import { autoPayForCard } from './autopay'
 import { CARDS } from '../data/cards'
 import {
   type MatchState,
@@ -79,6 +80,15 @@ const shieldUnit = CARDS.find(
 const deathknellUnit = CARDS.find(
   (c) => c.type === 'unit' && !c.alternateArt && parseKeywords(c).deathknell,
 )
+const runeOf = (d: string) =>
+  CARDS.find((c) => c.type === 'rune' && (c as { produces: string[] }).produces.includes(d))!.id
+const legionUnit = CARDS.find(
+  (c) =>
+    c.type === 'unit' &&
+    !c.alternateArt &&
+    parseKeywords(c).legion &&
+    /recruit unit token/i.test(c.text ?? ''),
+)
 
 describe('timing: implemented interactions', () => {
   it('T5 — cannot reinforce an active showdown', () => {
@@ -127,6 +137,57 @@ describe('timing: implemented interactions', () => {
     expect(r.state.log.some((l) => /deathknell/i.test(l.text))).toBe(true)
   })
 
+  it('T7 — Stun makes a unit deal 0 combat damage', () => {
+    const s = baseState()
+    // Stunned defender deals 0; attacker (might = defender might) survives & wins.
+    s.battlefields[0].units.push(mk(vanilla.id, 1, { exhausted: true, stunned: true }))
+    const attacker = mk(vanilla.id, 0)
+    s.players[0].zones.base.push(attacker)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    // Attacker took 0 damage, killed the stunned defender, and conquered.
+    expect(r.state.battlefields[0].units.some((u) => u.iid === attacker.iid)).toBe(true)
+    expect(r.state.battlefields[0].controller).toBe(0)
+  })
+
+  it('T8 — no conquer → surviving attacker is Recalled to base', () => {
+    const s = baseState()
+    s.battlefields[0].units.push(mk(vanilla.id, 1, { exhausted: true }))
+    // Attacker deals 0 (stunned) but survives (big buffs) → both live → recall.
+    const attacker = mk(vanilla.id, 0, { stunned: true, buffs: 10 })
+    s.players[0].zones.base.push(attacker)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.players[0].zones.base.some((u) => u.iid === attacker.iid)).toBe(true)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === attacker.iid)).toBe(false)
+    expect(r.state.battlefields[0].controller).toBe(1)
+  })
+
+  it('T3 — LEGION only fires its effect with a prior card played this turn', () => {
+    if (!legionUnit) return
+    const card = legionUnit as { id: string; domains: string[] }
+    const setup = (priorPlays: number) => {
+      const s = baseState()
+      const p = s.players[0]
+      p.cardsPlayedThisTurn = priorPlays
+      const unit = mk(card.id, 0)
+      p.zones.hand.push(unit)
+      const domains = card.domains.length ? card.domains : ['fury']
+      for (const d of domains) for (let i = 0; i < 8; i++) p.zones.runePool.push(mk(runeOf(d), 0))
+      const payment = autoPayForCard(p, legionUnit!)
+      if (!payment) return null
+      return reduce(s, { type: 'PLAY_UNIT', player: 0, iid: unit.iid, payment })
+    }
+    const off = setup(0)
+    const on = setup(1)
+    if (!off || !on) return
+    const recruits = (st: typeof off) =>
+      st!.state.players[0].zones.base.filter((u) => u.cardId !== card.id).length
+    expect(recruits(on)).toBeGreaterThan(recruits(off))
+  })
+
   it('T15 — Conquer scores immediately when taking an empty battlefield', () => {
     const s = baseState()
     const u = mk(vanilla.id, 0)
@@ -141,10 +202,7 @@ describe('timing: implemented interactions', () => {
 describe('timing: not yet implemented (documented gaps)', () => {
   it.todo('T1 — Counter beats the spell it answers (needs a LIFO Chain)')
   it.todo('T2 — played-but-countered still fires global triggers')
-  it.todo('T3 — LEGION requires a prior real play this turn')
   it.todo('T4 — cost checks read base cost despite reductions')
-  it.todo('T7 — Stun makes a unit deal 0 combat damage')
-  it.todo('T8 — no conquer → attackers are Recalled, damage cleared')
   it.todo('T10 — simultaneous triggers: turn player orders first')
   it.todo('T11 — Attack/Defend triggers fire once per combat')
   it.todo('T12 — "Nth time" trigger fires once on a simultaneous spike')

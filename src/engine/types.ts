@@ -26,6 +26,8 @@ export interface EngineCard {
   buffs?: number
   /** Temporary Might modifier that lasts until end of turn (+ or −). */
   tempMight?: number
+  /** Stunned: deals no combat damage this turn (still has Might to survive). */
+  stunned?: boolean
   /** Turn number this card entered play (for Temporary expiry). */
   enteredTurn?: number
   /** Facedown (Hidden keyword) — not yet revealed. */
@@ -49,6 +51,8 @@ export interface PlayerState {
   /** Token cards this player can generate (e.g. Recruit) — a separate pile
    *  that is never drawn from. Tokens are created onto the board by effects. */
   tokenPile: string[]
+  /** Main-deck cards this player has played this turn (drives LEGION). */
+  cardsPlayedThisTurn?: number
   points: number
   zones: Record<ZoneId, EngineCard[]>
   /** Set true once the player has taken their mulligan decision. */

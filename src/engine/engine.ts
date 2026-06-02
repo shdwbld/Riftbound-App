@@ -283,6 +283,9 @@ export function beginTurn(state: MatchState): MatchState {
   const ap = s.activePlayer
   const p = s.players[ap]
 
+  // Reset per-turn counters (LEGION).
+  p.cardsPlayedThisTurn = 0
+
   // Awaken: ready everything the active player controls.
   if (p.legend) p.legend.exhausted = false
   for (const z of Object.keys(p.zones) as ZoneId[])
@@ -427,6 +430,16 @@ function mightOf(ci: EngineCard, role: CombatRole = null): number {
   return Math.max(0, m)
 }
 
+/** Combat damage a unit DEALS — 0 if Stunned (it still keeps Might to survive). */
+function damageOutput(ci: EngineCard, role: CombatRole): number {
+  return ci.stunned ? 0 : mightOf(ci, role)
+}
+
+/** Mighty: a unit with effective Might >= 5. */
+export function isMighty(ci: EngineCard): boolean {
+  return mightOf(ci) >= 5
+}
+
 /** Flat +Might granted by attached gear (parsed from "+N Might" gear text). */
 function gearMight(unit: EngineCard): number {
   let bonus = 0
@@ -493,8 +506,9 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   // defends as a combined force.
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
   const defenders = bf.units.filter((u) => u.owner !== moverOwner)
-  const attackMight = attackers.reduce((a, u) => a + mightOf(u, 'attacker'), 0)
-  const defendMight = defenders.reduce((a, u) => a + mightOf(u, 'defender'), 0)
+  // Damage DEALT uses damageOutput (Stun → 0); survival uses mightOf (in assignDamage).
+  const attackMight = attackers.reduce((a, u) => a + damageOutput(u, 'attacker'), 0)
+  const defendMight = defenders.reduce((a, u) => a + damageOutput(u, 'defender'), 0)
 
   // Simultaneous: compute defeats from pre-combat might, Tank-first ordering.
   const defendersDefeated = assignDamage(attackMight, damageOrder(defenders), 'defender')
@@ -531,6 +545,19 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   }
 
   recomputeControllers(s)
+
+  // No conquer: if defenders still hold units here, the attacker's surviving
+  // units are Recalled to base (damage already cleared).
+  const defendersRemain = bf.units.some((u) => u.owner !== moverOwner)
+  const moverRemain = bf.units.filter((u) => u.owner === moverOwner)
+  if (defendersRemain && moverRemain.length > 0) {
+    bf.units = bf.units.filter((u) => u.owner !== moverOwner)
+    for (const u of moverRemain)
+      s.players[moverOwner].zones.base.push({ ...u, exhausted: true, damage: 0 })
+    recomputeControllers(s)
+    s = log(s, moverOwner, `No conquer — ${moverRemain.length} attacker(s) recalled to base.`)
+  }
+
   s.showdown = null
   s.phase = 'action'
 
@@ -661,6 +688,9 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       if (fromChampion) p.champion = null
       else removeFromZone(p, 'hand', action.iid)
       const kw = parseKeywords(card)
+      // LEGION is "on" if you already played another Main Deck card this turn.
+      const legionActive = (p.cardsPlayedThisTurn ?? 0) >= 1
+      p.cardsPlayedThisTurn = (p.cardsPlayedThisTurn ?? 0) + 1
 
       if (action.type === 'PLAY_UNIT') {
         // Accelerate units enter ready; others enter exhausted.
@@ -671,9 +701,14 @@ export function reduce(state: MatchState, action: Action): EngineResult {
           `Played ${card.name}${kw.accelerate ? ' (ready · Accelerate)' : ''}.`,
         )
         const e = onPlayEffect(card)
-        for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
+        const legionGated = kw.legion && !legionActive
+        if (!legionGated) {
+          for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
+        } else {
+          s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
+        }
         if (kw.vision) s1 = log(s1, action.player, `Vision — may recycle the top of your deck (manual).`)
-        if (e.manual && !e.draw && !e.channel && !e.recruits)
+        if (e.manual && !e.draw && !e.channel && !e.recruits && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
         return ok(s1)
       }
@@ -816,13 +851,13 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
       let s = clone(state)
-      // End-of-turn cleanup: clear "this turn" Might modifiers everywhere.
+      // End-of-turn cleanup: clear "this turn" Might modifiers and Stun.
       for (const pl of s.players) {
         for (const z of Object.keys(pl.zones) as ZoneId[])
-          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0 }))
+          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false }))
       }
       for (const bf of s.battlefields)
-        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0 }))
+        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false }))
       s.activePlayer = nextPlayer(s, state.activePlayer)
       s.turn = state.turn + 1
       return ok(beginTurn(s))
