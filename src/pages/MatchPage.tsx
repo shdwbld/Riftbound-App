@@ -134,32 +134,53 @@ function MulliganPhase({
   onExit: () => void
 }) {
   const pending = match.players.find((p) => !p.mulliganed)
+  return <MulliganView key={pending?.id} pending={pending} onAct={onAct} onExit={onExit} />
+}
+
+export function MulliganView({
+  pending,
+  onAct,
+  onExit,
+}: {
+  pending: MatchState['players'][number] | undefined
+  onAct: (a: Parameters<typeof reduce>[1]) => void
+  onExit?: () => void
+}) {
+  const [aside, setAside] = useState<string[]>([])
   if (!pending) return null
+  const toggle = (iid: string) =>
+    setAside((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : s.length < 2 ? [...s, iid] : s))
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">Opening hand — {pending.name}</h2>
-        <button onClick={onExit} className="text-xs text-white/40 hover:text-white">
-          Exit
-        </button>
+        {onExit && (
+          <button onClick={onExit} className="text-xs text-white/40 hover:text-white">
+            Exit
+          </button>
+        )}
       </div>
+      <p className="text-sm text-white/50">
+        Click up to 2 cards to set aside (sent to the bottom of your deck, then
+        you redraw that many). {aside.length}/2 selected.
+      </p>
       <div className="flex flex-wrap gap-2">
         {pending.zones.hand.map((c) => (
-          <BoardCard key={c.iid} ci={c} />
+          <button
+            key={c.iid}
+            onClick={() => toggle(c.iid)}
+            className={`rounded ${aside.includes(c.iid) ? 'opacity-40 ring-2 ring-rose-400' : ''}`}
+          >
+            <BoardCard ci={c} />
+          </button>
         ))}
       </div>
       <div className="flex gap-2">
         <button
-          onClick={() => onAct({ type: 'MULLIGAN', player: pending.id, redraw: false })}
+          onClick={() => onAct({ type: 'MULLIGAN', player: pending.id, toBottom: aside })}
           className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400"
         >
-          Keep
-        </button>
-        <button
-          onClick={() => onAct({ type: 'MULLIGAN', player: pending.id, redraw: true })}
-          className="rounded-lg border border-white/15 px-4 py-2 text-sm font-semibold hover:bg-white/5"
-        >
-          Mulligan (redraw)
+          {aside.length ? `Mulligan ${aside.length}` : 'Keep hand'}
         </button>
       </div>
     </div>

@@ -20,8 +20,12 @@ export interface EngineCard {
   owner: PlayerId
   exhausted: boolean
   damage: number
-  /** Gear attached to this unit (iids). */
+  /** Gear attached to this unit, stored as "cardId|iid". */
   attached: string[]
+  /** Turn number this card entered play (for Temporary expiry). */
+  enteredTurn?: number
+  /** Facedown (Hidden keyword) — not yet revealed. */
+  facedown?: boolean
 }
 
 export type ZoneId =
@@ -107,7 +111,10 @@ export interface Payment {
 export const emptyPayment = (): Payment => ({ exhaust: [], recycle: [] })
 
 export type Action =
-  | { type: 'MULLIGAN'; player: PlayerId; redraw: boolean }
+  /** Set aside up to 2 cards (by iid) to the bottom of the deck, redraw that
+   *  many. Empty array = keep. */
+  | { type: 'MULLIGAN'; player: PlayerId; toBottom: string[] }
+  | { type: 'ACTIVATE_LEGEND'; player: PlayerId }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment }
   | {
       type: 'PLAY_SPELL'

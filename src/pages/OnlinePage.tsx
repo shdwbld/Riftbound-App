@@ -20,9 +20,9 @@ import {
   makeRoomCode,
   onlineAvailable,
 } from '../net/transport'
-import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
+import { MulliganView } from './MatchPage'
 
 type Role = 'host' | 'guest'
 type Status = 'lobby' | 'waiting' | 'connected'
@@ -236,31 +236,10 @@ export default function OnlinePage() {
     return (
       <div className="space-y-4">
         <RoomBar roomCode={roomCode} onLeave={leave} />
-        <h2 className="text-xl font-bold">Your opening hand</h2>
         {me.mulliganed ? (
-          <p className="text-white/50">Waiting for other players…</p>
+          <p className="py-8 text-center text-white/50">Waiting for other players…</p>
         ) : (
-          <>
-            <div className="flex flex-wrap gap-2">
-              {me.zones.hand.map((c) => (
-                <BoardCard key={c.iid} ci={c} />
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => dispatch({ type: 'MULLIGAN', player: seat, redraw: false })}
-                className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400"
-              >
-                Keep
-              </button>
-              <button
-                onClick={() => dispatch({ type: 'MULLIGAN', player: seat, redraw: true })}
-                className="rounded-lg border border-white/15 px-4 py-2 text-sm font-semibold hover:bg-white/5"
-              >
-                Mulligan
-              </button>
-            </div>
-          </>
+          <MulliganView pending={me} onAct={(a) => dispatch(a as Action)} />
         )}
         {toast && <Toast text={toast} />}
       </div>

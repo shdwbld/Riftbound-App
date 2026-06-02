@@ -13,7 +13,9 @@ import {
   ok,
   fail,
 } from './types'
-import { RULES, shuffle } from './setup'
+import { RULES } from './setup'
+import { parseKeywords } from './keywords'
+import { spellEffect, onPlayEffect } from './effects'
 
 // ---------------------------------------------------------------------------
 // Pure engine: reduce(state, action) -> { state, error? }
@@ -104,23 +106,29 @@ function applyPayment(
   if (payment.recycle.length !== powerTotal)
     return `Need to recycle exactly ${powerTotal} rune(s) for power.`
 
-  const used = new Set<string>()
-  // Energy: each exhaust target must be a ready rune in the pool.
+  // Energy: each exhaust target must be a ready rune in the pool. (A rune may
+  // ALSO appear in `recycle` — exhaust for energy, then recycle for power.)
+  const exhaustSet = new Set<string>()
   for (const iid of payment.exhaust) {
-    if (used.has(iid)) return 'A rune was used twice.'
+    if (exhaustSet.has(iid)) return 'A rune was listed twice for energy.'
     const rune = p.zones.runePool.find((c) => c.iid === iid)
     if (!rune) return 'Energy rune not in your pool.'
     if (rune.exhausted) return 'Energy rune is already exhausted.'
-    used.add(iid)
+    exhaustSet.add(iid)
   }
-  // Power: greedily match recycled runes to colored requirements.
+  // Power: runes recycled from the pool (ready, or already exhausted for energy
+  // this payment). Match each to a colored requirement.
+  const recycleSet = new Set<string>()
   const recycled: EngineCard[] = []
   for (const iid of payment.recycle) {
-    if (used.has(iid)) return 'A rune was used twice.'
+    if (recycleSet.has(iid)) return 'A rune was listed twice for power.'
     const rune = p.zones.runePool.find((c) => c.iid === iid)
     if (!rune) return 'Power rune not in your pool.'
-    if (rune.exhausted) return 'Power rune is already exhausted.'
-    used.add(iid)
+    // A still-ready rune not being exhausted this payment is fine; a rune
+    // exhausted earlier (not in this payment) can't also be recycled.
+    if (rune.exhausted && !exhaustSet.has(iid))
+      return 'Power rune is already exhausted.'
+    recycleSet.add(iid)
     recycled.push(rune)
   }
   // Greedy assignment of recycled runes to needed domains.
@@ -146,6 +154,54 @@ function applyPayment(
     p.zones.runeDeck.push({ ...rune, exhausted: false, damage: 0 })
   }
   return null
+}
+
+// --- effect helpers --------------------------------------------------------
+
+function drawN(p: PlayerState, n: number): number {
+  let drew = 0
+  for (let i = 0; i < n && p.zones.mainDeck.length > 0; i++) {
+    p.zones.hand.push(p.zones.mainDeck.shift()!)
+    drew++
+  }
+  return drew
+}
+
+function channelN(p: PlayerState, n: number): number {
+  let ch = 0
+  for (let i = 0; i < n && p.zones.runeDeck.length > 0; i++) {
+    p.zones.runePool.push({ ...p.zones.runeDeck.shift()!, exhausted: false })
+    ch++
+  }
+  return ch
+}
+
+/** Deal `amount` damage to a target unit anywhere; defeat it if lethal. */
+function applyTargetDamage(s: MatchState, targetIid: string, amount: number): void {
+  for (let i = 0; i < s.battlefields.length; i++) {
+    const bf = s.battlefields[i]
+    const u = bf.units.find((x) => x.iid === targetIid)
+    if (u) {
+      u.damage += amount
+      if (u.damage >= mightOf(u)) {
+        bf.units = bf.units.filter((x) => x.iid !== targetIid)
+        s.players[u.owner].zones.trash.push({ ...u, damage: 0 })
+      }
+      recomputeControllers(s)
+      return
+    }
+  }
+  for (const p of s.players) {
+    const u = p.zones.base.find((x) => x.iid === targetIid)
+    if (u) {
+      u.damage += amount
+      if (u.damage >= mightOf(u)) {
+        p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
+        p.zones.trash.push({ ...u, damage: 0 })
+      }
+      return
+    }
+  }
 }
 
 // --- turn flow -------------------------------------------------------------
@@ -190,6 +246,27 @@ export function beginTurn(state: MatchState): MatchState {
     bf.units = bf.units.map((u) => (u.owner === ap ? { ...u, exhausted: false } : u))
   s = log(s, ap, `— Turn ${s.turn}: ${p.name} · Awaken —`)
 
+  // Temporary: kill the active player's Temporary units that have lived a round.
+  for (const bf of s.battlefields) {
+    const expired = bf.units.filter(
+      (u) =>
+        u.owner === ap &&
+        parseKeywords(def(u)).temporary &&
+        (u.enteredTurn ?? 0) < s.turn,
+    )
+    if (expired.length) {
+      bf.units = bf.units.filter((u) => !expired.includes(u))
+      for (const u of expired) p.zones.trash.push({ ...u, damage: 0 })
+      s = log(s, ap, `${expired.length} Temporary unit(s) expired.`)
+    }
+  }
+  for (const u of p.zones.base.filter(
+    (u) => parseKeywords(def(u)).temporary && (u.enteredTurn ?? 0) < s.turn,
+  )) {
+    p.zones.base = p.zones.base.filter((x) => x.iid !== u.iid)
+    p.zones.trash.push({ ...u, damage: 0 })
+  }
+
   // Score: 1 point per held battlefield (skip the very first turn).
   recomputeControllers(s)
   if (s.turn > 1) {
@@ -215,13 +292,17 @@ export function beginTurn(state: MatchState): MatchState {
   }
   if (channeled) s = log(s, ap, `Channeled ${channeled} rune(s).`)
 
-  // Draw.
-  let drew = 0
-  for (let i = 0; i < RULES.drawPerTurn && p.zones.mainDeck.length > 0; i++) {
-    p.zones.hand.push(p.zones.mainDeck.shift()!)
-    drew++
+  // Draw — with Burn Out: drawing from an empty deck gives the next player +1.
+  for (let i = 0; i < RULES.drawPerTurn; i++) {
+    if (p.zones.mainDeck.length > 0) {
+      p.zones.hand.push(p.zones.mainDeck.shift()!)
+    } else {
+      const beneficiary = nextPlayer(s, ap)
+      s = log(s, ap, `${p.name} burned out (empty deck).`)
+      s = awardPoints(s, beneficiary, 1, 'scored from Burn Out', 'hold')
+      if (s.winner !== null) return s
+    }
   }
-  if (drew) s = log(s, ap, `Drew ${drew} card(s).`)
 
   s.phase = 'action'
   return s
@@ -235,44 +316,94 @@ function endGame(state: MatchState, winner: PlayerId): MatchState {
   return s
 }
 
-/** Award conquer point(s) to a player and check for the win.
- *  NOTE: the special "8th point" restriction is not yet enforced (flagged). */
+/** Award point(s) and check for the win. The winning point via Conquer is
+ *  restricted: it only counts if the player controls ALL battlefields that
+ *  turn — otherwise they draw a card instead of scoring it. Hold/Burn-Out
+ *  points are unrestricted. */
 function awardPoints(
   s: MatchState,
   player: PlayerId,
   amount: number,
   reason: string,
+  kind: 'hold' | 'conquer',
 ): MatchState {
-  s.players[player].points += amount
-  let next = log(s, player, `${s.players[player].name} ${reason} (+${amount}).`)
+  const p = s.players[player]
+  if (
+    kind === 'conquer' &&
+    p.points + amount >= s.pointsToWin &&
+    !s.battlefields.every((b) => b.controller === player)
+  ) {
+    if (p.zones.mainDeck.length) p.zones.hand.push(p.zones.mainDeck.shift()!)
+    return log(
+      s,
+      player,
+      `${p.name}'s winning point must be a Hold or a full conquer — drew a card instead.`,
+    )
+  }
+  p.points += amount
+  let next = log(s, player, `${p.name} ${reason} (+${amount}).`)
   if (next.players[player].points >= next.pointsToWin) next = endGame(next, player)
   return next
 }
 
 // --- combat (simplified total-might model) ---------------------------------
 
-function mightOf(ci: EngineCard): number {
+type CombatRole = 'attacker' | 'defender' | null
+
+/** A unit's effective Might in a given combat role, including Assault/Shield
+ *  keyword bonuses, attached-gear bonuses, and marked damage. Backline units
+ *  don't fight on the frontline (0). */
+function mightOf(ci: EngineCard, role: CombatRole = null): number {
   const d = def(ci)
-  const base = d && isUnit(d) ? d.might : 0
-  // Attached gear granting flat +might is left for per-card scripting; here we
-  // apply only marked damage reduction.
-  return Math.max(0, base - ci.damage)
+  if (!d || !isUnit(d)) return 0
+  const k = parseKeywords(d)
+  if (k.backline) return 0
+  let m = d.might - ci.damage + gearMight(ci)
+  if (role === 'attacker') m += k.assault
+  if (role === 'defender') m += k.shield
+  return Math.max(0, m)
 }
 
-/** Assign `damage` total across `units` in kill-order (fill one to lethal,
- *  then the next). Returns the iids that are defeated. */
-function assignDamage(damage: number, units: EngineCard[]): Set<string> {
+/** Flat +Might granted by attached gear (parsed from "+N Might" gear text). */
+function gearMight(unit: EngineCard): number {
+  let bonus = 0
+  for (const gid of unit.attached) {
+    const g = getCard(gid.split('|')[0]) // attached stored as "cardId|iid"
+    const t = g?.text ?? ''
+    const m = t.match(/\+(\d+)\s*Might/i)
+    if (m) bonus += parseInt(m[1], 10)
+  }
+  return bonus
+}
+
+/** Order units for damage assignment: Tank first (must be killed before
+ *  others), then normal, then backline. */
+function damageOrder(units: EngineCard[]): EngineCard[] {
+  const rank = (u: EngineCard) => {
+    const k = parseKeywords(def(u))
+    return k.tank ? 0 : k.backline ? 2 : 1
+  }
+  return [...units].sort((a, b) => rank(a) - rank(b))
+}
+
+/** Assign `damage` total across `units` (already in Tank-first order) using
+ *  kill-order: fully defeat one unit before moving to the next. `role` is the
+ *  role of the units RECEIVING damage (so their Shield/Assault is applied). */
+function assignDamage(
+  damage: number,
+  units: EngineCard[],
+  role: CombatRole,
+): Set<string> {
   const defeated = new Set<string>()
   let remaining = damage
   for (const u of units) {
     if (remaining <= 0) break
-    const hp = mightOf(u)
+    const hp = mightOf(u, role)
     if (hp <= 0) continue
     if (remaining >= hp) {
       defeated.add(u.iid)
       remaining -= hp
     } else {
-      // partial damage doesn't defeat; cleared after combat anyway
       remaining = 0
     }
   }
@@ -299,20 +430,23 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   // defends as a combined force.
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
   const defenders = bf.units.filter((u) => u.owner !== moverOwner)
-  const attackMight = attackers.reduce((a, u) => a + mightOf(u), 0)
-  const defendMight = defenders.reduce((a, u) => a + mightOf(u), 0)
+  const attackMight = attackers.reduce((a, u) => a + mightOf(u, 'attacker'), 0)
+  const defendMight = defenders.reduce((a, u) => a + mightOf(u, 'defender'), 0)
 
-  // Simultaneous: compute defeats from pre-combat might.
-  const defendersDefeated = assignDamage(attackMight, defenders)
-  const attackersDefeated = assignDamage(defendMight, attackers)
+  // Simultaneous: compute defeats from pre-combat might, Tank-first ordering.
+  const defendersDefeated = assignDamage(attackMight, damageOrder(defenders), 'defender')
+  const attackersDefeated = assignDamage(defendMight, damageOrder(attackers), 'attacker')
 
   const survivors: EngineCard[] = []
+  const deathknells: string[] = []
   for (const u of bf.units) {
     const dead =
       (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
       (u.owner === moverOwner && attackersDefeated.has(u.iid))
-    if (dead) s.players[u.owner].zones.trash.push({ ...u, damage: 0, exhausted: false })
-    else survivors.push({ ...u, damage: 0 })
+    if (dead) {
+      s.players[u.owner].zones.trash.push({ ...u, damage: 0, exhausted: false })
+      if (parseKeywords(def(u)).deathknell) deathknells.push(def(u)?.name ?? 'unit')
+    } else survivors.push({ ...u, damage: 0 })
   }
   bf.units = survivors
   const lost = defendersDefeated.size + attackersDefeated.size
@@ -321,6 +455,8 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
     moverOwner,
     `Showdown at ${bfName}: ${attackMight} vs ${defendMight} Might — ${lost} unit(s) defeated.`,
   )
+  for (const name of deathknells)
+    s = log(s, moverOwner, `Deathknell: ${name} — resolve its dying effect.`)
 
   recomputeControllers(s)
   s.showdown = null
@@ -329,7 +465,7 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   // Conquer: mover ends as sole controller of a battlefield they didn't hold.
   const nowController = s.battlefields[bfIndex].controller
   if (nowController === moverOwner && prevController !== moverOwner) {
-    s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`)
+    s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
   }
   return s
 }
@@ -343,21 +479,44 @@ export function reduce(state: MatchState, action: Action): EngineResult {
   switch (action.type) {
     case 'MULLIGAN': {
       if (state.phase !== 'mulligan') return fail(state, 'Not the mulligan step.')
+      if (action.toBottom.length > 2)
+        return fail(state, 'You may set aside at most 2 cards.')
       let s = clone(state)
       const p = s.players[action.player]
       if (p.mulliganed) return fail(state, 'Already decided your hand.')
-      if (action.redraw) {
-        p.zones.mainDeck = shuffle([...p.zones.mainDeck, ...p.zones.hand])
-        p.zones.hand = p.zones.mainDeck.splice(0, RULES.openingHand)
-        s = log(s, action.player, `${p.name} mulliganed.`)
-      } else {
-        s = log(s, action.player, `${p.name} kept.`)
+      // Set aside the chosen cards to the BOTTOM of the deck (no reshuffle),
+      // then draw that many replacements.
+      const setAside: EngineCard[] = []
+      for (const iid of action.toBottom) {
+        const c = removeFromZone(p, 'hand', iid)
+        if (c) setAside.push(c)
       }
+      p.zones.mainDeck.push(...setAside)
+      for (let i = 0; i < setAside.length && p.zones.mainDeck.length > 0; i++)
+        p.zones.hand.push(p.zones.mainDeck.shift()!)
+      s = log(
+        s,
+        action.player,
+        setAside.length ? `${p.name} mulliganed ${setAside.length}.` : `${p.name} kept.`,
+      )
       p.mulliganed = true
-      if (s.players.every((pl) => pl.mulliganed)) {
-        return ok(beginTurn(s))
-      }
+      if (s.players.every((pl) => pl.mulliganed)) return ok(beginTurn(s))
       return ok(s)
+    }
+
+    case 'ACTIVATE_LEGEND': {
+      const guard = requireActiveAction(state, action.player)
+      if (guard) return fail(state, guard)
+      const s = clone(state)
+      const p = s.players[action.player]
+      if (!p.legend) return fail(state, 'No legend in play.')
+      if (p.legend.exhausted) return fail(state, 'Legend already used this turn.')
+      // Generic activation: exhaust the legend. Specific effects are surfaced
+      // for manual resolution (per-legend scripting is out of scope).
+      p.legend = { ...p.legend, exhausted: true }
+      return ok(
+        log(s, action.player, `${getCard(p.legend.cardId)?.name ?? 'Legend'} ability used (resolve effect manually).`),
+      )
     }
 
     case 'PLAY_UNIT':
@@ -383,22 +542,56 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       if (err) return fail(state, err)
 
       removeFromZone(p, 'hand', action.iid)
+      const kw = parseKeywords(card)
+
       if (action.type === 'PLAY_UNIT') {
-        // Units enter exhausted (no Accelerate keyword handling yet).
-        p.zones.base.push({ ...ci, exhausted: true })
-        return ok(log(s, action.player, `Played ${card.name} to base (exhausted).`))
+        // Accelerate units enter ready; others enter exhausted.
+        p.zones.base.push({ ...ci, exhausted: !kw.accelerate, enteredTurn: s.turn })
+        let s1 = log(
+          s,
+          action.player,
+          `Played ${card.name}${kw.accelerate ? ' (ready · Accelerate)' : ''}.`,
+        )
+        const e = onPlayEffect(card)
+        if (e.draw) s1 = log(s1, action.player, `Drew ${drawN(p, e.draw)} (on play).`)
+        if (e.channel) s1 = log(s1, action.player, `Channeled ${channelN(p, e.channel)} (on play).`)
+        if (kw.vision) s1 = log(s1, action.player, `Vision — may recycle the top of your deck (manual).`)
+        if (e.manual && !e.draw && !e.channel)
+          s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
+        return ok(s1)
       }
+
       if (action.type === 'PLAY_GEAR') {
-        // Attach to a target unit if provided, else park at base.
+        // Attach to a target unit (granting its bonuses) if given, else base.
+        if (action.targetIid) {
+          for (const u of p.zones.base.concat(s.battlefields.flatMap((b) => b.units)))
+            if (u.iid === action.targetIid && u.owner === action.player) {
+              u.attached = [...u.attached, `${card.id}|${ci.iid}`]
+              return ok(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`))
+            }
+        }
         p.zones.base.push({ ...ci })
-        return ok(log(s, action.player, `Played gear ${card.name}.`))
+        return ok(log(s, action.player, `Played gear ${card.name} (unattached).`))
       }
-      // Spell: pay, then trash. Card-specific effects are logged for manual
-      // resolution (full scripting is out of scope).
+
+      // Spell: apply common effects, then trash.
+      const e = spellEffect(card)
+      let s1 = s
+      if (e.draw) s1 = log(s1, action.player, `Drew ${drawN(p, e.draw)}.`)
+      if (e.channel) s1 = log(s1, action.player, `Channeled ${channelN(p, e.channel)}.`)
+      if (e.damage) {
+        const target = action.targets?.[0]
+        if (target) {
+          applyTargetDamage(s1, target, e.damage)
+          s1 = log(s1, action.player, `${card.name} dealt ${e.damage} to a unit.`)
+        } else {
+          s1 = log(s1, action.player, `${card.name}: choose a target (resolve manually).`)
+        }
+      }
+      if (e.manual && !e.draw && !e.channel && !e.damage)
+        s1 = log(s1, action.player, `Cast ${card.name} — resolve its effect manually.`)
       p.zones.trash.push({ ...ci })
-      return ok(
-        log(s, action.player, `Cast ${card.name}. (Resolve its effect manually.)`),
-      )
+      return ok(s1)
     }
 
     case 'MOVE_UNIT': {
@@ -409,10 +602,28 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       const prevController = state.battlefields[action.toBattlefield].controller
       const s = clone(state)
       const p = s.players[action.player]
-      const unit = removeFromZone(p, 'base', action.iid)
-      if (!unit) return fail(state, 'Unit not at your base.')
+      // Move from base, or from another battlefield if the unit has Ganking.
+      let unit = removeFromZone(p, 'base', action.iid)
+      let fromBattlefield = -1
+      if (!unit) {
+        for (let i = 0; i < s.battlefields.length; i++) {
+          if (i === action.toBattlefield) continue
+          const idx = s.battlefields[i].units.findIndex(
+            (u) => u.iid === action.iid && u.owner === action.player,
+          )
+          if (idx >= 0) {
+            if (!parseKeywords(def(s.battlefields[i].units[idx])).ganking)
+              return fail(state, 'Only units with Ganking can move between battlefields.')
+            unit = s.battlefields[i].units.splice(idx, 1)[0]
+            fromBattlefield = i
+            break
+          }
+        }
+      }
+      if (!unit) return fail(state, 'Unit not found at your base.')
       if (unit.exhausted) {
-        p.zones.base.push(unit)
+        if (fromBattlefield >= 0) s.battlefields[fromBattlefield].units.push(unit)
+        else p.zones.base.push(unit)
         return fail(state, 'Unit is exhausted.')
       }
       unit.exhausted = true
@@ -444,6 +655,7 @@ export function reduce(state: MatchState, action: Action): EngineResult {
           action.player,
           RULES.pointsPerConquer,
           `conquered ${getCard(bf.cardId)?.name ?? 'battlefield'}`,
+          'conquer',
         )
       }
       return ok(s2)

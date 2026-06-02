@@ -191,7 +191,7 @@ describe('multiplayer (3-4 players)', () => {
     expect(s.pointsToWin).toBe(11)
     expect(s.battlefields.length).toBe(3)
     for (let i = 0; i < 3; i++)
-      s = reduce(s, { type: 'MULLIGAN', player: i, redraw: false }).state
+      s = reduce(s, { type: 'MULLIGAN', player: i, toBottom: [] }).state
     expect(s.phase).toBe('action')
     expect(s.activePlayer).toBe(0)
     s = reduce(s, { type: 'END_TURN', player: 0 }).state
@@ -211,6 +211,55 @@ describe('multiplayer (3-4 players)', () => {
     ])
     expect(four.players.length).toBe(4)
     expect(() => createMatch([miniDeck('A')])).toThrow()
+  })
+})
+
+describe('keywords & new mechanics', () => {
+  it('parses Tank / Shield / Assault from text', async () => {
+    const { parseKeywords } = await import('./keywords')
+    const card = {
+      id: 'kw-test',
+      name: 'Test',
+      type: 'unit',
+      domains: ['fury'],
+      rarity: 'common',
+      set: 'X',
+      number: 1,
+      text: '[Tank] [Shield 2] [Assault 1] [Deathknell]',
+      energy: 1,
+      power: {},
+      might: 3,
+    } as never
+    const k = parseKeywords(card)
+    expect(k.tank).toBe(true)
+    expect(k.shield).toBe(2)
+    expect(k.assault).toBe(1)
+    expect(k.deathknell).toBe(true)
+  })
+
+  it('mulligan sets aside up to 2 to the bottom and redraws', () => {
+    const s = baseState()
+    s.phase = 'mulligan'
+    s.players[0].mulliganed = false
+    s.players[1].mulliganed = false // keep phase in mulligan after p0 acts
+    const hand = [mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)]
+    s.players[0].zones.hand = hand
+    s.players[0].zones.mainDeck = [mk(furyRune.id, 0), mk(furyRune.id, 0), mk(furyRune.id, 0)]
+    const aside = [hand[0].iid, hand[1].iid]
+    const { state, error } = reduce(s, { type: 'MULLIGAN', player: 0, toBottom: aside })
+    expect(error).toBeUndefined()
+    expect(state.players[0].zones.hand.length).toBe(4)
+    const bottom = state.players[0].zones.mainDeck.slice(-2).map((c) => c.iid)
+    expect(bottom).toEqual(aside)
+  })
+
+  it('burn out awards a point to the next player', () => {
+    const s = baseState()
+    s.activePlayer = 1
+    s.turn = 4
+    s.players[0].zones.mainDeck = [] // player 0 will draw from an empty deck
+    const { state } = reduce(s, { type: 'END_TURN', player: 1 })
+    expect(state.players[1].points).toBeGreaterThanOrEqual(1)
   })
 })
 
