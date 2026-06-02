@@ -16,11 +16,25 @@ const features = [
     status: 'Live',
   },
   {
-    to: '/play',
-    title: 'Play Simulator',
-    desc: 'Solo goldfish board now; auto-enforced rules and online multiplayer next.',
+    to: '/match',
+    title: 'Ruled Match',
+    desc: 'Hotseat 2-player with full auto-enforced rules — turns, costs, combat, scoring.',
     icon: '⚔️',
-    status: 'Beta',
+    status: 'Live',
+  },
+  {
+    to: '/online',
+    title: 'Play Online',
+    desc: 'Room-code multiplayer. Same-device out of the box; cross-device with Supabase.',
+    icon: '🌐',
+    status: 'Live',
+  },
+  {
+    to: '/play',
+    title: 'Solo Goldfish',
+    desc: 'A free-form manual board to test draws and sequencing — undo included.',
+    icon: '🎴',
+    status: 'Live',
   },
 ]
 

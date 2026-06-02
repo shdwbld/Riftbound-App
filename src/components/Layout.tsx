@@ -13,21 +13,21 @@ export default function Layout() {
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b border-white/10 bg-[#10101a]/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
-          <NavLink to="/" className="flex items-center gap-2 text-lg font-bold">
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-3 py-3 sm:gap-6 sm:px-4">
+          <NavLink to="/" className="flex shrink-0 items-center gap-2 text-lg font-bold">
             <span className="text-xl">⚔️</span>
-            <span className="bg-gradient-to-r from-indigo-400 to-fuchsia-400 bg-clip-text text-transparent">
+            <span className="hidden bg-gradient-to-r from-indigo-400 to-fuchsia-400 bg-clip-text text-transparent sm:inline">
               Riftbound
             </span>
           </NavLink>
-          <nav className="flex items-center gap-1">
+          <nav className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {navItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 end={item.end}
                 className={({ isActive }) =>
-                  `rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                  `shrink-0 rounded-md px-2.5 py-1.5 text-sm font-medium transition ${
                     isActive
                       ? 'bg-white/10 text-white'
                       : 'text-white/60 hover:bg-white/5 hover:text-white'
@@ -38,7 +38,9 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto text-xs text-white/40">unofficial simulator</div>
+          <div className="ml-auto hidden shrink-0 text-xs text-white/40 lg:block">
+            unofficial simulator
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
