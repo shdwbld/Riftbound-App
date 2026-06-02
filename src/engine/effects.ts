@@ -16,32 +16,47 @@ export interface ParsedEffect {
   channel: number
   /** Damage to a single target unit, if the text calls for it. */
   damage: number
+  /** Number of Recruit unit tokens to create. */
+  recruits: number
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
 
-const WORD_NUM: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3 }
+const WORD_NUM: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+}
 
 function num(token: string): number {
   return WORD_NUM[token.toLowerCase()] ?? (parseInt(token, 10) || 0)
 }
 
+const NUM = '(\\d+|a|an|one|two|three|four|five)'
+
 function parse(text: string): ParsedEffect {
   const t = text.toLowerCase()
-  const eff: ParsedEffect = { draw: 0, channel: 0, damage: 0, manual: false }
+  const eff: ParsedEffect = { draw: 0, channel: 0, damage: 0, recruits: 0, manual: false }
 
-  const drawM = t.match(/draw (\d+|a|an|one|two|three)/)
+  const drawM = t.match(new RegExp(`draw ${NUM}`))
   if (drawM) eff.draw += num(drawM[1])
 
-  const chM = t.match(/channel (\d+|a|an|one|two|three)/)
+  const chM = t.match(new RegExp(`channel ${NUM}`))
   if (chM) eff.channel += num(chM[1])
 
   // "deal 2 to a unit" / "deal 2 damage"
   const dmgM = t.match(/deal (\d+) (?:damage )?to (?:a |an |target )?unit/)
   if (dmgM) eff.damage += parseInt(dmgM[1], 10)
 
-  // Anything with other directives we didn't capture → flag manual.
-  if (!drawM && !chM && !dmgM && t.trim().length > 0) eff.manual = true
+  // "play a/two/three/four [1 :might:] Recruit unit token(s)"
+  const recM = t.match(new RegExp(`play ${NUM}[^.]*?recruit unit tokens?`))
+  if (recM) eff.recruits += num(recM[1])
+
+  if (!drawM && !chM && !dmgM && !recM && t.trim().length > 0) eff.manual = true
   return eff
 }
 
@@ -55,6 +70,6 @@ export function spellEffect(card: Card): ParsedEffect {
 /** On-play effect for a unit/gear — only the unambiguous on-play triggers. */
 export function onPlayEffect(card: Card): ParsedEffect {
   const t = (card.text ?? '').toLowerCase()
-  if (!ON_PLAY.test(t)) return { draw: 0, channel: 0, damage: 0, manual: false }
+  if (!ON_PLAY.test(t)) return { draw: 0, channel: 0, damage: 0, recruits: 0, manual: false }
   return parse(card.text ?? '')
 }

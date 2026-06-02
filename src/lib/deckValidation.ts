@@ -87,6 +87,17 @@ export function validateDeck(deck: Deck): DeckValidation {
       err(`${card.name} is off-identity for this legend.`)
   }
 
+  // Signature limit: at most 3 Signature cards total across the deck.
+  let signatureCount = 0
+  for (const [id, count] of Object.entries(deck.main)) {
+    if (getCard(id)?.supertype === 'signature') signatureCount += count
+  }
+  for (const [id, count] of Object.entries(deck.runes)) {
+    if (getCard(id)?.supertype === 'signature') signatureCount += count
+  }
+  if (signatureCount > 3)
+    err(`Too many Signature cards: ${signatureCount} (max 3 total).`)
+
   for (const id of deck.battlefields) {
     const card = getCard(id)
     if (!card) {

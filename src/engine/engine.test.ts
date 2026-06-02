@@ -286,6 +286,14 @@ describe('tokens (Recruit)', () => {
     const { error } = reduce(s, { type: 'CREATE_TOKEN', player: 0, cardId: 'nope' })
     expect(error).toBeDefined()
   })
+
+  it('auto-parses Recruit creation from card text', async () => {
+    const { onPlayEffect, spellEffect } = await import('./effects')
+    const mkCard = (text: string) =>
+      ({ id: 't', name: 'T', type: 'unit', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {}, might: 1 }) as never
+    expect(onPlayEffect(mkCard('When you play me, play a 1 :rb_might: Recruit unit token here.')).recruits).toBe(1)
+    expect(spellEffect(mkCard('Play three 1 :rb_might: Recruit unit tokens.')).recruits).toBe(3)
+  })
 })
 
 describe('guards', () => {

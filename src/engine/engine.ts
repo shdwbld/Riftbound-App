@@ -13,9 +13,9 @@ import {
   ok,
   fail,
 } from './types'
-import { RULES } from './setup'
+import { RULES, TOKEN_PILE_IDS } from './setup'
 import { parseKeywords } from './keywords'
-import { spellEffect, onPlayEffect } from './effects'
+import { spellEffect, onPlayEffect, type ParsedEffect } from './effects'
 
 // ---------------------------------------------------------------------------
 // Pure engine: reduce(state, action) -> { state, error? }
@@ -178,6 +178,32 @@ function channelN(p: PlayerState, n: number): number {
     ch++
   }
   return ch
+}
+
+/** Create N Recruit tokens onto a player's Base (from card effects). */
+function spawnRecruits(p: PlayerState, n: number, turn: number): number {
+  const id = TOKEN_PILE_IDS[0]
+  if (!id) return 0
+  for (let i = 0; i < n; i++)
+    p.zones.base.push({
+      iid: `${p.id}:tok:${id}#${(tokenCounter++).toString(36)}`,
+      cardId: id,
+      owner: p.id,
+      exhausted: true,
+      damage: 0,
+      attached: [],
+      enteredTurn: turn,
+    })
+  return n
+}
+
+/** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text. */
+function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect): string[] {
+  const lines: string[] = []
+  if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
+  if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
+  if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
+  return lines
 }
 
 /** Deal `amount` damage to a target unit anywhere; defeat it if lethal. */
@@ -442,14 +468,14 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   const attackersDefeated = assignDamage(defendMight, damageOrder(attackers), 'attacker')
 
   const survivors: EngineCard[] = []
-  const deathknells: string[] = []
+  const deathknells: EngineCard[] = []
   for (const u of bf.units) {
     const dead =
       (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
       (u.owner === moverOwner && attackersDefeated.has(u.iid))
     if (dead) {
       s.players[u.owner].zones.trash.push({ ...u, damage: 0, exhausted: false })
-      if (parseKeywords(def(u)).deathknell) deathknells.push(def(u)?.name ?? 'unit')
+      if (parseKeywords(def(u)).deathknell) deathknells.push(u)
     } else survivors.push({ ...u, damage: 0 })
   }
   bf.units = survivors
@@ -459,8 +485,17 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
     moverOwner,
     `Showdown at ${bfName}: ${attackMight} vs ${defendMight} Might — ${lost} unit(s) defeated.`,
   )
-  for (const name of deathknells)
-    s = log(s, moverOwner, `Deathknell: ${name} — resolve its dying effect.`)
+  // Deathknell: auto-resolve recruit-spawning death triggers.
+  for (const u of deathknells) {
+    const dcard = def(u)
+    const e = dcard ? spellEffect(dcard) : null
+    if (e?.recruits) {
+      spawnRecruits(s.players[u.owner], e.recruits, s.turn)
+      s = log(s, u.owner, `Deathknell: ${dcard?.name} created ${e.recruits} Recruit(s).`)
+    } else {
+      s = log(s, u.owner, `Deathknell: ${dcard?.name} — resolve its dying effect.`)
+    }
+  }
 
   recomputeControllers(s)
   s.showdown = null
@@ -518,9 +553,15 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       // Generic activation: exhaust the legend. Specific effects are surfaced
       // for manual resolution (per-legend scripting is out of scope).
       p.legend = { ...p.legend, exhausted: true }
-      return ok(
-        log(s, action.player, `${getCard(p.legend.cardId)?.name ?? 'Legend'} ability used (resolve effect manually).`),
-      )
+      const legendCard = getCard(p.legend.cardId)
+      let s1 = log(s, action.player, `${legendCard?.name ?? 'Legend'} ability used.`)
+      if (legendCard) {
+        const e = spellEffect(legendCard)
+        for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
+        if (!e.draw && !e.channel && !e.recruits)
+          s1 = log(s1, action.player, `(Resolve the legend's effect manually.)`)
+      }
+      return ok(s1)
     }
 
     case 'CREATE_TOKEN': {
@@ -596,10 +637,9 @@ export function reduce(state: MatchState, action: Action): EngineResult {
           `Played ${card.name}${kw.accelerate ? ' (ready · Accelerate)' : ''}.`,
         )
         const e = onPlayEffect(card)
-        if (e.draw) s1 = log(s1, action.player, `Drew ${drawN(p, e.draw)} (on play).`)
-        if (e.channel) s1 = log(s1, action.player, `Channeled ${channelN(p, e.channel)} (on play).`)
+        for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
         if (kw.vision) s1 = log(s1, action.player, `Vision — may recycle the top of your deck (manual).`)
-        if (e.manual && !e.draw && !e.channel)
+        if (e.manual && !e.draw && !e.channel && !e.recruits)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
         return ok(s1)
       }
@@ -620,8 +660,7 @@ export function reduce(state: MatchState, action: Action): EngineResult {
       // Spell: apply common effects, then trash.
       const e = spellEffect(card)
       let s1 = s
-      if (e.draw) s1 = log(s1, action.player, `Drew ${drawN(p, e.draw)}.`)
-      if (e.channel) s1 = log(s1, action.player, `Channeled ${channelN(p, e.channel)}.`)
+      for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
       if (e.damage) {
         const target = action.targets?.[0]
         if (target) {
@@ -631,7 +670,7 @@ export function reduce(state: MatchState, action: Action): EngineResult {
           s1 = log(s1, action.player, `${card.name}: choose a target (resolve manually).`)
         }
       }
-      if (e.manual && !e.draw && !e.channel && !e.damage)
+      if (e.manual && !e.draw && !e.channel && !e.damage && !e.recruits)
         s1 = log(s1, action.player, `Cast ${card.name} — resolve its effect manually.`)
       p.zones.trash.push({ ...ci })
       return ok(s1)
