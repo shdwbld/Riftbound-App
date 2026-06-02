@@ -31,6 +31,7 @@ function clonePlayer(p: PlayerState): PlayerState {
   return {
     ...p,
     legend: p.legend ? { ...p.legend } : null,
+    champion: p.champion ? { ...p.champion } : null,
     zones: {
       mainDeck: [...p.zones.mainDeck],
       runeDeck: [...p.zones.runeDeck],
@@ -522,26 +523,41 @@ export function reduce(state: MatchState, action: Action): EngineResult {
     case 'PLAY_UNIT':
     case 'PLAY_GEAR':
     case 'PLAY_SPELL': {
-      const guard = requireActiveAction(state, action.player)
-      if (guard) return fail(state, guard)
-      const s = clone(state)
-      const p = s.players[action.player]
-      const ci = findInZone(p, 'hand', action.iid)
-      if (!ci) return fail(state, 'Card not in hand.')
-      const card = def(ci)
+      // Resolve the card first (it might be in hand or the Champion Zone).
+      const probe = state.players[action.player]
+      const fromChampion = probe.champion?.iid === action.iid
+      const handCard = probe.zones.hand.find((c) => c.iid === action.iid)
+      const sourceCard = fromChampion ? probe.champion! : handCard
+      if (!sourceCard) return fail(state, 'Card not in hand.')
+      const card = getCard(sourceCard.cardId)
       if (!card) return fail(state, 'Unknown card.')
       const expected =
-        action.type === 'PLAY_UNIT'
-          ? 'unit'
-          : action.type === 'PLAY_GEAR'
-            ? 'gear'
-            : 'spell'
+        action.type === 'PLAY_UNIT' ? 'unit' : action.type === 'PLAY_GEAR' ? 'gear' : 'spell'
       if (card.type !== expected) return fail(state, `That card is not a ${expected}.`)
+
+      // Timing: normal plays need your action phase. Reaction/Action spells may
+      // be played during a showdown by the player holding priority.
+      const kwTiming = parseKeywords(card)
+      const inShowdown = state.phase === 'showdown' && state.showdown
+      const mayReact =
+        action.type === 'PLAY_SPELL' &&
+        inShowdown &&
+        (kwTiming.reaction || kwTiming.action) &&
+        state.showdown!.priority === action.player
+      if (!mayReact) {
+        const guard = requireActiveAction(state, action.player)
+        if (guard) return fail(state, guard)
+      }
+
+      const s = clone(state)
+      const p = s.players[action.player]
+      const ci = fromChampion ? p.champion! : findInZone(p, 'hand', action.iid)!
 
       const err = applyPayment(p, costOf(card), action.payment)
       if (err) return fail(state, err)
 
-      removeFromZone(p, 'hand', action.iid)
+      if (fromChampion) p.champion = null
+      else removeFromZone(p, 'hand', action.iid)
       const kw = parseKeywords(card)
 
       if (action.type === 'PLAY_UNIT') {

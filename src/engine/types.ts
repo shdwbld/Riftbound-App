@@ -40,6 +40,8 @@ export interface PlayerState {
   id: PlayerId
   name: string
   legend: EngineCard | null
+  /** The Chosen Champion, set aside and always playable from here. */
+  champion: EngineCard | null
   points: number
   zones: Record<ZoneId, EngineCard[]>
   /** Set true once the player has taken their mulligan decision. */

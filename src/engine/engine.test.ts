@@ -34,6 +34,7 @@ function player(id: PlayerId): PlayerState {
     id,
     name: `P${id + 1}`,
     legend: null,
+    champion: null,
     points: 0,
     zones: emptyZones(),
     mulliganed: true,

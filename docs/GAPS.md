@@ -1,73 +1,57 @@
-# Gameplay gaps — identification only
+# Gameplay gaps — status
 
-A candid audit of what the rules engine does **not** yet enforce, vs. the real
-Riftbound rules (see `RULES.md`). This is a tracking list, not a work order.
-Grouped by impact. ⛔ = affects correctness of normal play; ⚠️ = situational;
-ℹ️ = depth/edge.
+Audit of rules coverage vs. real Riftbound. Updated after the gap-closing pass.
+✅ implemented · ◑ partial / framework-ready · ⏳ not yet.
 
-## ⛔ Card abilities & keywords (the biggest gap)
-1. **Per-card ability text is not executed.** Units' "when played / when I hold /
-   when defeated" triggers do nothing; spells resolve to the trash with no
-   effect; gear grants nothing. The board enforces *structure*, not card text.
-2. **None of the 22 keywords are enforced:** Tank, Shield X, Assault X,
-   Deathknell, Accelerate, Ambush, Deflect X, Ganking, Hidden, Hunt X, Legion,
-   Level N, Quick-Draw, Reaction, Repeat, Vision, Weaponmaster, Backline, Equip,
-   Temporary, Action. (They're shown as text only.)
-3. **Legend abilities don't work.** The Legend sits in play but its exhaust
-   ability / always-on passive is never usable.
-4. **Gear never attaches.** `EngineCard.attached` exists but gear can't be
-   equipped to a unit and grants no Might/abilities.
-5. **No targeting.** Because effects aren't scripted, there's no UI/flow to pick
-   targets for spells or abilities.
+## Card abilities & keywords
+1. ✅ **Keyword framework** — all 22 keywords parsed from card text
+   (`src/engine/keywords.ts`), shown as chips in the card detail view.
+2. ◑ **Per-card ability text** — common patterns auto-resolve (draw, channel,
+   "deal N to a unit"); everything else is surfaced in the log for manual
+   resolution. Full bespoke scripting of ~1000 cards is out of scope.
+3. ✅ **Legend ability** — "★ Ability" button exhausts the legend (effect text
+   resolved manually).
+4. ◑ **Gear** — attaches to a target unit and grants parsed "+N Might" in combat;
+   the in-match attach **picker UI** is still TODO (engine supports `targetIid`).
+5. ◑ **Targeting** — the engine accepts targets for spells/gear; a click-to-target
+   **UI** for damage spells is still TODO (those log "choose a target").
 
-## ⛔ Combat & showdown depth
-6. **No reaction chain.** During a showdown the only legal move is Pass — you
-   can't play Action/Reaction spells, activate abilities, or counter-move.
-   (Open/Closed state + LIFO chain from RULES.md is unmodeled.)
-7. **Damage assignment is fixed array-order**, not controller-chosen, and
-   **Tank** (must take lethal first) / **Assault**/**Shield** (+Might while
-   attacking/defending) are ignored.
-8. **Battlefield-to-battlefield movement (Ganking)** isn't possible — units only
-   move base→battlefield (and RETREAT battlefield→base).
+## Combat
+6. ◑ **Reactions in showdowns** — the priority holder can now play Reaction/Action
+   spells during a showdown; the full Open/Closed LIFO chain with priority resets
+   is simplified.
+7. ✅ **Combat keywords** — Tank (lethal-first), Assault X (+Might attacking),
+   Shield X (+Might defending), Backline (no frontline), kill-order damage.
+8. ✅ **Ganking** — units with Ganking move battlefield-to-battlefield.
 
-## ⛔ Scoring & end states
-9. **Burn Out not modeled.** Drawing from an empty Main Deck should give the
-   opponent +1 point; here it silently draws nothing.
-10. **8th-point restriction** (final point must come from a Hold, or conquering
-    all battlefields in one turn) is not enforced — any +1 to 8 wins.
+## Scoring & end states
+9. ✅ **Burn Out** — drawing from an empty deck gives the next player +1.
+10. ✅ **8th-point restriction** — a winning Conquer point only counts if you
+    control all battlefields that turn, else you draw a card instead.
 
-## ⚠️ Resources & setup
-11. **One rune can't pay both** Energy (exhaust) **and** Power (recycle) as the
-    rules allow; the engine treats them as separate runes, and only lets you
-    recycle *ready* runes.
-12. **Mulligan is simplified** to keep / full-hand redraw, instead of "set aside
-    up to 2 → bottom of deck (no reshuffle) → redraw that many."
-13. **Chosen Champion zone missing.** Champions live in the main deck; there's no
-    set-aside champion that's always replayable from a Champion Zone.
-14. **Accelerate** (enter ready) unmodeled — all units enter exhausted.
+## Resources & setup
+11. ✅ **One rune pays both** — a rune can be exhausted for Energy and recycled
+    for Power in the same payment.
+12. ✅ **Mulligan** — set aside up to 2 → bottom of deck (no reshuffle) → redraw,
+    with a card-selection UI.
+13. ✅ **Chosen Champion zone** — a matching champion unit is set aside at setup
+    and is always playable from the Champion Zone.
+14. ✅ **Accelerate** — units with Accelerate enter ready.
+15. ✅ **Temporary** — expires at the start of the controller's next turn.
 
-## ⚠️ Multiplayer (3-4p)
-15. **Free-for-all only** — no **2v2 team** mode (shared points / team win).
-16. **Multiplayer combat is simplified** to mover-vs-combined-defenders; real
-    free-for-all combat among 3+ contesting sides isn't fully modeled.
-17. **No multiplayer catch-up rule** for the 3rd/4th player (only the 1v1
-    second-player +1 channel exists); exact multiplayer turn-1 economy is
-    unconfirmed in sources.
+## Multiplayer (3-4p)
+16. ✅ **2-4 players** hotseat + online; N-seat rotation, 11-pt win.
+17. ◑ **Multiplayer combat** — mover vs. combined defenders (simplified).
+18. ⏳ **2v2 team mode** — only free-for-all so far.
+19. ⏳ **Multiplayer catch-up economy** — unconfirmed in sources; not modeled.
 
-## ℹ️ UX / flow gaps
-18. **No concede button** in the match UI (the CONCEDE action exists in the
-    engine but isn't surfaced).
-19. **No legend-ability button**, no "activate ability" affordance at all.
-20. **Solo Goldfish board is separate** from the engine — it's a free manual
-    board and doesn't share rules/validation with Match/Online.
-21. **End-of-turn cleanup** of "this turn" effects and the Rune Pool emptying are
-    no-ops today (harmless only because no effects exist yet).
-22. **Online is 2-player** (host + 1 guest) — 3-4p online is task #11.
+## UX
+20. ✅ **Concede button** in the match.
+21. ✅ **Legend-ability button**.
+22. ⏳ **Solo Goldfish board** still uses its own manual state (not the engine).
 
-## Notes
-- Items 1-5 are the headline: a *complete* engine means scripting ~1,000 bespoke
-  cards + 22 keywords + a reaction chain — a large, ongoing effort. A sensible
-  next step is a **keyword framework** + scripting the highest-impact keywords
-  (Tank, Shield, Assault, Deathknell, Vision) before per-card effects.
-- None of these block the current structural game; they bound how "automated"
-  and tournament-faithful play is.
+## Remaining (intentionally deferred)
+- Exhaustive per-card effect scripting (item 2) — the long pole.
+- Full reaction chain / priority system (item 6).
+- In-match targeting/attach pickers (items 4, 5).
+- 2v2 team scoring (item 18) and solo-board/engine merge (item 22).

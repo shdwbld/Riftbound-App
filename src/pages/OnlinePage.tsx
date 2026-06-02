@@ -277,6 +277,8 @@ export default function OnlinePage() {
         onMove={(iid, bf) => dispatch({ type: 'MOVE_UNIT', player: seat, iid, toBattlefield: bf })}
         onPass={() => dispatch({ type: 'PASS', player: seat })}
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
+        onActivateLegend={() => dispatch({ type: 'ACTIVATE_LEGEND', player: seat })}
+        onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}
         onInspect={setInspect}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}

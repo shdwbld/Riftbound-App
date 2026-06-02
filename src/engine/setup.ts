@@ -1,4 +1,5 @@
 import type { Deck } from '../types/deck'
+import { getCard } from '../data/cards'
 import {
   type MatchState,
   type PlayerState,
@@ -56,6 +57,14 @@ function expand(pile: Record<string, number>, owner: PlayerId): EngineCard[] {
   return out
 }
 
+/** The champion name a Legend builds around (text before " - " / "," / "("). */
+function championName(legendId: string | null): string | null {
+  if (!legendId) return null
+  const l = getCard(legendId)
+  if (!l || l.type !== 'legend') return null
+  return l.name.split(/\s+[-–,(]/)[0].trim() || null
+}
+
 function buildPlayer(
   deck: Deck,
   id: PlayerId,
@@ -64,6 +73,23 @@ function buildPlayer(
 ): PlayerState {
   const main = shuffle(expand(deck.main, id), rng)
   const runeDeck = shuffle(expand(deck.runes, id), rng)
+
+  // Chosen Champion: pull one matching champion unit out of the deck and set it
+  // aside in the Champion Zone (always replayable from there).
+  let champion: EngineCard | null = null
+  const champ = championName(deck.legendId)
+  if (champ) {
+    const idx = main.findIndex((c) => {
+      const card = getCard(c.cardId)
+      return (
+        card?.type === 'unit' &&
+        ((card.tags ?? []).some((t: string) => t.includes(champ)) ||
+          card.name.includes(champ))
+      )
+    })
+    if (idx >= 0) champion = main.splice(idx, 1)[0]
+  }
+
   const hand = main.splice(0, RULES.openingHand)
   const zones: Record<ZoneId, EngineCard[]> = {
     mainDeck: main,
@@ -77,6 +103,7 @@ function buildPlayer(
     id,
     name,
     legend: deck.legendId ? inst(deck.legendId, id) : null,
+    champion,
     points: 0,
     zones,
     mulliganed: false,

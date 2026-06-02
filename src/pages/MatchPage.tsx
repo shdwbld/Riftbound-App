@@ -76,6 +76,8 @@ export default function MatchPage() {
         onMove={(iid, bf) => act({ type: 'MOVE_UNIT', player: controlling, iid, toBattlefield: bf })}
         onPass={() => act({ type: 'PASS', player: controlling })}
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
+        onActivateLegend={() => act({ type: 'ACTIVATE_LEGEND', player: controlling })}
+        onConcede={() => act({ type: 'CONCEDE', player: controlling })}
         onInspect={setInspect}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}

@@ -6,6 +6,7 @@ import {
   isGear,
   totalPower,
 } from '../types/cards'
+import { keywordLabels } from '../engine/keywords'
 
 export default function CardDetailModal({
   card,
@@ -106,6 +107,18 @@ export default function CardDetailModal({
             </div>
           )}
 
+          {keywordLabels(card).length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {keywordLabels(card).map((k) => (
+                <span
+                  key={k}
+                  className="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-200"
+                >
+                  {k}
+                </span>
+              ))}
+            </div>
+          )}
           {card.text && (
             <p className="whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-sm leading-relaxed text-white/80">
               {card.text}

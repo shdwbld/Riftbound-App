@@ -24,6 +24,8 @@ export interface MatchBoardProps {
   onMove: (iid: string, bf: number) => void
   onPass: () => void
   onEndTurn: () => void
+  onActivateLegend?: () => void
+  onConcede?: () => void
   /** Open the card detail modal for any card on the board. */
   onInspect?: (card: Card) => void
 }
@@ -42,6 +44,8 @@ export default function MatchBoard({
   onMove,
   onPass,
   onEndTurn,
+  onActivateLegend,
+  onConcede,
   onInspect,
 }: MatchBoardProps) {
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null)
@@ -169,6 +173,8 @@ export default function MatchBoard({
         onInspect={inspect}
         onPlay={onPlay}
         onEndTurn={onEndTurn}
+        onActivateLegend={onActivateLegend}
+        onConcede={onConcede}
       />
 
       {/* Log */}
@@ -251,6 +257,8 @@ function PlayerMat({
   onInspect,
   onPlay,
   onEndTurn,
+  onActivateLegend,
+  onConcede,
 }: {
   me: PlayerState
   myActionTurn: boolean
@@ -259,26 +267,79 @@ function PlayerMat({
   onInspect: (ci: EngineCard) => void
   onPlay: (c: EngineCard) => void
   onEndTurn: () => void
+  onActivateLegend?: () => void
+  onConcede?: () => void
 }) {
   const domains = playerDomains(me)
   const readyRunes = me.zones.runePool.filter((r) => !r.exhausted).length
+  const legendCard = me.legend ? getCard(me.legend.cardId) : undefined
+  const championAffordable =
+    me.champion && myActionTurn && canAfford(me, getCard(me.champion.cardId)!)
   return (
     <div
       className={`relative overflow-hidden rounded-xl border-2 border-indigo-400/30 p-3 ${domainAnimClass(domains)}`}
       style={{ background: matGradient(domains), ['--glow' as string]: domainGlow(domains) }}
     >
-      <div className="relative mb-2 flex items-center justify-between">
+      <div className="relative mb-2 flex items-center justify-between gap-2">
         <span className="text-sm font-semibold">
           {me.name}{' '}
           <span className="text-white/40">· {me.points} pts · ⚡{readyRunes}</span>
         </span>
-        {myActionTurn && (
-          <button
-            onClick={onEndTurn}
-            className="rounded bg-indigo-500 px-3 py-1 text-sm font-semibold hover:bg-indigo-400"
-          >
-            End turn ▶
-          </button>
+        <div className="flex items-center gap-2">
+          {myActionTurn && onConcede && (
+            <button
+              onClick={() => confirm('Concede this match?') && onConcede()}
+              className="rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/30"
+            >
+              Concede
+            </button>
+          )}
+          {myActionTurn && (
+            <button
+              onClick={onEndTurn}
+              className="rounded bg-indigo-500 px-3 py-1 text-sm font-semibold hover:bg-indigo-400"
+            >
+              End turn ▶
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Legend + Champion zone */}
+      <div className="relative mb-2 flex items-end gap-3">
+        {me.legend && (
+          <div className="flex flex-col items-center gap-0.5">
+            <button onClick={() => onInspect(me.legend!)}>
+              <BoardCard ci={me.legend} size="sm" />
+            </button>
+            {onActivateLegend && (
+              <button
+                disabled={!myActionTurn || me.legend.exhausted}
+                onClick={onActivateLegend}
+                title={legendCard?.text ?? ''}
+                className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/30 disabled:opacity-30"
+              >
+                ★ Ability
+              </button>
+            )}
+          </div>
+        )}
+        {me.champion && (
+          <div className="flex flex-col items-center gap-0.5">
+            <button onClick={() => onInspect(me.champion!)} className="relative">
+              <BoardCard ci={me.champion} size="sm" />
+              <span className="absolute left-0 top-0 rounded-br bg-amber-500/80 px-1 text-[8px] font-bold text-black">
+                CHAMP
+              </span>
+            </button>
+            <button
+              disabled={!championAffordable}
+              onClick={() => onPlay(me.champion!)}
+              className="rounded bg-indigo-500/80 px-2 py-0.5 text-[10px] font-semibold hover:bg-indigo-500 disabled:opacity-30"
+            >
+              Play
+            </button>
+          </div>
         )}
       </div>
 
