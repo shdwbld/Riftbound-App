@@ -10,8 +10,9 @@ import type { MatchState, Action } from '../engine/types'
 // ---------------------------------------------------------------------------
 
 export type NetMessage =
-  | { kind: 'join'; name: string; deck: Deck }
-  | { kind: 'hostInfo'; name: string }
+  | { kind: 'join'; name: string; deck: Deck; clientId: string }
+  | { kind: 'lobby'; joined: number; needed: number }
+  | { kind: 'start'; state: MatchState; seats: Record<string, number> }
   | { kind: 'state'; state: MatchState }
   | { kind: 'action'; action: Action }
   | { kind: 'leave' }
