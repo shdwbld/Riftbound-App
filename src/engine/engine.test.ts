@@ -57,6 +57,9 @@ function baseState(): MatchState {
     pointsToWin: 8,
     winner: null,
     showdown: null,
+    chain: [],
+    priority: null,
+    passes: 0,
     log: [],
     seq: 0,
   }

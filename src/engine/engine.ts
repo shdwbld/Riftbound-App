@@ -57,10 +57,14 @@ function clone(s: MatchState): MatchState {
     players: s.players.map(clonePlayer),
     battlefields: s.battlefields.map((b) => ({ ...b, units: b.units.map(copyCard) })),
     showdown: s.showdown ? { ...s.showdown } : null,
+    chain: s.chain.map((c) => ({ ...c, instance: copyCard(c.instance) })),
     log: s.log,
     seq: s.seq + 1,
   }
 }
+
+let chainCounter = 0
+const makeChainId = () => `chain${chainCounter++}`
 
 function log(s: MatchState, player: PlayerId | null, text: string): MatchState {
   return { ...s, log: [...s.log, { turn: s.turn, player, text }] }
@@ -666,6 +670,55 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
 
 // --- main reducer ----------------------------------------------------------
 
+/** Apply a spell's effects (used by both immediate showdown casts and chain
+ *  resolution). Mutates the players in `s`; returns the logged state. */
+function resolveSpellEffects(
+  s: MatchState,
+  controller: PlayerId,
+  card: Card,
+  targets: string[] | undefined,
+): MatchState {
+  const p = s.players[controller]
+  const e = spellEffect(card)
+  for (const line of applyParsed(s, p, e)) s = log(s, controller, line)
+  if (e.damage) {
+    const t = targets?.[0]
+    if (t) {
+      applyTargetDamage(s, t, e.damage)
+      s = log(s, controller, `${card.name} dealt ${e.damage} to a unit.`)
+    } else {
+      s = log(s, controller, `${card.name}: choose a target (resolve manually).`)
+    }
+  }
+  if (e.manual && !e.draw && !e.channel && !e.damage && !e.recruits)
+    s = log(s, controller, `Cast ${card.name} — resolve its effect manually.`)
+  return s
+}
+
+/** Resolve (or counter) the top item of the Chain. */
+function resolveTopOfChain(state: MatchState): MatchState {
+  let s = state
+  const item = s.chain[s.chain.length - 1]
+  s.chain = s.chain.slice(0, -1)
+  const p = s.players[item.controller]
+  if (item.kind === 'counter') {
+    const idx = s.chain.findIndex((c) => c.id === item.countersId)
+    if (idx >= 0) {
+      const [target] = s.chain.splice(idx, 1)
+      sendToTrash(s.players[target.controller], target.instance)
+      s = log(s, item.controller, `Countered ${getCard(target.cardId)?.name ?? 'a spell'} — it does not resolve.`)
+    } else {
+      s = log(s, item.controller, `Counter fizzled — its target left the chain.`)
+    }
+    sendToTrash(p, item.instance)
+    return s
+  }
+  const card = getCard(item.cardId)
+  if (card) s = resolveSpellEffects(s, item.controller, card, item.targets)
+  sendToTrash(p, item.instance)
+  return s
+}
+
 export function reduce(state: MatchState, action: Action): EngineResult {
   if (state.winner !== null && action.type !== 'CONCEDE')
     return fail(state, 'The game is over.')
@@ -758,16 +811,19 @@ export function reduce(state: MatchState, action: Action): EngineResult {
         action.type === 'PLAY_UNIT' ? 'unit' : action.type === 'PLAY_GEAR' ? 'gear' : 'spell'
       if (card.type !== expected) return fail(state, `That card is not a ${expected}.`)
 
-      // Timing: normal plays need your action phase. Reaction/Action spells may
-      // be played during a showdown by the player holding priority.
+      // Timing. Spells can respond to an open Chain (priority holder + Reaction/
+      // Action) or to a showdown; everything else needs your open action phase.
       const kwTiming = parseKeywords(card)
-      const inShowdown = state.phase === 'showdown' && state.showdown
-      const mayReact =
-        action.type === 'PLAY_SPELL' &&
-        inShowdown &&
-        (kwTiming.reaction || kwTiming.action) &&
-        state.showdown!.priority === action.player
-      if (!mayReact) {
+      const inShowdown = state.phase === 'showdown' && !!state.showdown
+      const chainOpen = state.chain.length > 0
+      if (action.type === 'PLAY_SPELL' && chainOpen) {
+        if (state.priority !== action.player) return fail(state, 'Not your priority.')
+        if (!(kwTiming.reaction || kwTiming.action))
+          return fail(state, 'Only Reaction/Action spells can respond to the chain.')
+      } else if (action.type === 'PLAY_SPELL' && inShowdown) {
+        if (!((kwTiming.reaction || kwTiming.action) && state.showdown!.priority === action.player))
+          return fail(state, 'Only a Reaction/Action spell at your priority during a showdown.')
+      } else {
         const guard = requireActiveAction(state, action.player)
         if (guard) return fail(state, guard)
       }
@@ -820,23 +876,27 @@ export function reduce(state: MatchState, action: Action): EngineResult {
         return ok(log(s, action.player, `Played gear ${card.name} (unattached).`))
       }
 
-      // Spell: apply common effects, then trash.
-      const e = spellEffect(card)
-      let s1 = s
-      for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
-      if (e.damage) {
-        const target = action.targets?.[0]
-        if (target) {
-          applyTargetDamage(s1, target, e.damage)
-          s1 = log(s1, action.player, `${card.name} dealt ${e.damage} to a unit.`)
-        } else {
-          s1 = log(s1, action.player, `${card.name}: choose a target (resolve manually).`)
-        }
+      // Spell. In a showdown we resolve immediately (legacy path). In the
+      // action phase the spell goes on the Chain and opens a priority window.
+      if (inShowdown) {
+        let s1 = resolveSpellEffects(s, action.player, card, action.targets)
+        sendToTrash(s1.players[action.player], ci)
+        return ok(s1)
       }
-      if (e.manual && !e.draw && !e.channel && !e.damage && !e.recruits)
-        s1 = log(s1, action.player, `Cast ${card.name} — resolve its effect manually.`)
-      p.zones.trash.push({ ...ci })
-      return ok(s1)
+      s.chain.push({
+        id: makeChainId(),
+        kind: 'spell',
+        controller: action.player,
+        cardId: card.id,
+        instance: ci,
+        payment: action.payment,
+        targets: action.targets,
+      })
+      s.passes = 0
+      s.priority = nextPlayer(s, action.player)
+      return ok(
+        log(s, action.player, `Played ${card.name} — it's on the Chain (opponents may respond).`),
+      )
     }
 
     case 'MOVE_UNIT':
@@ -889,6 +949,54 @@ export function reduce(state: MatchState, action: Action): EngineResult {
         return ok(resolveShowdown(s, s.showdown!.battlefield))
       }
       return ok(s)
+    }
+
+    case 'PASS_PRIORITY': {
+      if (state.chain.length === 0) return fail(state, 'No chain to pass on.')
+      if (state.priority !== action.player) return fail(state, 'Not your priority.')
+      let s = clone(state)
+      s.passes += 1
+      s.priority = nextPlayer(s, action.player)
+      // All players passed in a row → resolve the top of the chain.
+      if (s.passes >= s.players.length) {
+        s = resolveTopOfChain(s)
+        s.passes = 0
+        s.priority = s.chain.length > 0 ? s.activePlayer : null
+        if (s.winner !== null) return ok(s)
+      }
+      return ok(s)
+    }
+
+    case 'COUNTER': {
+      if (state.chain.length === 0) return fail(state, 'No chain to counter.')
+      if (state.priority !== action.player) return fail(state, 'Not your priority.')
+      if (!state.chain.some((c) => c.id === action.targetChainId))
+        return fail(state, 'No such item on the chain.')
+      const sourceCard = state.players[action.player].zones.hand.find((c) => c.iid === action.iid)
+      if (!sourceCard) return fail(state, 'Counter card not in hand.')
+      const card = getCard(sourceCard.cardId)
+      if (!card || card.type !== 'spell') return fail(state, 'A counter must be a spell.')
+      if (!parseKeywords(card).reaction && !parseKeywords(card).action)
+        return fail(state, 'Only Reaction/Action spells can counter.')
+      const s = clone(state)
+      const p = s.players[action.player]
+      const ci = findInZone(p, 'hand', action.iid)!
+      const err = applyPayment(p, costOf(card), action.payment)
+      if (err) return fail(state, err)
+      removeFromZone(p, 'hand', action.iid)
+      p.cardsPlayedThisTurn = (p.cardsPlayedThisTurn ?? 0) + 1
+      s.chain.push({
+        id: makeChainId(),
+        kind: 'counter',
+        controller: action.player,
+        cardId: card.id,
+        instance: ci,
+        payment: action.payment,
+        countersId: action.targetChainId,
+      })
+      s.passes = 0
+      s.priority = nextPlayer(s, action.player)
+      return ok(log(s, action.player, `Played ${card.name} to Counter — it's on the Chain.`))
     }
 
     case 'END_TURN': {
@@ -985,6 +1093,8 @@ export function reduce(state: MatchState, action: Action): EngineResult {
 
 /** Common guard: must be the active player's action phase. */
 function requireActiveAction(state: MatchState, player: PlayerId): string | null {
+  if (state.chain.length > 0)
+    return 'The chain is open — pass priority or respond first.'
   if (state.phase === 'showdown')
     return 'A showdown is open — pass or respond first.'
   if (state.phase !== 'action') return 'Not the action phase.'

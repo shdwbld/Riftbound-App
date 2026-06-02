@@ -62,6 +62,9 @@ function baseState(): MatchState {
     pointsToWin: 8,
     winner: null,
     showdown: null,
+    chain: [],
+    priority: null,
+    passes: 0,
     log: [],
     seq: 0,
   }
@@ -89,6 +92,17 @@ const legionUnit = CARDS.find(
     parseKeywords(c).legion &&
     /recruit unit token/i.test(c.text ?? ''),
 )
+const anySpell = CARDS.find((c) => c.type === 'spell' && !c.alternateArt && c.domains.length <= 1)
+const reactionSpell = CARDS.find(
+  (c) => c.type === 'spell' && !c.alternateArt && parseKeywords(c).reaction,
+)
+const drawSpell = CARDS.find(
+  (c) => c.type === 'spell' && !c.alternateArt && /draw \d|draw a/i.test(c.text ?? ''),
+)
+function giveRunes(p: { zones: { runePool: EngineCard[] } }, card: { domains: string[] }) {
+  const domains = card.domains.length ? card.domains : ['fury']
+  for (const d of domains) for (let i = 0; i < 8; i++) p.zones.runePool.push(mk(runeOf(d), 0))
+}
 
 describe('timing: implemented interactions', () => {
   it('T5 — cannot reinforce an active showdown', () => {
@@ -199,9 +213,57 @@ describe('timing: implemented interactions', () => {
   })
 })
 
+describe('chain (Batch A)', () => {
+  it('a spell goes on the Chain and resolves after all pass (LIFO)', () => {
+    if (!anySpell) return
+    const s = baseState()
+    const sp = mk(anySpell.id, 0)
+    s.players[0].zones.hand.push(sp)
+    giveRunes(s.players[0], anySpell)
+    const pay = autoPayForCard(s.players[0], anySpell)
+    if (!pay) return
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, payment: pay })
+    expect(r.error).toBeUndefined()
+    expect(r.state.chain.length).toBe(1)
+    expect(r.state.priority).toBe(1)
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.chain.length).toBe(0)
+    expect(r.state.players[0].zones.trash.some((c) => c.cardId === anySpell.id)).toBe(true)
+  })
+
+  it('T1 — a Counter removes the spell it answers, preventing its effect', () => {
+    if (!drawSpell || !reactionSpell) return
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(vanilla.id, 0)] // so a successful draw is observable
+    const sp = mk(drawSpell.id, 0)
+    s.players[0].zones.hand.push(sp)
+    giveRunes(s.players[0], drawSpell)
+    const p0pay = autoPayForCard(s.players[0], drawSpell)
+    if (!p0pay) return
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, payment: p0pay })
+    expect(r.state.chain.length).toBe(1)
+    // player 1 counters with a reaction spell
+    const cs = mk(reactionSpell.id, 1)
+    r.state.players[1].zones.hand.push(cs)
+    giveRunes(r.state.players[1] as never, reactionSpell)
+    const p1pay = autoPayForCard(r.state.players[1], reactionSpell)
+    if (!p1pay) return
+    const targetId = r.state.chain[0].id
+    r = reduce(r.state, { type: 'COUNTER', player: 1, iid: cs.iid, targetChainId: targetId, payment: p1pay })
+    expect(r.error).toBeUndefined()
+    expect(r.state.chain.length).toBe(2)
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    expect(r.state.chain.length).toBe(0)
+    // The draw spell was countered → its draw never happened (deck untouched).
+    expect(r.state.players[0].zones.mainDeck.length).toBe(1)
+    expect(r.state.players[0].zones.trash.some((c) => c.cardId === drawSpell.id)).toBe(true)
+  })
+})
+
 describe('timing: not yet implemented (documented gaps)', () => {
-  it.todo('T1 — Counter beats the spell it answers (needs a LIFO Chain)')
-  it.todo('T2 — played-but-countered still fires global triggers')
+  it.todo('T2 — played-but-countered still fires global triggers (needs trigger system)')
   it.todo('T4 — cost checks read base cost despite reductions')
   it.todo('T10 — simultaneous triggers: turn player orders first')
   it.todo('T11 — Attack/Defend triggers fire once per combat')

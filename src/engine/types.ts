@@ -93,6 +93,20 @@ export interface LogEntry {
   text: string
 }
 
+/** An item on the Chain (a played spell, or a Counter). Resolves LIFO. */
+export interface ChainItem {
+  id: string
+  kind: 'spell' | 'counter'
+  controller: PlayerId
+  cardId: string
+  /** The played card instance (trashed after the item resolves/is countered). */
+  instance: EngineCard
+  payment: Payment
+  targets?: string[]
+  /** For counters: the ChainItem id this counters. */
+  countersId?: string
+}
+
 export interface MatchState {
   /** 2-4 players, seated by index. */
   players: PlayerState[]
@@ -105,6 +119,12 @@ export interface MatchState {
   pointsToWin: number
   winner: PlayerId | null
   showdown: ShowdownState | null
+  /** The Chain (LIFO). Non-empty = a Closed State / priority window is open. */
+  chain: ChainItem[]
+  /** Who currently holds priority while the chain is open (else null). */
+  priority: PlayerId | null
+  /** Consecutive passes since the chain last changed. */
+  passes: number
   log: LogEntry[]
   /** Monotonic action counter (for ordering / netcode). */
   seq: number
@@ -162,6 +182,10 @@ export type Action =
   | { type: 'STUN_UNIT'; player: PlayerId; iid: string }
   | { type: 'RETREAT'; player: PlayerId; iid: string }
   | { type: 'PASS'; player: PlayerId }
+  /** Pass priority on the chain; when all players pass, the top item resolves. */
+  | { type: 'PASS_PRIORITY'; player: PlayerId }
+  /** Play a reaction spell that Counters a chain item (removes it on resolution). */
+  | { type: 'COUNTER'; player: PlayerId; iid: string; payment: Payment; targetChainId: string }
   | { type: 'END_TURN'; player: PlayerId }
   | { type: 'CONCEDE'; player: PlayerId }
 

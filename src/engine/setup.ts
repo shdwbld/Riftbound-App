@@ -167,6 +167,9 @@ export function createMatch(decks: Deck[], opts: MatchOptions = {}): MatchState 
       bfIds.reduce((sum, id) => sum + battlefieldPassive(id).winDelta, 0),
     winner: null,
     showdown: null,
+    chain: [],
+    priority: null,
+    passes: 0,
     log: [{ turn: 1, player: null, text: `Match created (${n} players).` }],
     seq: 0,
   }
