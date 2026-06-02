@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 import { CARDS } from '../data/cards'
 import {
+  type Card,
   DOMAINS,
   DOMAIN_META,
   type CardType,
   type Domain,
 } from '../types/cards'
 import CardTile from '../components/CardTile'
+import CardDetailModal from '../components/CardDetailModal'
 
 const TYPES: CardType[] = ['unit', 'spell', 'gear', 'battlefield', 'legend', 'rune']
 const RENDER_CAP = 120
@@ -18,6 +20,7 @@ export default function CardsPage() {
   const [domain, setDomain] = useState<Domain | 'all'>('all')
   const [type, setType] = useState<CardType | 'all'>('all')
   const [set, setSet] = useState<string | 'all'>('all')
+  const [detail, setDetail] = useState<Card | null>(null)
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -100,9 +103,13 @@ export default function CardsPage() {
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {shown.map((c) => (
-            <CardTile key={c.id} card={c} />
+            <CardTile key={c.id} card={c} onClick={() => setDetail(c)} />
           ))}
         </div>
+      )}
+
+      {detail && (
+        <CardDetailModal card={detail} onClose={() => setDetail(null)} />
       )}
     </div>
   )

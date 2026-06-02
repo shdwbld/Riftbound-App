@@ -4,23 +4,23 @@ const features = [
   {
     to: '/cards',
     title: 'Card Database',
-    desc: 'Browse and search every card by domain, cost, and type.',
+    desc: '1,000+ cards with official art — search by domain, cost, and type.',
     icon: '🃏',
-    status: 'Phase 2',
+    status: 'Live',
   },
   {
     to: '/decks',
     title: 'Deck Builder',
     desc: 'Build legal decks with a champion legend, runes, and battlefields.',
     icon: '🛠️',
-    status: 'Phase 2',
+    status: 'Live',
   },
   {
     to: '/play',
     title: 'Play Simulator',
-    desc: 'Solo goldfish now; online room-code multiplayer with auto-enforced rules soon.',
+    desc: 'Solo goldfish board now; auto-enforced rules and online multiplayer next.',
     icon: '⚔️',
-    status: 'Phase 3+',
+    status: 'Beta',
   },
 ]
 

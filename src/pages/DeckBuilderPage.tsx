@@ -61,11 +61,14 @@ export default function DeckBuilderPage() {
   const update = (patch: Partial<Deck>) => setDeck((d) => (d ? { ...d, ...patch } : d))
 
   const setCount = (pile: 'main' | 'runes', cardId: string, next: number) => {
+    // Main deck: max 3 copies per card. Rune deck: basic runes aren't subject
+    // to the 3-copy limit, so cap only at the rune-deck size.
+    const cap = pile === 'main' ? DECK_RULES.maxCopiesPerCard : DECK_RULES.runeDeckSize
     setDeck((d) => {
       if (!d) return d
       const copy = { ...d[pile] }
       if (next <= 0) delete copy[cardId]
-      else copy[cardId] = Math.min(next, DECK_RULES.maxCopiesPerCard)
+      else copy[cardId] = Math.min(next, cap)
       return { ...d, [pile]: copy }
     })
   }
@@ -117,8 +120,9 @@ export default function DeckBuilderPage() {
             Export
           </button>
           <button
-            onClick={() => navigate('/play')}
-            disabled={!v.isLegal}
+            onClick={() => navigate('/play', { state: { deckId: deck.id } })}
+            disabled={pileSize(deck.main) === 0}
+            title={pileSize(deck.main) === 0 ? 'Add some cards first' : 'Goldfish this deck'}
             className="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
           >
             Test ▶

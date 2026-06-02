@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { listDecks } from '../lib/deckStorage'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
+import { listDecks, getDeck } from '../lib/deckStorage'
 import { validateDeck } from '../lib/deckValidation'
 import { getCard } from '../data/cards'
 import {
@@ -27,8 +27,19 @@ import type { Deck } from '../types/deck'
 import BoardCard from '../components/BoardCard'
 
 export default function PlayPage() {
+  const location = useLocation()
   const [game, setGame] = useState<GameState | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+
+  // Auto-launch a deck passed from the deck builder's "Test ▶" button.
+  const launchDeckId = (location.state as { deckId?: string } | null)?.deckId
+  useEffect(() => {
+    if (launchDeckId && !game) {
+      const deck = getDeck(launchDeckId)
+      if (deck) setGame(setupGame(deck))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [launchDeckId])
 
   if (!game)
     return <DeckPicker onStart={(d) => setGame(setupGame(d))} />

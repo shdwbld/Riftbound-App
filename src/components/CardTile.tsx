@@ -56,12 +56,23 @@ function CostBadge({ card }: { card: Card }) {
   )
 }
 
-export default function CardTile({ card }: { card: Card }) {
+export default function CardTile({
+  card,
+  onClick,
+}: {
+  card: Card
+  onClick?: () => void
+}) {
   const [imgFailed, setImgFailed] = useState(false)
   const showImage = card.imageUrl && !imgFailed
 
   return (
-    <div className="group flex flex-col overflow-hidden rounded-lg border border-white/10 bg-[#15151f] transition hover:border-white/25 hover:bg-[#1a1a26]">
+    <div
+      onClick={onClick}
+      className={`group flex flex-col overflow-hidden rounded-lg border border-white/10 bg-[#15151f] transition hover:border-white/25 hover:bg-[#1a1a26] ${
+        onClick ? 'cursor-pointer' : ''
+      }`}
+    >
       <DomainStripe card={card} />
       {showImage && (
         <div className="relative aspect-[744/1039] w-full overflow-hidden bg-black/40">
