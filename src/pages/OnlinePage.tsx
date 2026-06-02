@@ -12,7 +12,7 @@ import {
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
 import { reduce } from '../engine/engine'
-import { autoPayForCard } from '../engine/autopay'
+import { autoPayForCard, canAfford } from '../engine/autopay'
 import {
   type Transport,
   type NetMessage,
@@ -229,7 +229,24 @@ export default function OnlinePage() {
   }
 
   const controlling: PlayerId =
-    match.phase === 'showdown' && match.showdown ? match.showdown.priority : match.activePlayer
+    match.chain.length > 0 && match.priority != null
+      ? match.priority
+      : match.phase === 'showdown' && match.showdown
+        ? match.showdown.priority
+        : match.activePlayer
+
+  const counterWith = (targetChainId: string) => {
+    const me = match.players[seat]
+    const reaction = me.zones.hand.find((c) => {
+      const card = getCard(c.cardId)
+      return card?.type === 'spell' && canAfford(me, card)
+    })
+    if (!reaction) return flash('No affordable Reaction spell to counter with.')
+    const card = getCard(reaction.cardId)!
+    const payment = autoPayForCard(me, card)
+    if (!payment) return flash('Cannot pay for the counter.')
+    dispatch({ type: 'COUNTER', player: seat, iid: reaction.iid, targetChainId, payment })
+  }
 
   if (match.phase === 'mulligan') {
     const me = match.players[seat]
@@ -276,6 +293,8 @@ export default function OnlinePage() {
         onPlay={play}
         onMove={(iids, bf) => dispatch({ type: 'MOVE_UNITS', player: seat, iids, toBattlefield: bf })}
         onPass={() => dispatch({ type: 'PASS', player: seat })}
+        onPassPriority={() => dispatch({ type: 'PASS_PRIORITY', player: seat })}
+        onCounter={counterWith}
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
         onActivateLegend={() => dispatch({ type: 'ACTIVATE_LEGEND', player: seat })}
         onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}

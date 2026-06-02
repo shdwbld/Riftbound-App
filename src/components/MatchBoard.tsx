@@ -8,6 +8,7 @@ import {
   type Action,
 } from '../engine/types'
 import { canAfford } from '../engine/autopay'
+import { parseKeywords } from '../engine/keywords'
 import { type Card, type Domain, DOMAIN_META } from '../types/cards'
 import { matGradient, domainGlow, domainAnimClass } from '../lib/theme'
 import BoardCard from './BoardCard'
@@ -25,6 +26,8 @@ export interface MatchBoardProps {
   /** Move one or more selected units to a battlefield (group standard move). */
   onMove: (iids: string[], bf: number) => void
   onPass: () => void
+  onPassPriority?: () => void
+  onCounter?: (targetChainId: string) => void
   onEndTurn: () => void
   onActivateLegend?: () => void
   onConcede?: () => void
@@ -48,6 +51,8 @@ export default function MatchBoard({
   onPlay,
   onMove,
   onPass,
+  onPassPriority,
+  onCounter,
   onEndTurn,
   onActivateLegend,
   onConcede,
@@ -83,8 +88,10 @@ export default function MatchBoard({
   for (let i = 1; i < match.players.length; i++)
     opponents.push(match.players[(perspective + i) % match.players.length])
 
+  const chainOpen = match.chain.length > 0
+  const myChainPriority = canAct && chainOpen && match.priority === perspective
   const myActionTurn =
-    canAct && match.phase === 'action' && match.activePlayer === perspective
+    canAct && !chainOpen && match.phase === 'action' && match.activePlayer === perspective
   const myShowdown =
     canAct && match.phase === 'showdown' && match.showdown?.priority === perspective
 
@@ -176,6 +183,63 @@ export default function MatchBoard({
         })}
       </div>
 
+      {/* Chain stack */}
+      {chainOpen && (
+        <div className="rounded-xl border border-fuchsia-400/40 bg-fuchsia-500/10 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-semibold text-fuchsia-200">
+              ⛓ Chain ({match.chain.length}) —{' '}
+              {myChainPriority
+                ? 'your priority'
+                : `waiting for ${match.priority != null ? match.players[match.priority].name : '…'}`}
+            </span>
+            {myChainPriority && onPassPriority && (
+              <button
+                onClick={onPassPriority}
+                className="rounded bg-fuchsia-500/30 px-3 py-1 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-500/50"
+              >
+                Pass (A)
+              </button>
+            )}
+          </div>
+          {/* Top of chain is last; show top-first */}
+          <div className="flex flex-col gap-1">
+            {[...match.chain].reverse().map((item, i) => {
+              const card = getCard(item.cardId)
+              return (
+                <div
+                  key={item.id}
+                  className={`flex items-center justify-between gap-2 rounded px-2 py-1 text-xs ${
+                    i === 0 ? 'bg-fuchsia-500/20' : 'bg-black/20'
+                  }`}
+                >
+                  <span>
+                    {i === 0 && <span className="text-fuchsia-300">▶ </span>}
+                    {item.kind === 'counter' ? '✗ Counter: ' : ''}
+                    <span className="font-medium">{card?.name ?? item.cardId}</span>{' '}
+                    <span className="text-white/40">· {match.players[item.controller].name}</span>
+                  </span>
+                  {myChainPriority && onCounter && item.kind === 'spell' && (
+                    <button
+                      onClick={() => onCounter(item.id)}
+                      className="rounded bg-rose-500/20 px-2 py-0.5 text-[10px] text-rose-200 hover:bg-rose-500/40"
+                    >
+                      Counter
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {myChainPriority && (
+            <p className="mt-2 text-[11px] text-white/40">
+              Play a Reaction spell to respond, Counter a spell, or Pass (A) to let
+              the top resolve.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Showdown banner */}
       {match.phase === 'showdown' && (
         <div className="flex items-center justify-between rounded-xl border border-amber-400/40 bg-amber-500/10 p-3">
@@ -200,6 +264,7 @@ export default function MatchBoard({
       <PlayerMat
         me={me}
         myActionTurn={myActionTurn}
+        canRespond={myChainPriority}
         selectedUnits={selectedUnits}
         onToggleUnit={toggleSelected}
         onInspect={inspect}
@@ -311,6 +376,7 @@ function OpponentMat({
 function PlayerMat({
   me,
   myActionTurn,
+  canRespond,
   selectedUnits,
   onToggleUnit,
   onInspect,
@@ -324,6 +390,7 @@ function PlayerMat({
 }: {
   me: PlayerState
   myActionTurn: boolean
+  canRespond?: boolean
   selectedUnits: string[]
   onToggleUnit: (iid: string) => void
   onInspect: (ci: EngineCard) => void
@@ -487,11 +554,14 @@ function PlayerMat({
       <div className="flex min-h-[80px] flex-wrap gap-1.5">
         {me.zones.hand.map((c) => {
           const card = getCard(c.cardId)
+          const kw = card ? parseKeywords(card) : null
+          const isReactionSpell = card?.type === 'spell' && (kw?.reaction || kw?.action)
           const playable =
-            myActionTurn &&
             card != null &&
-            (card.type === 'unit' || card.type === 'spell' || card.type === 'gear') &&
-            canAfford(me, card)
+            canAfford(me, card) &&
+            ((myActionTurn && (card.type === 'unit' || card.type === 'spell' || card.type === 'gear')) ||
+              // Hold priority on the chain → only Reaction/Action spells respond.
+              (canRespond && isReactionSpell))
           return (
             <div key={c.iid} className="flex flex-col items-center gap-0.5">
               <button onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')}>

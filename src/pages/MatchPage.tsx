@@ -7,7 +7,7 @@ import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action } from '../engine/types'
 import { createMatch } from '../engine/setup'
 import { reduce } from '../engine/engine'
-import { autoPayForCard } from '../engine/autopay'
+import { autoPayForCard, canAfford } from '../engine/autopay'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
@@ -64,10 +64,19 @@ export default function MatchPage() {
         return
       }
       if (m.phase === 'gameover' || m.phase === 'mulligan') return
+      const chainOpen = m.chain.length > 0
+      const cp = chainOpen && m.priority != null ? m.priority : ctrl
       switch (k) {
         case ' ':
           e.preventDefault()
-          dispatch(m.phase === 'showdown' ? { type: 'PASS', player: ctrl } : { type: 'END_TURN', player: ctrl })
+          if (chainOpen) dispatch({ type: 'PASS_PRIORITY', player: cp })
+          else dispatch(m.phase === 'showdown' ? { type: 'PASS', player: ctrl } : { type: 'END_TURN', player: ctrl })
+          break
+        case 'a':
+        case 's':
+          // Approve / resolve the top of the chain = pass priority.
+          if (chainOpen) dispatch({ type: 'PASS_PRIORITY', player: cp })
+          else flash('No chain to act on.')
           break
         case 'd':
           dispatch({ type: 'DRAW', player: ctrl })
@@ -77,11 +86,9 @@ export default function MatchPage() {
           e.preventDefault()
           undo()
           break
-        case 'a':
-        case 's':
         case 't':
         case 'c':
-          flash('Chain/targeting actions arrive with the timing engine.')
+          flash('Targeting/counter via the chain panel buttons for now.')
           break
         case 'e':
         case 'p':
@@ -116,9 +123,27 @@ export default function MatchPage() {
   if (match.phase === 'mulligan')
     return <MulliganPhase match={match} onAct={act} onExit={() => setMatch(null)} />
 
-  // Hotseat: control flips to whoever must decide.
+  // Hotseat: control flips to whoever must decide — chain priority first,
+  // then showdown priority, then the active player.
   const controlling: PlayerId =
-    match.phase === 'showdown' && match.showdown ? match.showdown.priority : match.activePlayer
+    match.chain.length > 0 && match.priority != null
+      ? match.priority
+      : match.phase === 'showdown' && match.showdown
+        ? match.showdown.priority
+        : match.activePlayer
+
+  const counterWith = (targetChainId: string) => {
+    const me = match.players[controlling]
+    const reaction = me.zones.hand.find((c) => {
+      const card = getCard(c.cardId)
+      return card?.type === 'spell' && canAfford(me, card)
+    })
+    if (!reaction) return flash('No affordable Reaction spell to counter with.')
+    const card = getCard(reaction.cardId)!
+    const payment = autoPayForCard(me, card)
+    if (!payment) return flash('Cannot pay for the counter.')
+    act({ type: 'COUNTER', player: controlling, iid: reaction.iid, targetChainId, payment })
+  }
 
   const play = (c: EngineCard) => {
     const card = getCard(c.cardId)
@@ -141,6 +166,8 @@ export default function MatchPage() {
         onPlay={play}
         onMove={(iids, bf) => act({ type: 'MOVE_UNITS', player: controlling, iids, toBattlefield: bf })}
         onPass={() => act({ type: 'PASS', player: controlling })}
+        onPassPriority={() => act({ type: 'PASS_PRIORITY', player: controlling })}
+        onCounter={counterWith}
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
         onActivateLegend={() => act({ type: 'ACTIVATE_LEGEND', player: controlling })}
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
