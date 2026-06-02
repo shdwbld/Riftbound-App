@@ -9,6 +9,7 @@ import {
 } from '../engine/types'
 import { canAfford } from '../engine/autopay'
 import { parseKeywords } from '../engine/keywords'
+import { combatMight } from '../engine/engine'
 import { type Card, type Domain, DOMAIN_META } from '../types/cards'
 import { matGradient, domainGlow, domainAnimClass } from '../lib/theme'
 import BoardCard from './BoardCard'
@@ -169,16 +170,22 @@ export default function MatchBoard({
                 ['--glow' as string]: ctrl != null ? domainGlow(ctrlDomains) : 'transparent',
               }}
             >
-              {/* battlefield card art as a fitted background */}
+              {/* battlefield card art: blurred cover fill + whole image contained */}
               {bfCard?.imageUrl && (
                 <>
                   <img
                     src={bfCard.imageUrl}
                     alt=""
                     loading="lazy"
-                    className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
+                    className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-40 blur-lg"
                   />
-                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/30" />
+                  <img
+                    src={bfCard.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-70"
+                  />
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/25" />
                 </>
               )}
               {isFury && <div className="fire-overlay" />}
@@ -294,25 +301,53 @@ export default function MatchBoard({
         </div>
       )}
 
-      {/* Showdown banner */}
-      {match.phase === 'showdown' && (
-        <div className="flex items-center justify-between rounded-xl border border-amber-400/40 bg-amber-500/10 p-3">
-          <span className="text-sm text-amber-200">
-            ⚔ Showdown —{' '}
-            {myShowdown
-              ? 'you have priority.'
-              : `waiting for ${match.players[match.showdown!.priority].name}.`}
-          </span>
-          {myShowdown && (
-            <button
-              onClick={onPass}
-              className="rounded bg-amber-500/30 px-3 py-1 text-sm font-semibold text-amber-100 hover:bg-amber-500/50"
-            >
-              Pass
-            </button>
-          )}
-        </div>
-      )}
+      {/* Showdown — combat preview */}
+      {match.phase === 'showdown' && match.showdown && (() => {
+        const sd = match.showdown
+        const bf = match.battlefields[sd.battlefield]
+        const moverOwner = bf.units.find((u) => u.iid === sd.movedUnit)?.owner ?? match.activePlayer
+        const attackers = bf.units.filter((u) => u.owner === moverOwner)
+        const defenders = bf.units.filter((u) => u.owner !== moverOwner)
+        const atk = attackers.reduce((a, u) => a + combatMight(u, 'attacker'), 0)
+        const dfd = defenders.reduce((a, u) => a + combatMight(u, 'defender'), 0)
+        const outcome =
+          atk > dfd
+            ? `${match.players[moverOwner].name} would conquer`
+            : dfd > atk
+              ? 'defenders would hold'
+              : 'both sides would trade'
+        return (
+          <div className="rounded-xl border border-amber-400/50 bg-amber-500/10 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-amber-200">
+                ⚔ Showdown at {getCard(bf.cardId)?.name ?? 'battlefield'}
+              </span>
+              {myShowdown && (
+                <button
+                  onClick={onPass}
+                  className="rounded bg-amber-500/30 px-3 py-1 text-sm font-semibold text-amber-100 hover:bg-amber-500/50"
+                >
+                  Pass (Space)
+                </button>
+              )}
+            </div>
+            <div className="mt-2 flex items-center justify-center gap-3 text-sm">
+              <span className="rounded-lg bg-rose-500/25 px-3 py-1">
+                <b>{match.players[moverOwner].name}</b>{' '}
+                <span className="font-mono text-rose-200">⚔ {atk}</span>
+              </span>
+              <span className="text-white/40">vs</span>
+              <span className="rounded-lg bg-sky-500/25 px-3 py-1">
+                <span className="font-mono text-sky-200">⚔ {dfd}</span> <b>defenders</b>
+              </span>
+            </div>
+            <p className="mt-1 text-center text-[11px] text-white/55">
+              {outcome} ·{' '}
+              {myShowdown ? 'your priority' : `waiting for ${match.players[sd.priority].name}`}
+            </p>
+          </div>
+        )
+      })()}
 
       {/* Local player mat */}
       <PlayerMat

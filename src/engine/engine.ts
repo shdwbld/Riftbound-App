@@ -552,6 +552,23 @@ export function isMighty(ci: EngineCard): boolean {
   return mightOf(ci) >= 5
 }
 
+/** A unit's current displayed Might (base + buffs + gear + temp − damage). */
+export function displayMight(ci: EngineCard): number {
+  const d = getCard(ci.cardId)
+  if (!d || d.type !== 'unit') return 0
+  return Math.max(0, d.might + (ci.buffs ?? 0) + (ci.tempMight ?? 0) + gearMight(ci) - ci.damage)
+}
+
+/** Combat Might in a role (includes Assault/Shield; Stun zeroes output). */
+export function combatMight(ci: EngineCard, role: 'attacker' | 'defender'): number {
+  return damageOutput(ci, role)
+}
+
+/** Flat +Might from attached gear (for UI badges). */
+export function gearBonus(ci: EngineCard): number {
+  return gearMight(ci)
+}
+
 /** Flat +Might granted by attached gear (parsed from "+N Might" gear text). */
 function gearMight(unit: EngineCard): number {
   let bonus = 0
