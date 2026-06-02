@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { SEED_CARDS } from '../data/cards'
+import { CARDS } from '../data/cards'
 import {
   DOMAINS,
   DOMAIN_META,
@@ -9,22 +9,34 @@ import {
 import CardTile from '../components/CardTile'
 
 const TYPES: CardType[] = ['unit', 'spell', 'gear', 'battlefield', 'legend', 'rune']
+const RENDER_CAP = 120
+
+const SETS = [...new Set(CARDS.map((c) => c.set))].sort()
 
 export default function CardsPage() {
   const [query, setQuery] = useState('')
   const [domain, setDomain] = useState<Domain | 'all'>('all')
   const [type, setType] = useState<CardType | 'all'>('all')
+  const [set, setSet] = useState<string | 'all'>('all')
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return SEED_CARDS.filter((c) => {
+    return CARDS.filter((c) => {
       if (domain !== 'all' && !c.domains.includes(domain)) return false
       if (type !== 'all' && c.type !== type) return false
-      if (q && !c.name.toLowerCase().includes(q) && !c.text?.toLowerCase().includes(q))
+      if (set !== 'all' && c.set !== set) return false
+      if (
+        q &&
+        !c.name.toLowerCase().includes(q) &&
+        !c.text?.toLowerCase().includes(q) &&
+        !c.tags?.some((t) => t.toLowerCase().includes(q))
+      )
         return false
       return true
     })
-  }, [query, domain, type])
+  }, [query, domain, type, set])
+
+  const shown = results.slice(0, RENDER_CAP)
 
   return (
     <div className="space-y-5">
@@ -32,15 +44,31 @@ export default function CardsPage() {
         <div>
           <h2 className="text-2xl font-bold">Card Database</h2>
           <p className="text-sm text-white/50">
-            {results.length} of {SEED_CARDS.length} cards · seed data (placeholder)
+            {results.length.toLocaleString()} of {CARDS.length.toLocaleString()}{' '}
+            cards
+            {results.length > RENDER_CAP && ` · showing first ${RENDER_CAP}`}
           </p>
         </div>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search name or text…"
-          className="w-64 rounded-lg border border-white/10 bg-[#15151f] px-3 py-2 text-sm outline-none focus:border-indigo-400"
-        />
+        <div className="flex gap-2">
+          <select
+            value={set}
+            onChange={(e) => setSet(e.target.value)}
+            className="rounded-lg border border-white/10 bg-[#15151f] px-3 py-2 text-sm outline-none focus:border-indigo-400"
+          >
+            <option value="all">All sets</option>
+            {SETS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, text, tag…"
+            className="w-56 rounded-lg border border-white/10 bg-[#15151f] px-3 py-2 text-sm outline-none focus:border-indigo-400"
+          />
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -67,11 +95,11 @@ export default function CardsPage() {
         ))}
       </div>
 
-      {results.length === 0 ? (
+      {shown.length === 0 ? (
         <p className="py-12 text-center text-white/40">No cards match.</p>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {results.map((c) => (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {shown.map((c) => (
             <CardTile key={c.id} card={c} />
           ))}
         </div>

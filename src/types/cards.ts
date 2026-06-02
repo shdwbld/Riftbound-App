@@ -36,7 +36,13 @@ export const DOMAIN_META: Record<
 
 export type CardType = 'unit' | 'spell' | 'gear' | 'battlefield' | 'legend' | 'rune'
 
-export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'token'
+export type Rarity =
+  | 'common'
+  | 'uncommon'
+  | 'rare'
+  | 'epic'
+  | 'showcase'
+  | 'promo'
 
 /**
  * Power cost broken down by domain. Energy is the generic cost paid by
@@ -63,8 +69,14 @@ export interface CardBase {
   flavor?: string
   /** Keyword tags for filtering/search, e.g. ["Tank", "Noxus"]. */
   tags?: string[]
-  /** Optional art URL. We render a placeholder when absent. */
+  /** Optional art URL (hot-linked from official CDN; never re-hosted). */
   imageUrl?: string
+  /** Illustrator credit, when known. */
+  artist?: string
+  /** True for alternate-art / showcase reprints of a base card. */
+  alternateArt?: boolean
+  /** Source's canonical id, e.g. "ogn-060-298" — used to dedupe reprints. */
+  sourceId?: string
 }
 
 /** A creature that fights for battlefields. */
