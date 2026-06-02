@@ -26,9 +26,12 @@ import { DOMAIN_META } from '../types/cards'
 import type { Deck } from '../types/deck'
 import BoardCard from '../components/BoardCard'
 
+const HISTORY_CAP = 50
+
 export default function PlayPage() {
   const location = useLocation()
   const [game, setGame] = useState<GameState | null>(null)
+  const [history, setHistory] = useState<GameState[]>([])
   const [selected, setSelected] = useState<string | null>(null)
 
   // Auto-launch a deck passed from the deck builder's "Test ▶" button.
@@ -45,7 +48,16 @@ export default function PlayPage() {
     return <DeckPicker onStart={(d) => setGame(setupGame(d))} />
 
   const apply = (fn: (g: GameState) => GameState) => {
+    setHistory((h) => [...h.slice(-HISTORY_CAP), game])
     setGame((g) => (g ? fn(g) : g))
+  }
+  const undo = () => {
+    setHistory((h) => {
+      if (h.length === 0) return h
+      setGame(h[h.length - 1])
+      setSelected(null)
+      return h.slice(0, -1)
+    })
   }
   const res = availableResources(game)
 
@@ -95,8 +107,17 @@ export default function PlayPage() {
           <TurnBtn onClick={() => apply((g) => adjustPoints(g, 1))}>+ Score</TurnBtn>
           <TurnBtn onClick={() => apply(mulligan)}>Mulligan</TurnBtn>
           <button
+            onClick={undo}
+            disabled={history.length === 0}
+            title="Rewind last action"
+            className="rounded bg-white/10 px-2.5 py-1 text-xs font-semibold hover:bg-white/20 disabled:opacity-30"
+          >
+            ↶ Undo
+          </button>
+          <button
             onClick={() => {
               setSelected(null)
+              setHistory([])
               setGame(null)
             }}
             className="rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/30"

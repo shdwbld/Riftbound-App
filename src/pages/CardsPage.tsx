@@ -6,12 +6,44 @@ import {
   DOMAIN_META,
   type CardType,
   type Domain,
+  isUnit,
+  totalCost,
 } from '../types/cards'
 import CardTile from '../components/CardTile'
 import CardDetailModal from '../components/CardDetailModal'
 
 const TYPES: CardType[] = ['unit', 'spell', 'gear', 'battlefield', 'legend', 'rune']
 const RENDER_CAP = 120
+
+type SortKey = 'set' | 'name' | 'cost' | 'might'
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: 'set', label: 'Set / number' },
+  { key: 'name', label: 'Name' },
+  { key: 'cost', label: 'Cost' },
+  { key: 'might', label: 'Might' },
+]
+
+function sortCards(cards: Card[], key: SortKey): Card[] {
+  const arr = [...cards]
+  switch (key) {
+    case 'name':
+      return arr.sort((a, b) => a.name.localeCompare(b.name))
+    case 'cost':
+      return arr.sort(
+        (a, b) => totalCost(a) - totalCost(b) || a.name.localeCompare(b.name),
+      )
+    case 'might':
+      return arr.sort(
+        (a, b) =>
+          (isUnit(b) ? b.might : -1) - (isUnit(a) ? a.might : -1) ||
+          a.name.localeCompare(b.name),
+      )
+    default:
+      return arr.sort(
+        (a, b) => a.set.localeCompare(b.set) || a.number - b.number,
+      )
+  }
+}
 
 const SETS = [...new Set(CARDS.map((c) => c.set))].sort()
 
@@ -20,11 +52,12 @@ export default function CardsPage() {
   const [domain, setDomain] = useState<Domain | 'all'>('all')
   const [type, setType] = useState<CardType | 'all'>('all')
   const [set, setSet] = useState<string | 'all'>('all')
+  const [sort, setSort] = useState<SortKey>('set')
   const [detail, setDetail] = useState<Card | null>(null)
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return CARDS.filter((c) => {
+    const filtered = CARDS.filter((c) => {
       if (domain !== 'all' && !c.domains.includes(domain)) return false
       if (type !== 'all' && c.type !== type) return false
       if (set !== 'all' && c.set !== set) return false
@@ -37,7 +70,8 @@ export default function CardsPage() {
         return false
       return true
     })
-  }, [query, domain, type, set])
+    return sortCards(filtered, sort)
+  }, [query, domain, type, set, sort])
 
   const shown = results.slice(0, RENDER_CAP)
 
@@ -62,6 +96,18 @@ export default function CardsPage() {
             {SETS.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </select>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="rounded-lg border border-white/10 bg-[#15151f] px-3 py-2 text-sm outline-none focus:border-indigo-400"
+            title="Sort by"
+          >
+            {SORTS.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
               </option>
             ))}
           </select>

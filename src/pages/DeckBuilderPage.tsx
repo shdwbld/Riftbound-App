@@ -15,6 +15,7 @@ import { DECK_RULES, pileSize } from '../types/deck'
 import { getDeck, saveDeck } from '../lib/deckStorage'
 import { exportDeck } from '../lib/deckStorage'
 import { validateDeck, isOnIdentity } from '../lib/deckValidation'
+import { computeStats, sampleHand, CURVE_MAX } from '../lib/deckStats'
 
 const POOL_TYPES: (CardType | 'all')[] = [
   'all',
@@ -32,6 +33,7 @@ export default function DeckBuilderPage() {
   const [deck, setDeck] = useState<Deck | null>(() => getDeck(id) ?? null)
   const [pickingLegend, setPickingLegend] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [sample, setSample] = useState<Card[] | null>(null)
 
   // pool filters
   const [query, setQuery] = useState('')
@@ -305,6 +307,18 @@ export default function DeckBuilderPage() {
               </ul>
             )}
           </Section>
+
+          {/* Stats */}
+          <Section title="Stats">
+            <StatsPanel deck={deck} />
+            <button
+              onClick={() => setSample(sampleHand(deck))}
+              disabled={pileSize(deck.main) === 0}
+              className="mt-3 w-full rounded-lg border border-white/15 py-1.5 text-xs font-medium text-white/80 hover:bg-white/5 disabled:opacity-40"
+            >
+              🎴 Draw sample hand
+            </button>
+          </Section>
         </aside>
       </div>
 
@@ -312,6 +326,14 @@ export default function DeckBuilderPage() {
         <LegendPicker
           onPick={(c) => addCard(c)}
           onClose={() => setPickingLegend(false)}
+        />
+      )}
+
+      {sample && (
+        <SampleHandModal
+          cards={sample}
+          onRedraw={() => setSample(sampleHand(deck))}
+          onClose={() => setSample(null)}
         />
       )}
     </div>
@@ -585,6 +607,114 @@ function ExportPanel({ deck, onClose }: { deck: Deck; onClose: () => void }) {
       <pre className="max-h-48 overflow-auto rounded-lg bg-black/30 p-3 font-mono text-xs text-white/70">
         {text}
       </pre>
+    </div>
+  )
+}
+
+function StatsPanel({ deck }: { deck: Deck }) {
+  const stats = computeStats(deck)
+  const peak = Math.max(1, ...stats.curve)
+  return (
+    <div className="space-y-3">
+      {/* Mana curve */}
+      <div>
+        <div className="mb-1 text-[10px] text-white/40">Energy curve</div>
+        <div className="flex items-end gap-1" style={{ height: 56 }}>
+          {stats.curve.map((n, cost) => (
+            <div key={cost} className="flex flex-1 flex-col items-center gap-0.5">
+              <div className="w-full rounded-t bg-indigo-500/70" style={{ height: `${(n / peak) * 44}px` }} title={`${n} card(s)`} />
+              <span className="text-[9px] text-white/40">
+                {cost === CURVE_MAX ? `${cost}+` : cost}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Domain distribution */}
+      <div>
+        <div className="mb-1 text-[10px] text-white/40">Domain pips</div>
+        <div className="flex gap-1">
+          {DOMAINS.map((d) => {
+            const n = stats.domainCounts[d]
+            return n ? (
+              <span
+                key={d}
+                className="rounded px-1.5 py-0.5 text-[10px] font-mono"
+                style={{ background: `${DOMAIN_META[d].color}33`, color: DOMAIN_META[d].color }}
+                title={DOMAIN_META[d].label}
+              >
+                {DOMAIN_META[d].glyph}
+                {n}
+              </span>
+            ) : null
+          })}
+          {stats.colorless > 0 && (
+            <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-mono text-white/50">
+              ◇{stats.colorless}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Type breakdown */}
+      <div className="flex flex-wrap gap-1 text-[10px] text-white/50">
+        {Object.entries(stats.typeCounts).map(([t, n]) => (
+          <span key={t} className="rounded bg-white/5 px-1.5 py-0.5 capitalize">
+            {n} {t}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SampleHandModal({
+  cards,
+  onRedraw,
+  onClose,
+}: {
+  cards: Card[]
+  onRedraw: () => void
+  onClose: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#12121a] p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="font-bold">Sample opening hand</h3>
+          <div className="flex gap-2">
+            <button
+              onClick={onRedraw}
+              className="rounded bg-indigo-500 px-3 py-1 text-xs font-semibold hover:bg-indigo-400"
+            >
+              ↻ Redraw
+            </button>
+            <button onClick={onClose} className="rounded px-2 py-1 text-xs text-white/50 hover:bg-white/5">
+              Close
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          {cards.map((c, i) => (
+            <div key={i} className="overflow-hidden rounded-lg border border-white/10">
+              {c.imageUrl ? (
+                <img src={c.imageUrl} alt={c.name} className="aspect-[744/1039] w-full object-cover" />
+              ) : (
+                <div className="flex aspect-[744/1039] items-center justify-center p-1 text-center text-[10px]">
+                  {c.name}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
