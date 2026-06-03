@@ -464,12 +464,48 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
   return fireTriggers(s, fired)
 }
 
+/** Whether a "when you play a <X>" trigger matches the card actually played.
+ *  `text` is the trigger's clause (after "when you play a/an/another"), so the
+ *  filter is its leading noun phrase (e.g. "token unit", "spell", "gear",
+ *  "[Mighty] unit"). Gates the common card-type filters; "card" and conditions
+ *  we can't parse (on an opponent's turn, from Hidden, cost thresholds) are not
+ *  gated, so they fire as before. */
+function playTriggerMatches(text: string, card: Card): boolean {
+  const f = (text.toLowerCase().match(/^\s*([a-z[\] ]*?)(?:\s+(?:on|from|with|that|this|here|cost)\b|[.,;]|$)/)?.[1] ?? '').trim()
+  if (!f || f === 'card') return true
+  if (f.includes('token')) return card.supertype === 'token'
+  if (f.includes('spell')) return card.type === 'spell'
+  if (f.includes('gear')) return card.type === 'gear'
+  if (f.includes('mighty')) return isUnit(card) && card.might >= 5
+  if (f.includes('unit')) return card.type === 'unit'
+  return true
+}
+
+/** Token UNITS in a parsed effect (Recruit + named Sprite/Sand Soldier/etc.). */
+function tokenUnitsIn(e: ParsedEffect): number {
+  return e.recruits + (e.namedToken?.count ?? 0)
+}
+
+/** Fire "when you play a token unit" global triggers (e.g. Lillia - Protector of
+ *  Dreams: +1 Might this turn), once per token unit created. Tokens are created
+ *  rather than played from hand, so this is invoked at creation sites. No-op
+ *  unless such a trigger is in play. */
+function fireTokenPlay(s: MatchState, player: PlayerId, count: number): MatchState {
+  if (count <= 0) return s
+  const tokenUnit = { type: 'unit', supertype: 'token' } as Card
+  const fired = collectGlobal(s, player, 'play').filter((f) => playTriggerMatches(f.ability.text, tokenUnit))
+  for (let i = 0; i < count; i++) s = fireTriggers(s, fired)
+  return s
+}
+
 /** Fire a player's GLOBAL "when you play â€¦" triggers as a card is played. Fires
  *  at play time regardless of whether the played card later resolves (a spell
  *  countered on the chain still triggers these â€” rule 4.x / T2). Excludes the
- *  card just played so it doesn't react to its own entry. */
-function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string): MatchState {
-  const fired = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
+ *  card just played so it doesn't react to its own entry, and skips triggers
+ *  whose "when you play a <type>" filter the played card doesn't match. */
+function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, playedCard?: Card): MatchState {
+  let fired = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
+  if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard))
   return fireTriggers(s, fired)
 }
 
@@ -664,6 +700,22 @@ function bfBaseNameAt(s: MatchState, i: number): string {
 /** Whether `player` controls a battlefield with the given base name. */
 function controlsBFNamed(s: MatchState, player: PlayerId, name: string): boolean {
   return s.battlefields.some((b, i) => b.controller === player && bfBaseNameAt(s, i) === name)
+}
+
+/** Whether `player` has a unit in play (base or any battlefield) whose base name
+ *  matches (art-variant suffix stripped). */
+function controlsUnitNamed(s: MatchState, player: PlayerId, name: string): boolean {
+  const baseNm = (n: string) => n.replace(/\s*\([^)]*\)\s*$/, '').trim()
+  return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
+    (u) => u.owner === player && baseNm(getCard(u.cardId)?.name ?? '') === name,
+  )
+}
+
+/** State-aware [Tank]: the printed keyword, or a token unit while its controller
+ *  has Lillia - Protector of Dreams in play ("Your token units have [Tank]"). */
+function hasTank(s: MatchState, u: EngineCard): boolean {
+  if (parseKeywords(def(u)).tank) return true
+  return getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Lillia - Protector of Dreams')
 }
 
 /** The effective [Repeat] cost when `player` plays `card`: the printed keyword
@@ -1369,12 +1421,10 @@ function gearMight(unit: EngineCard): number {
 }
 
 /** Order units for damage assignment: Tank first (must be killed before
- *  others), then normal, then backline. */
-function damageOrder(units: EngineCard[]): EngineCard[] {
-  const rank = (u: EngineCard) => {
-    const k = parseKeywords(def(u))
-    return k.tank ? 0 : k.backline ? 2 : 1
-  }
+ *  others), then normal, then backline. `isTank` is state-aware (granted Tank
+ *  from Lillia counts, not just the printed keyword). */
+function damageOrder(units: EngineCard[], isTank: (u: EngineCard) => boolean): EngineCard[] {
+  const rank = (u: EngineCard) => (isTank(u) ? 0 : parseKeywords(def(u)).backline ? 2 : 1)
   return [...units].sort((a, b) => rank(a) - rank(b))
 }
 
@@ -1426,11 +1476,12 @@ function buildAssignStep(
   manualAllowed: boolean,
   xpOf: (u: EngineCard) => number,
   bonusOf: (u: EngineCard, role: CombatRole) => number = () => 0,
+  isTank: (u: EngineCard) => boolean = (u) => parseKeywords(def(u)).tank,
 ): DamageAssignStep {
   const role: CombatRole = side === 'defenders' ? 'defender' : 'attacker'
-  const ordered = damageOrder(receiving)
+  const ordered = damageOrder(receiving, isTank)
   const hp = hpMap(receiving, role, xpOf, bonusOf)
-  const tanks = receiving.filter((u) => parseKeywords(def(u)).tank).map((u) => u.iid)
+  const tanks = receiving.filter(isTank).map((u) => u.iid)
   const totalHp = Object.values(hp).reduce((a, b) => a + b, 0)
   // A choice only exists with 2+ live targets and damage that won't kill them all.
   const liveTargets = receiving.filter((u) => hp[u.iid] > 0)
@@ -1544,9 +1595,10 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   // Mover's damage hits the defenders; the defending side's damage hits attackers.
   const defOwners = [...new Set(defenders.map((u) => u.owner))]
   const atkDealer = defOwners.length === 1 ? defOwners[0] : moverOwner
+  const isTank = (u: EngineCard) => hasTank(s, u)
   const steps = [
-    buildAssignStep(moverOwner, 'defenders', defenders, attackMight, true, xpOf, bonusOf),
-    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, defOwners.length === 1, xpOf, bonusOf),
+    buildAssignStep(moverOwner, 'defenders', defenders, attackMight, true, xpOf, bonusOf, isTank),
+    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, defOwners.length === 1, xpOf, bonusOf, isTank),
   ]
   return { moverOwner, steps }
 }
@@ -1707,6 +1759,7 @@ function resolveSpellEffects(
 
   // Untargeted parts (draw / channel / recruit) always resolve.
   for (const line of applyParsed(s, p, e)) s = log(s, controller, line)
+  s = fireTokenPlay(s, controller, tokenUnitsIn(e)) // Lillia: token-unit play synergy
 
   // Targeted parts: damage / kill / Â±Might-this-turn, applied to each chosen
   // target that's still in play.
@@ -2028,7 +2081,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         enteredTurn: s.turn,
       }
       p.zones.base.push(token)
-      return ok(log(s, action.player, `Created token: ${card.name}.`))
+      let s2 = log(s, action.player, `Created token: ${card.name}.`)
+      if (card.type === 'unit') s2 = fireTokenPlay(s2, action.player, 1) // Lillia synergy
+      return ok(s2)
     }
 
     case 'PLAY_UNIT':
@@ -2138,6 +2193,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const legionGated = kw.legion && !legionActive
         if (!legionGated) {
           for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
+          s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(e)) // Lillia: token-unit play synergy
         } else {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
         }
@@ -2169,7 +2225,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             s1 = log(s1, action.player, `Weaponmaster: no Equipment in hand to attach.`)
           }
         }
-        s1 = firePlayTriggers(s1, action.player, ci.iid)
+        s1 = firePlayTriggers(s1, action.player, ci.iid, card)
         return ok(s1)
       }
 
@@ -2180,12 +2236,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             if (u.iid === action.targetIid && u.owner === action.player) {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
-              return ok(firePlayTriggers(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`), action.player, ci.iid))
+              return ok(firePlayTriggers(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`), action.player, ci.iid, card))
             }
         }
         p.zones.base.push({ ...ci })
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
-        return ok(firePlayTriggers(log(s, action.player, `Played gear ${card.name} (unattached).`), action.player, ci.iid))
+        return ok(firePlayTriggers(log(s, action.player, `Played gear ${card.name} (unattached).`), action.player, ci.iid, card))
       }
 
       // Spell. In a showdown we resolve immediately (legacy path). In the
@@ -2193,7 +2249,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (inShowdown) {
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         // "When you play a spell" triggers fire as it's played, before it resolves.
-        let s1 = firePlayTriggers(s, action.player, ci.iid)
+        let s1 = firePlayTriggers(s, action.player, ci.iid, card)
         s1 = bfSpellPlayed(s1, action.player, effCost.energy)
         s1 = resolveSpellEffects(s1, action.player, card, action.targets)
         if (repeatChosen) {
@@ -2218,7 +2274,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       s.priority = nextPlayer(s, action.player)
       // Play-triggers fire now (before the chain resolves), so they still happen
       // even if this spell is later Countered.
-      let sPlayed = firePlayTriggers(s, action.player, ci.iid)
+      let sPlayed = firePlayTriggers(s, action.player, ci.iid, card)
       sPlayed = bfSpellPlayed(sPlayed, action.player, effCost.energy)
       return ok(
         log(sPlayed, action.player, `Played ${card.name} â€” it's on the Chain (opponents may respond).`),

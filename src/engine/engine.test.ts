@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
-import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME } from './setup'
+import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME, GOLD_TOKEN_ID } from './setup'
 import type { Deck } from '../types/deck'
 import {
   type MatchState,
@@ -1487,6 +1487,66 @@ describe('Phase A — cost increases + Repeat grant/discount', () => {
     s.battlefields[0] = { cardId: a.id, units: [mk(furyUnit.id, 0)], controller: 0 }
     for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
     expect(beginTurn(s).players[0].grantRepeatNextSpell).toBe(true)
+  })
+})
+
+describe('Lillia / Plundering Poro', () => {
+  it('Plundering Poro: conquering plays an exhausted Gold token', () => {
+    const poro = CARDS.find((c) => c.type === 'unit' && c.name === 'Plundering Poro')
+    if (!poro || !GOLD_TOKEN_ID) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    const u = mk(poro.id, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 }) // uncontested conquer
+    expect(r.error).toBeUndefined()
+    const gold = r.state.players[0].zones.base.filter((c) => c.cardId === GOLD_TOKEN_ID)
+    expect(gold.length).toBe(1)
+    expect(gold[0].exhausted).toBe(true)
+  })
+
+  it('Lillia: +1 Might this turn when you create a token unit', () => {
+    const lillia = CARDS.find((c) => c.type === 'unit' && c.name === 'Lillia - Protector of Dreams')
+    const recruit = TOKEN_PILE_IDS[0]
+    if (!lillia || !recruit) return
+    const s = baseState()
+    const lil = mk(lillia.id, 0)
+    s.players[0].zones.base.push(lil)
+    s.players[0].tokenPile = [...TOKEN_PILE_IDS]
+    const r = reduce(s, { type: 'CREATE_TOKEN', player: 0, cardId: recruit })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === lil.iid)?.tempMight).toBe(1)
+  })
+
+  it('Lillia: does NOT buff when a non-token card is played', () => {
+    const lillia = CARDS.find((c) => c.type === 'unit' && c.name === 'Lillia - Protector of Dreams')
+    if (!lillia) return
+    const unitId = injectCard('lil-other', 'A vanilla unit.', { energy: 0, power: {} })
+    const s = baseState()
+    const lil = mk(lillia.id, 0)
+    s.players[0].zones.base.push(lil)
+    const other = mk(unitId, 0)
+    s.players[0].zones.hand.push(other)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: other.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === lil.iid)?.tempMight ?? 0).toBe(0)
+  })
+
+  it('Lillia: your token units count as [Tank] in damage assignment', async () => {
+    const { pendingAssignment } = await import('./engine')
+    const lillia = CARDS.find((c) => c.type === 'unit' && c.name === 'Lillia - Protector of Dreams')
+    const recruit = TOKEN_PILE_IDS[0]
+    if (!lillia || !recruit) return
+    const s = baseState()
+    const tok = mk(recruit, 1) // a token unit owned by the defender
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(lillia.id, 1), tok, mk(furyUnit.id, 1)], controller: 1 }
+    const atk = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(atk)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: atk.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    const step = pendingAssignment(r.state, 0)
+    expect(step?.tanks).toContain(tok.iid) // granted Tank via Lillia
   })
 })
 
