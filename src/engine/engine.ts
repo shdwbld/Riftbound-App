@@ -1573,15 +1573,14 @@ export function beginTurn(state: MatchState): MatchState {
     sendToTrash(p, u)
   }
 
-  // Hidden cleanup: a facedown unit at a battlefield its owner no longer
-  // controls is unsupported and is removed (sent to its owner's Trash).
+  // Hidden cleanup: a facedown card whose owner no longer controls its
+  // battlefield is revealed and sent to its owner's Trash (rule 421.4).
   recomputeControllers(s)
   for (const bf of s.battlefields) {
-    const orphaned = bf.units.filter((u) => u.facedown && bf.controller !== u.owner)
-    if (orphaned.length) {
-      bf.units = bf.units.filter((u) => !orphaned.includes(u))
-      for (const u of orphaned) sendToTrash(s.players[u.owner], u)
-      s = log(s, ap, `${orphaned.length} unsupported Hidden card(s) removed.`)
+    if (bf.facedown && bf.controller !== bf.facedown.owner) {
+      sendToTrash(s.players[bf.facedown.owner], bf.facedown)
+      s = log(s, ap, `Unsupported Hidden card revealed and trashed.`)
+      bf.facedown = null
     }
   }
 
@@ -3117,40 +3116,55 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     case 'HIDE': {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
-      if (action.toBattlefield < 0 || action.toBattlefield >= state.battlefields.length)
-        return fail(state, 'Invalid battlefield.')
-      if (state.battlefields[action.toBattlefield].controller !== action.player)
-        return fail(state, 'You must control a battlefield to Hide a unit there.')
-      if (bfScriptAt(state, action.toBattlefield)?.noPlayHere)
-        return fail(state, "Units can't be played at that battlefield.")
+      const bfi = action.toBattlefield
+      if (bfi < 0 || bfi >= state.battlefields.length) return fail(state, 'Invalid battlefield.')
+      if (state.battlefields[bfi].controller !== action.player)
+        return fail(state, 'You must control a battlefield to Hide a card there.')
+      if (state.battlefields[bfi].facedown) return fail(state, 'A card is already hidden at that battlefield.')
       const s = clone(state)
       const p = s.players[action.player]
-      const unit = p.zones.base.find((u) => u.iid === action.iid)
-      if (!unit) return fail(state, 'Unit not at your Base.')
-      if (!parseKeywords(def(unit)).hidden)
-        return fail(state, 'Only a unit with Hidden can be hidden.')
+      // Any [Hidden] card (unit / spell / gear) is hidden from HAND.
+      const card = p.zones.hand.find((c) => c.iid === action.iid)
+      if (!card) return fail(state, 'Card not in your hand.')
+      if (!parseKeywords(getCard(card.cardId)).hidden) return fail(state, 'Only a card with [Hidden] can be hidden.')
       const rune = p.zones.runePool.find((r) => r.iid === action.runeIid && !r.exhausted)
-      if (!rune) return fail(state, 'Need a ready rune to recycle for Hide.')
-      removeFromZone(p, 'base', action.iid)
+      if (!rune) return fail(state, 'Need a ready rune to recycle (1 Wild Power) to Hide.')
+      removeFromZone(p, 'hand', action.iid)
       const recycled = removeFromZone(p, 'runePool', action.runeIid)!
       p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
-      s.battlefields[action.toBattlefield].units.push({ ...unit, facedown: true, exhausted: true })
-      recomputeControllers(s)
-      return ok(log(s, action.player, `Hid a unit facedown at ${getCard(s.battlefields[action.toBattlefield].cardId)?.name ?? 'a battlefield'}.`))
+      s.battlefields[bfi].facedown = { ...card, facedown: true, hiddenTurn: s.turn }
+      return ok(log(s, action.player, `Hid a card facedown at ${getCard(s.battlefields[bfi].cardId)?.name ?? 'a battlefield'}.`))
     }
 
     case 'REVEAL': {
-      const s = clone(state)
-      for (const bf of s.battlefields) {
-        const u = bf.units.find((x) => x.iid === action.iid && x.owner === action.player)
-        if (u) {
-          if (!u.facedown) return fail(state, 'That unit is already revealed.')
-          u.facedown = false
-          emit({ kind: 'play', iid: u.iid, player: action.player, cardId: u.cardId })
-          return ok(log(s, action.player, `Revealed ${getCard(u.cardId)?.name}.`))
-        }
+      let s = clone(state)
+      const bfi = s.battlefields.findIndex((b) => b.facedown?.iid === action.iid && b.facedown.owner === action.player)
+      if (bfi < 0) return fail(state, 'No facedown card of yours to reveal.')
+      const fd = s.battlefields[bfi].facedown!
+      if ((fd.hiddenTurn ?? -1) >= s.turn) return fail(state, "You can't reveal a card the turn you hid it.")
+      const card = getCard(fd.cardId)
+      if (!card) return fail(state, 'Unknown card.')
+      s.battlefields[bfi].facedown = null
+      const ci: EngineCard = { ...fd, facedown: false, hiddenTurn: undefined }
+      emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: ci.cardId })
+      // Reveal = play for 0, at the battlefield where it was hidden.
+      if (card.type === 'unit') {
+        s.battlefields[bfi].units.push({ ...ci, exhausted: true, enteredTurn: s.turn })
+        recomputeControllers(s)
+        s = log(s, action.player, `Revealed ${card.name} — entered play.`)
+        for (const line of applyParsed(s, s.players[action.player], onPlayEffect(card), bfi, ci.iid)) s = log(s, action.player, line)
+        s = firePlayTriggers(s, action.player, ci.iid, card, 0)
+      } else if (card.type === 'gear') {
+        s.players[action.player].zones.base.push({ ...ci, exhausted: false })
+        s = log(s, action.player, `Revealed ${card.name} — gear entered play.`)
+        s = firePlayTriggers(s, action.player, ci.iid, card, 0)
+      } else {
+        s = log(s, action.player, `Revealed ${card.name} — resolving.`)
+        s = resolveSpellEffects(s, action.player, card, [])
+        s = firePlayTriggers(s, action.player, ci.iid, card, 0)
+        sendToTrash(s.players[action.player], ci)
       }
-      return fail(state, 'No facedown unit of yours to reveal.')
+      return ok(s)
     }
 
     case 'RETREAT': {

@@ -784,53 +784,62 @@ describe('Batch D — Banish + Hidden', () => {
     expect(r.state.players[1].zones.trash.length).toBe(0)
   })
 
-  it('HIDE places a Hidden unit facedown at a controlled battlefield, recycling a rune', () => {
-    const hid = injectCard('d-hidden', '[Hidden]')
+  it('HIDE places a [Hidden] card from hand facedown at a controlled battlefield, recycling a rune', () => {
+    const hid = injectCard('d-hidden', '[Hidden]', { type: 'spell', energy: 1, power: {} })
     const s = baseState()
     s.battlefields[0].controller = 0
     const hu = mk(hid, 0)
-    s.players[0].zones.base.push(hu)
+    s.players[0].zones.hand.push(hu) // hidden from HAND now
     const rune = mk(furyRune.id, 0)
     s.players[0].zones.runePool.push(rune)
     const r = reduce(s, { type: 'HIDE', player: 0, iid: hu.iid, toBattlefield: 0, runeIid: rune.iid })
     expect(r.error).toBeUndefined()
-    const placed = r.state.battlefields[0].units.find((u) => u.iid === hu.iid)
-    expect(placed?.facedown).toBe(true)
-    expect(r.state.players[0].zones.base.some((u) => u.iid === hu.iid)).toBe(false)
+    expect(r.state.battlefields[0].facedown?.iid).toBe(hu.iid) // in the Facedown slot, not units
+    expect(r.state.battlefields[0].facedown?.facedown).toBe(true)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === hu.iid)).toBe(false)
+    expect(r.state.players[0].zones.hand.some((u) => u.iid === hu.iid)).toBe(false)
     expect(r.state.players[0].zones.runeDeck.some((c) => c.iid === rune.iid)).toBe(true)
   })
 
-  it('rejects HIDE for a non-Hidden unit', () => {
+  it('rejects HIDE for a non-Hidden card', () => {
     const s = baseState()
     s.battlefields[0].controller = 0
     const u = mk(furyUnit.id, 0)
-    s.players[0].zones.base.push(u)
+    s.players[0].zones.hand.push(u)
     const rune = mk(furyRune.id, 0)
     s.players[0].zones.runePool.push(rune)
     const r = reduce(s, { type: 'HIDE', player: 0, iid: u.iid, toBattlefield: 0, runeIid: rune.iid })
     expect(r.error).toBeDefined()
   })
 
-  it('REVEAL flips a facedown unit faceup', () => {
+  it('REVEAL plays a facedown unit into play (next turn); not the turn it was hidden', () => {
+    const hid = injectCard('d-hidden-unit', '[Hidden]', { type: 'unit', might: 3, energy: 0, power: {} })
     const s = baseState()
-    const u = mk(furyUnit.id, 0, { facedown: true })
-    s.battlefields[0].units.push(u)
+    s.turn = 5
+    const u = mk(hid, 0, { facedown: true, hiddenTurn: 5 })
+    s.battlefields[0].facedown = u
+    // Same turn → can't reveal.
+    expect(reduce(s, { type: 'REVEAL', player: 0, iid: u.iid }).error).toBeTruthy()
+    // A later turn → reveal plays it faceup into the battlefield.
+    s.turn = 6
     const r = reduce(s, { type: 'REVEAL', player: 0, iid: u.iid })
-    expect(r.error).toBeUndefined()
-    expect(r.state.battlefields[0].units[0].facedown).toBe(false)
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].facedown).toBeNull()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid && !x.facedown)).toBe(true)
   })
 
-  it('removes an unsupported Hidden card at begin turn (owner no longer controls)', () => {
+  it('removes an unsupported facedown card at begin turn (owner no longer controls)', () => {
+    const hid = injectCard('d-hidden2', '[Hidden]', { type: 'spell', energy: 1, power: {} })
     const s = baseState()
     s.activePlayer = 0
     s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)]
     s.players[0].zones.runeDeck = [mk(furyRune.id, 0)]
-    // bf0: 1 facedown p0 unit but 2 p1 units → p1 controls → p0's Hidden is orphaned.
-    s.battlefields[0].units.push(mk(furyUnit.id, 0, { facedown: true, exhausted: true }))
+    // p0 has a facedown card here, but p1 controls the battlefield (2 units).
+    s.battlefields[0].facedown = mk(hid, 0, { facedown: true, hiddenTurn: 0 })
     s.battlefields[0].units.push(mk(furyUnit.id, 1, { exhausted: true }))
     s.battlefields[0].units.push(mk(furyUnit.id, 1, { exhausted: true }))
     const after = beginTurn(s)
-    expect(after.battlefields[0].units.some((u) => u.facedown)).toBe(false)
+    expect(after.battlefields[0].facedown).toBeNull()
     expect(after.players[0].zones.trash.length).toBeGreaterThan(0)
   })
 })

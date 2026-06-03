@@ -44,6 +44,8 @@ export interface EngineCard {
   enteredTurn?: number
   /** Facedown (Hidden keyword) — not yet revealed. */
   facedown?: boolean
+  /** Turn this card was hidden facedown (you can't reveal it the same turn). */
+  hiddenTurn?: number
   /** This instance is a token (ceases to exist instead of going to the Trash),
    *  even if its `cardId` points at a normal card — e.g. a Reflection copy. */
   token?: boolean
@@ -109,6 +111,10 @@ export interface BattlefieldState {
   units: EngineCard[]
   /** Current controller (most/only units present), or null if empty. */
   controller: PlayerId | null
+  /** A single [Hidden] card placed facedown here (any card type). It is NOT a
+   *  unit — it never fights and isn't in `units`. Revealed = played for 0. Sent
+   *  to Trash if its owner loses control of this battlefield. */
+  facedown?: EngineCard | null
 }
 
 export type Phase =
@@ -346,10 +352,12 @@ export type Action =
   | { type: 'USE_GOLD'; player: PlayerId; iid: string; domain: Domain }
   /** Remove a unit from play to the Banishment zone (no Deathknell). */
   | { type: 'BANISH'; player: PlayerId; iid: string }
-  /** Place a Hidden unit from your Base facedown at a battlefield you control
-   *  (cost: recycle 1 rune of any domain). */
+  /** Place a [Hidden] card (unit/spell/gear) from your HAND facedown at a
+   *  battlefield you control (cost: 1 Wild Power — recycle 1 rune of any domain).
+   *  Max one facedown card per battlefield. */
   | { type: 'HIDE'; player: PlayerId; iid: string; toBattlefield: number; runeIid: string }
-  /** Flip one of your facedown units faceup (Reaction speed, free). */
+  /** Reveal your facedown card = play it for 0 (spell resolves, unit enters,
+   *  gear attaches). Not on the turn you hid it; Reaction speed thereafter. */
   | { type: 'REVEAL'; player: PlayerId; iid: string }
   | { type: 'RETREAT'; player: PlayerId; iid: string }
   | { type: 'PASS'; player: PlayerId }
