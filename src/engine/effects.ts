@@ -25,6 +25,10 @@ export interface ParsedEffect {
   cullEachPlayer: boolean
   /** Number of units to Stun ("[Stun] an enemy unit" — Vi - Peacekeeper). */
   stun: number
+  /** An alternate action taken on the stun target if it was ALREADY stunned,
+   *  instead of stunning it: 'bounce' = return it to hand (Existential Dread),
+   *  'kill' = kill it (Solari Chief). Null = always just stun. */
+  ifTargetStunned: 'bounce' | 'kill' | null
   /** Max Might a kill may target ("kill a unit with 3 Might or less" — Soul
    *  Harvest). Null = no Might restriction. */
   killMightMax: number | null
@@ -124,6 +128,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   tempMightFloor: 0,
   cullEachPlayer: false,
   stun: 0,
+  ifTargetStunned: null,
   killMightMax: null,
   drawPerBattlefield: 0,
   grantAssault: 0,
@@ -293,6 +298,11 @@ function parse(text: string): ParsedEffect {
     const seg = t.slice(stunIdx).split('.')[0]
     const cnt = (seg.match(/\bunits?\b/g) || []).length
     if (cnt > 0) { eff.stun += cnt; hit = true }
+    // "If it's already stunned, return it to its owner's hand instead"
+    // (Existential Dread) / "if it is stunned, kill it" (Solari Chief): an
+    // alternate action when the target was already stunned.
+    if (/(?:already stunned|it is stunned|it's stunned)[^.]*?(?:return it|to (?:its owner'?s?|their) hand)/.test(t)) eff.ifTargetStunned = 'bounce'
+    else if (/if it(?:'s| is) (?:already )?stunned, kill it/.test(t)) eff.ifTargetStunned = 'kill'
   }
 
   // Temporary keyword grants "this turn". Targeted: "give a unit [Assault N] (and

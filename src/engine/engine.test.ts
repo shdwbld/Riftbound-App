@@ -1814,6 +1814,72 @@ describe('Vi deck — combat/targeting', () => {
     expect(r.state.battlefields[0].units.find((u) => u.iid === enemy.iid)?.stunned).toBe(true)
   })
 
+  it('parses a "when you stun an enemy unit" trigger', async () => {
+    const { parseTriggers } = await import('./triggers')
+    const card = { id: 'stun-trig-card', name: 'S', type: 'unit', domains: [], rarity: 'common', set: 'X', number: 1, text: 'When you stun an enemy unit, ready me and give me +1 :rb_might: this turn.', energy: 0, power: {}, might: 3 } as never
+    expect(parseTriggers(card).some((t) => t.event === 'stun')).toBe(true)
+  })
+
+  // Helper: play a 0-cost stun spell on an enemy and resolve the chain.
+  function stunEnemy(s: MatchState, spellText: string, enemyIid: string) {
+    const spellId = injectCard(`stun-sp-${n++}`, spellText, { type: 'spell', energy: 0, power: {} })
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemyIid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    return reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+  }
+
+  it('Eclipse Herald: readies + gains +1 Might when you stun an enemy unit', () => {
+    const eclipse = injectCard('eclipse-test', 'When you stun an enemy unit, ready me and give me +1 :rb_might: this turn.', { might: 3 })
+    const s = baseState()
+    const herald = mk(eclipse, 0, { exhausted: true })
+    s.players[0].zones.base.push(herald)
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = stunEnemy(s, 'Stun an enemy unit.', enemy.iid)
+    const h = r.state.players[0].zones.base.find((x) => x.iid === herald.iid)
+    expect(h?.exhausted).toBe(false) // readied
+    expect(h?.tempMight).toBe(1) // +1 Might this turn
+  })
+
+  it('Leona - Radiant Dawn: buffs a friendly unit when you stun an enemy', () => {
+    const leona = injectCard('leona-rd-test', 'When you stun one or more enemy units, buff a friendly unit.', { type: 'legend' })
+    const s = baseState()
+    s.players[0].legend = mk(leona, 0)
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(ally)
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = stunEnemy(s, 'Stun an enemy unit.', enemy.iid)
+    expect(r.state.players[0].zones.base.find((x) => x.iid === ally.iid)?.buffs).toBe(1)
+  })
+
+  it('Existential Dread: stuns a unit, or bounces it to hand if already stunned', () => {
+    const text = "[Stun] an attacking enemy unit. If it's already stunned, return it to its owner's hand instead."
+    // Fresh enemy → stunned (not bounced).
+    let s = baseState()
+    const fresh = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [fresh], controller: 1 }
+    let r = stunEnemy(s, text, fresh.iid)
+    expect(r.state.battlefields[0].units.find((u) => u.iid === fresh.iid)?.stunned).toBe(true)
+    // Already-stunned enemy → returned to its owner's hand instead.
+    s = baseState()
+    const already = mk(furyUnit.id, 1, { stunned: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [already], controller: 1 }
+    r = stunEnemy(s, text, already.iid)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === already.iid)).toBe(false)
+    expect(r.state.players[1].zones.hand.some((x) => x.iid === already.iid)).toBe(true)
+  })
+
+  it('Monch: costs 2 less when an opponent controls a stunned unit', () => {
+    const id = injectCard('monch-test', 'If an opponent controls a stunned unit, I cost :rb_energy_2: less and enter ready.', { energy: 3, power: {} })
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(3) // no stunned enemy
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 1, { stunned: true })], controller: 1 }
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(1) // −2
+  })
+
   it('Right of Conquest: draws 1 per battlefield you control', () => {
     const id = injectCard('roc-test', 'When you play me, draw 1 for each battlefield you control.', { energy: 0, power: {} })
     const s = baseState()

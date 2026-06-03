@@ -50,14 +50,25 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
   m = t.match(/costs? :rb_energy_(\d+): less if you control an? ([a-z' -]+?)[.)]/)
   if (m && controlsTag(m[2].trim())) energy -= Number(m[1])
 
+  // "If an opponent controls a stunned unit, I cost N less [and enter ready]"
+  // (Monch) — conditional on any opponent controlling a stunned unit.
+  const monchM = t.match(/if an opponent controls a stunned unit, i cost :rb_energy_(\d+): less/)
+  if (monchM) {
+    const oppHasStunned = [
+      ...state.battlefields.flatMap((b) => b.units),
+      ...state.players.flatMap((pl) => pl.zones.base),
+    ].some((u) => u.owner !== player && u.stunned)
+    if (oppHasStunned) energy -= Number(monchM[1])
+  }
+
   // Flat unconditional "I cost N less" — but not the for-each / conditional /
-  // play-from-elsewhere variants handled above. [Legion] gates it on having
-  // already played a card this turn (Noxus Hopeful).
+  // play-from-elsewhere variants handled above (incl. Monch). [Legion] gates it on
+  // having already played a card this turn (Noxus Hopeful).
   // Allow optional bracket markers (e.g. the "[>]" activation arrow, stored as
   // "[&gt;]") between a [Level N] tag and "I cost".
   const LVL_COST = /\[level\s*\d+\](?:\[[^\]]*\]|\s)*i cost/
   m = t.match(/i cost :rb_energy_(\d+): less\b/)
-  if (m && !/less for|less if|less to play from/.test(t) && !LVL_COST.test(t)) {
+  if (m && !monchM && !/less for|less if|less to play from/.test(t) && !LVL_COST.test(t)) {
     const legionGated = /\[legion\]/.test(t)
     if (!legionGated || (p.cardsPlayedThisTurn ?? 0) >= 1) energy -= Number(m[1])
   }

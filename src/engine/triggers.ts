@@ -24,6 +24,7 @@ export type TriggerEvent =
   | 'defend' // a unit defends in a showdown
   | 'move' // a unit makes a Standard Move
   | 'winCombat' // a unit's side wins a showdown
+  | 'stun' // you stun one or more enemy units
 
 export interface TriggeredAbility {
   event: TriggerEvent
@@ -61,6 +62,10 @@ const PATTERNS: Pattern[] = [
   { event: 'move', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+moves?/i },
   { event: 'play', scope: 'global', re: /when(?:ever)?\s+you\s+play\s+(?:a|an|another)\b/i },
   { event: 'play', scope: 'self', re: /when(?:ever)?\s+(?:i['’]?m|i am|you\s+play\s+(?:me|this))/i },
+  // "When you stun an enemy unit" / "When you stun one or more enemy units"
+  // (Eclipse Herald, Leona - Radiant Dawn, Vex - Mocking). [Stun] keyword markers
+  // stored as "[stun]" are stripped by the brackets in the clause; match both.
+  { event: 'stun', scope: 'global', re: /when(?:ever)?\s+you\s+\[?stun\]?\s+(?:one or more\s+)?(?:an?\s+)?enemy\s+units?/i },
 ]
 
 /** The effect clause following a trigger phrase: from the phrase's end to the

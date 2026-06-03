@@ -714,6 +714,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         target.stunned = true
         emit({ kind: 'stun', iid: target.iid, player })
         s = log(s, player, `${label}: stunned ${getCard(target.cardId)?.name}.`)
+        s = fireStun(s, player) // "when you stun an enemy unit" (Eclipse Herald, Leona)
         did = true
       }
     }
@@ -805,6 +806,16 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   fired = fired.filter((f) => !/exhaust me\b|exhaust this\b/i.test(f.ability.text))
   if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost))
   return fireTriggers(s, fired)
+}
+
+/** Fire "when you stun an enemy unit" global triggers (Eclipse Herald — ready me
+ *  + give me +1 Might; Leona - Radiant Dawn — buff a friendly unit). Invoked once
+ *  per stun resolution in which the controller stunned ≥1 enemy unit (so a
+ *  "one or more" trigger fires exactly once). No-op unless such a trigger is in
+ *  play. Triggers that pay by moving/exhausting their own source (Vex - Mocking,
+ *  "you may move me") are left for manual resolution by fireTriggers. */
+function fireStun(s: MatchState, player: PlayerId): MatchState {
+  return fireTriggers(s, collectGlobal(s, player, 'stun'))
 }
 
 /** Chemtech Cask: "When you play a spell on an opponent's turn, you may exhaust
@@ -2544,6 +2555,7 @@ function resolveSpellEffects(
     const tgts = (targets ?? []).filter((t) => isValidTarget(s, t))
     if (tgts.length === 0 && !hasUntargetedPart(e))
       s = log(s, controller, `${card.name} fizzled â€” no valid target.`)
+    let stunnedEnemy = false
     for (const t of tgts) {
       let dead: EngineCard[] = []
       // Smite: mark the target so a death from this damage banishes it instead.
@@ -2572,9 +2584,19 @@ function resolveSpellEffects(
       if (e.stun) {
         const u = findUnitAnywhere(s, t)
         if (u) {
-          u.stunned = true
-          emit({ kind: 'stun', iid: t, player: controller })
-          s = log(s, controller, `${card.name} stunned ${getCard(u.cardId)?.name}.`)
+          // Existential Dread: "[Stun] an attacking enemy unit. If it's already
+          // stunned, return it to its owner's hand instead." (Solari Chief uses
+          // 'kill'.) The alternate fires only when the target was already stunned.
+          if (u.stunned && e.ifTargetStunned === 'bounce') {
+            s = bounceUnitToHand(s, t, controller, card.name, e.channelExhausted)
+          } else if (u.stunned && e.ifTargetStunned === 'kill') {
+            s = fireDeaths(s, killTarget(s, t))
+          } else {
+            u.stunned = true
+            if (u.owner !== controller) stunnedEnemy = true
+            emit({ kind: 'stun', iid: t, player: controller })
+            s = log(s, controller, `${card.name} stunned ${getCard(u.cardId)?.name}.`)
+          }
         }
       }
       if (e.grantAssault || e.grantGanking) {
@@ -2602,6 +2624,9 @@ function resolveSpellEffects(
       }
       s = fireDeaths(s, dead)
     }
+    // "When you stun an enemy unit / one or more enemy units" — fire once per
+    // resolution (Eclipse Herald, Leona - Radiant Dawn).
+    if (stunnedEnemy) s = fireStun(s, controller)
   }
 
   // Vision / Predict spells: peek the top of your Main Deck; the controller may
@@ -3008,7 +3033,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const legText = (getCard(p.legend?.cardId ?? '')?.text ?? '').toLowerCase()
         const legReadyM = legText.match(/\[level\s*(\d+)\][^.]*?your units enter(?:s)? ready/)
         const legendReady = !!legReadyM && p.xp >= parseInt(legReadyM[1], 10)
-        const entersReady = accelChosen || levelReady || baseReady || legendReady
+        // Monch: "If an opponent controls a stunned unit, … enter ready."
+        const condReady = /if an opponent controls a stunned unit,[^.]*?enter(?:s)? ready/i.test(card.text ?? '')
+          && [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)]
+            .some((u) => u.owner !== action.player && u.stunned)
+        const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady
         // Ambush: a Reaction unit enters directly at a contested battlefield.
         const ambushBf = kw.ambush && action.toBattlefield != null ? action.toBattlefield : null
         if (ambushBf != null) {
@@ -3136,7 +3165,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (!target) return fail(state, 'No such unit to stun.')
       target.stunned = true
       emit({ kind: 'stun', iid: target.iid, player: action.player })
-      return ok(log(s, action.player, `Stunned ${getCard(target.cardId)?.name}.`))
+      let sStun = log(s, action.player, `Stunned ${getCard(target.cardId)?.name}.`)
+      // "When you stun an enemy unit" (Eclipse Herald, Leona - Radiant Dawn).
+      if (target.owner !== action.player) sStun = fireStun(sStun, action.player)
+      return ok(sStun)
     }
 
     case 'DETACH': {
