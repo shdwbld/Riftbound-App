@@ -1441,6 +1441,63 @@ describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
   })
 })
 
+describe('Vi deck — combat/targeting', () => {
+  it('Soul Harvest: restricts kill to units with N Might or less', () => {
+    const spellId = injectCard('sh-test', 'Kill a unit at a battlefield with 3 :rb_might: or less.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const small = mk(injectCard('sh-small', 'A unit.', { might: 2 }), 1)
+    const big = mk(injectCard('sh-big', 'A unit.', { might: 8 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [small, big], controller: 1 }
+    const tgts = getLegalTargets(s, CARD_INDEX[spellId], 0)
+    expect(tgts).toContain(small.iid)
+    expect(tgts).not.toContain(big.iid)
+  })
+
+  it('a stun spell stuns the chosen target', () => {
+    const spellId = injectCard('stun-test', 'Stun an enemy unit.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemy.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.battlefields[0].units.find((u) => u.iid === enemy.iid)?.stunned).toBe(true)
+  })
+
+  it('Right of Conquest: draws 1 per battlefield you control', () => {
+    const id = injectCard('roc-test', 'When you play me, draw 1 for each battlefield you control.', { energy: 0, power: {} })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const u = mk(id, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.hand.length).toBe(2) // drew 1 per 2 controlled battlefields
+  })
+
+  it('Crimson Pigeons: +2 Might while attacking with another unit', () => {
+    const pigeonId = injectCard('pigeon-test', "I have +2 :rb_might: while I'm attacking with another unit.", { might: 3 })
+    const allyId = injectCard('pigeon-ally', 'A unit.', { might: 1 })
+    function defenderSurvives(attackerIds: string[]): boolean {
+      const s = baseState()
+      // Stunned defender (Might 5) — deals no return damage, so combat auto-resolves.
+      s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 1, { exhausted: true, stunned: true })], controller: 1 }
+      const atk = attackerIds.map((id) => mk(id, 0))
+      atk.forEach((u) => s.players[0].zones.base.push(u))
+      let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: atk.map((u) => u.iid), toBattlefield: 0 })
+      r = reduce(r.state, { type: 'PASS', player: 1 })
+      r = reduce(r.state, { type: 'PASS', player: 0 })
+      return r.state.battlefields[0].units.some((u) => u.owner === 1)
+    }
+    expect(defenderSurvives([pigeonId, allyId])).toBe(false) // 3+2 + 1 = 6 ≥ 5 → defender dies
+    expect(defenderSurvives([pigeonId])).toBe(true) // 3 alone (no +2) < 5 → survives
+  })
+})
+
 describe('Viktor deck — minor faithfulness', () => {
   function resolveChainSpell(s: MatchState, spIid: string, targets?: string[]) {
     let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spIid, targets, payment: emptyPayment() })

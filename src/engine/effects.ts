@@ -23,6 +23,14 @@ export interface ParsedEffect {
   tempMightFloor: number
   /** "Each player kills one of their units" (Cull the Weak) — symmetric sacrifice. */
   cullEachPlayer: boolean
+  /** Number of units to Stun ("[Stun] an enemy unit" — Vi - Peacekeeper). */
+  stun: number
+  /** Max Might a kill may target ("kill a unit with 3 Might or less" — Soul
+   *  Harvest). Null = no Might restriction. */
+  killMightMax: number | null
+  /** Extra cards drawn, one per battlefield the controller (or allies) control
+   *  ("draw 1 for each battlefield you control" — Right of Conquest). */
+  drawPerBattlefield: number
   /** Damage to each chosen target unit, if the text calls for it. */
   damage: number
   /** Number of Recruit unit tokens to create. */
@@ -89,6 +97,9 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   controllerDrawOnKill: 0,
   tempMightFloor: 0,
   cullEachPlayer: false,
+  stun: 0,
+  killMightMax: null,
+  drawPerBattlefield: 0,
   damage: 0,
   recruits: 0,
   goldTokens: 0,
@@ -115,11 +126,11 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.stun > 0
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -161,7 +172,14 @@ function parse(text: string): ParsedEffect {
   // its "draw N" isn't also counted as an unconditional draw.
   const dokM = t.match(new RegExp(`if (?:this kills it|it (?:dies|would die))[^.]*?draw ${NUM}`))
   if (dokM) { eff.drawOnKill += num(dokM[1]); hit = true }
-  const tNoCond = dokM ? t.replace(dokM[0], ' ') : t
+
+  // "draw N for each battlefield you (or allies) control" (Right of Conquest) —
+  // parsed (and stripped) first so its "draw N" isn't also a flat draw.
+  const dpbM = t.match(new RegExp(`draw ${NUM} for each battlefield (?:you|an ally)`))
+  if (dpbM) { eff.drawPerBattlefield += num(dpbM[1]); hit = true }
+
+  let tNoCond = dokM ? t.replace(dokM[0], ' ') : t
+  if (dpbM) tNoCond = tNoCond.replace(dpbM[0], ' ')
 
   const drawM = tNoCond.match(new RegExp(`draw ${NUM}`))
   if (drawM) { eff.draw += num(drawM[1]); hit = true }
@@ -223,9 +241,22 @@ function parse(text: string): ParsedEffect {
   const dmgM = t.match(/deal (\d+)(?: damage)?\s+to\b[^.]*?units?/)
   if (dmgM) { eff.damage += parseInt(dmgM[1], 10); hit = true }
 
-  // Outright kill: "kill a unit".
+  // Outright kill: "kill a unit". May be restricted to "with N Might or less".
   const killM = t.match(/\bkill (?:a |an |target |another )?unit/)
-  if (killM) { eff.kill += 1; hit = true }
+  if (killM) {
+    eff.kill += 1; hit = true
+    const kmM = t.match(new RegExp(`kill[^.]*?with (\\d+)\\s*${MIGHT} or less`))
+    if (kmM) eff.killMightMax = parseInt(kmM[1], 10) // Soul Harvest
+  }
+
+  // Stun: "[Stun] an enemy unit" / "Stun a friendly unit and an enemy unit".
+  // Count the unit nouns in the stun clause (Facebreaker stuns two).
+  const stunIdx = t.search(/\bstun\b/)
+  if (stunIdx >= 0) {
+    const seg = t.slice(stunIdx).split('.')[0]
+    const cnt = (seg.match(/\bunits?\b/g) || []).length
+    if (cnt > 0) { eff.stun += cnt; hit = true }
+  }
 
   // Bounce: "return a friendly unit to its owner's hand" (Retreat). Scope from
   // the determiner — friendly / enemy / any.
@@ -302,7 +333,7 @@ function parse(text: string): ParsedEffect {
 
   // Resolve targeting metadata for any targeted part.
   if (hasTargetedPart(eff)) {
-    eff.targetCount = multiM ? num(multiM[1]) : 1
+    eff.targetCount = multiM ? num(multiM[1]) : Math.max(1, eff.stun)
     eff.battlefieldOnly = /at a battlefield/.test(t)
     eff.targetScope =
       eff.bounce && eff.bounce !== 'any'

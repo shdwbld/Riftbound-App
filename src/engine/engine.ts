@@ -18,7 +18,7 @@ import {
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
 import { parseKeywords, keywordsAt, accelerateCost, repeatCost, levelBonus } from './keywords'
 import { addCost, costOf, effectiveCostOf, autoPayEff } from './autopay'
-import { bfScript, bfScriptAt, type BfApi } from './battlefieldScripts'
+import { bfScript, bfScriptAt, battlefieldOf, type BfApi } from './battlefieldScripts'
 
 /** How many turns the given player has taken (incl. the current one). */
 function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
@@ -451,6 +451,11 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   // A gated effect does nothing when its condition isn't met.
   if (!conditionMet(s, p, e, bfIndex)) return lines
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
+  if (e.drawPerBattlefield) {
+    // "draw 1 for each battlefield you control" (Right of Conquest).
+    const held = s.battlefields.filter((b) => b.controller === p.id).length
+    if (held > 0) lines.push(`Drew ${drawN(p, e.drawPerBattlefield * held)} (per battlefield held).`)
+  }
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
   // "Channel N rune(s) exhausted" (Soaring Scout) — the channeled runes enter exhausted.
   if (e.channelExhausted) lines.push(`Channeled ${channelN(p, e.channelExhausted, true)} (exhausted).`)
@@ -579,6 +584,18 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number): M
         u.tempMight = (u.tempMight ?? 0) + e.tempMightSelf
         emit({ kind: 'buff', iid: sourceIid, player })
         s = log(s, player, `${label}: ${e.tempMightSelf > 0 ? '+' : ''}${e.tempMightSelf} Might this turn.`)
+        did = true
+      }
+    }
+    // Stun from a trigger ("When I attack, [Stun] an enemy unit here" — Vi -
+    // Peacekeeper): auto-stun an enemy unit at the source's battlefield.
+    if (e.stun && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      const target = bi >= 0 ? s.battlefields[bi].units.find((u) => u.owner !== player && !u.stunned) : undefined
+      if (target) {
+        target.stunned = true
+        emit({ kind: 'stun', iid: target.iid, player })
+        s = log(s, player, `${label}: stunned ${getCard(target.cardId)?.name}.`)
         did = true
       }
     }
@@ -1851,6 +1868,12 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
       if (gm) b += parseInt(gm[1], 10)
     }
   }
+  // Self: "I have +N Might while I'm attacking with another unit." (Crimson
+  // Pigeons) — attacker and NOT alone.
+  if (role === 'attacker' && !alone) {
+    const wm = text.match(/(?:i have )?\+(\d+)\s*(?::rb_might:|might) while (?:i'm|i am) attacking with another unit/)
+    if (wm) b += parseInt(wm[1], 10)
+  }
   // Legend-granted global buffs.
   const lt = (getCard(owner.legend?.cardId ?? '')?.text ?? '').toLowerCase()
   if (lt) {
@@ -2228,12 +2251,26 @@ function resolveSpellEffects(
         dead = applyTargetDamage(s, t, e.damage, true)
         s = log(s, controller, `${card.name} dealt ${e.damage}.`)
       } else if (e.kill) {
-        dead = killTarget(s, t)
-        s = log(s, controller, `${card.name} killed a unit.`)
-        // "Its controller draws N" (Hidden Blade): the killed unit's owner draws.
-        if (e.controllerDrawOnKill && dead.length) {
-          const drew = drawN(s.players[dead[0].owner], e.controllerDrawOnKill)
-          s = log(s, dead[0].owner, `${card.name}: drew ${drew} (a unit was killed).`)
+        // "with N Might or less" restriction (Soul Harvest): skip if too big.
+        const tu = findUnitAnywhere(s, t)
+        if (e.killMightMax != null && tu && mightOf(tu) > e.killMightMax) {
+          s = log(s, controller, `${card.name}: ${getCard(tu.cardId)?.name} has too much Might to kill.`)
+        } else {
+          dead = killTarget(s, t)
+          s = log(s, controller, `${card.name} killed a unit.`)
+          // "Its controller draws N" (Hidden Blade): the killed unit's owner draws.
+          if (e.controllerDrawOnKill && dead.length) {
+            const drew = drawN(s.players[dead[0].owner], e.controllerDrawOnKill)
+            s = log(s, dead[0].owner, `${card.name}: drew ${drew} (a unit was killed).`)
+          }
+        }
+      }
+      if (e.stun) {
+        const u = findUnitAnywhere(s, t)
+        if (u) {
+          u.stunned = true
+          emit({ kind: 'stun', iid: t, player: controller })
+          s = log(s, controller, `${card.name} stunned ${getCard(u.cardId)?.name}.`)
         }
       }
       if (e.tempMight) {
@@ -3379,6 +3416,8 @@ export function getLegalTargets(state: MatchState, card: Card, player?: PlayerId
     // Enemy units that can't be chosen by enemy spells (Unstoppable [Level 16]).
     units = units.filter((u) => u.owner === player || !untargetableByEnemy(state, u))
   }
+  // "kill a unit with N Might or less" (Soul Harvest) — only offer small units.
+  if (e.kill > 0 && e.killMightMax != null) units = units.filter((u) => mightOf(u) <= e.killMightMax!)
   return units.map((u) => u.iid)
 }
 
