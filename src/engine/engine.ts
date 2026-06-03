@@ -589,10 +589,22 @@ function bfSpellPlayed(s: MatchState, player: PlayerId, spentEnergy = 0): MatchS
 
 /** Apply a battlefield's "when you conquer here" passive to the conqueror. A
  *  per-battlefield script (if any) takes precedence over the generic parser. */
-function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number): MatchState {
+function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number, excess = 0): MatchState {
   if (s.winner !== null) return s
   const bf = s.battlefields[bfIndex]
   const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
+  // Trapping Grounds: conquering with 3+ excess combat damage plays a Bird here.
+  if (bfBaseNameAt(s, bfIndex) === 'Trapping Grounds') {
+    if (excess >= 3) {
+      const tokId = TOKEN_BY_NAME['bird']
+      if (tokId) {
+        bf.units.push({ iid: `${player}:tok:${tokId}#${(tokenCounter++).toString(36)}`, cardId: tokId, owner: player, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+        recomputeControllers(s)
+        s = log(s, player, `Trapping Grounds: ${excess} excess damage — played a Bird.`)
+      }
+    }
+    return s
+  }
   const script = bfScript(bf.cardId)
   if (script?.onConquer) {
     script.onConquer(makeBfApi(s), player, bfIndex)
@@ -1575,9 +1587,14 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   // Conquer: mover ends as sole controller of a battlefield they didn't hold.
   const nowController = s.battlefields[bfIndex].controller
   if (nowController === moverOwner && prevController !== moverOwner) {
+    // Excess (overkill) the mover assigned to the defenders this combat — the
+    // attack damage beyond the defenders' total Might (Trapping Grounds).
+    const defStep = steps.find((st) => st.side === 'defenders')
+    const totalDefHp = defStep ? Object.values(defStep.hp).reduce((a, b) => a + b, 0) : 0
+    const excess = Math.max(0, attackMight - totalDefHp)
     s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
     s = grantHunt(s, moverOwner, bfIndex)
-    s = applyConquerPassive(s, moverOwner, bfIndex)
+    s = applyConquerPassive(s, moverOwner, bfIndex, excess)
     s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'))
     s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere))
   }

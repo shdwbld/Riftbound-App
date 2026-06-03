@@ -1274,6 +1274,38 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
   })
 })
 
+describe('Trapping Grounds (excess combat damage)', () => {
+  const trap = () => CARDS.find((c) => c.type === 'battlefield' && c.name === 'Trapping Grounds')
+  const birdId = TOKEN_BY_NAME['bird']
+
+  function conquerWith(attackMight: number) {
+    const atkId = injectCard(`tg-atk-${attackMight}`, 'A unit.', { might: attackMight })
+    const defId = injectCard(`tg-def-${attackMight}`, 'A unit.', { might: 1 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: trap()!.id, units: [mk(defId, 1, { exhausted: true })], controller: 1 }
+    const atk = mk(atkId, 0)
+    s.players[0].zones.base.push(atk)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: atk.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    return r.state
+  }
+
+  it('spawns a Bird when conquering with 3+ excess damage', () => {
+    if (!trap() || !birdId) return
+    const st = conquerWith(8) // 8 attack vs 1 defender Might = 7 excess
+    expect(st.battlefields[0].controller).toBe(0)
+    expect(st.battlefields[0].units.some((u) => u.cardId === birdId)).toBe(true)
+  })
+
+  it('does not spawn a Bird with less than 3 excess damage', () => {
+    if (!trap() || !birdId) return
+    const st = conquerWith(2) // 2 attack vs 1 = 1 excess
+    expect(st.battlefields[0].controller).toBe(0)
+    expect(st.battlefields[0].units.some((u) => u.cardId === birdId)).toBe(false)
+  })
+})
+
 describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
   const dusk = () => CARDS.find((c) => c.type === 'battlefield' && c.name === 'Dusk Rose Lab')
 
