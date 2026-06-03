@@ -402,6 +402,7 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
     u.buffs = 1
     emit({ kind: 'buff', iid: u.iid, player: p.id })
     lines.push(`Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
+    for (const l of fireBuffReactions(s, p, u.iid)) lines.push(l)
     return true
   }
   if (e.buffSelf) {
@@ -413,6 +414,32 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
     .filter((u) => !(e.buffExcludesSelf && u.iid === sourceIid))
     .sort((a, b) => (def(b)?.type === 'unit' ? (def(b) as { might: number }).might : 0) - (def(a)?.type === 'unit' ? (def(a) as { might: number }).might : 0))
   for (let i = 0; i < e.buff && i < candidates.length; i++) give(candidates[i])
+  return lines
+}
+
+/** Permanent reactions to buffing a friendly unit. Mistfall (gear): "When you
+ *  buff a friendly unit, you may pay :rb_rune_body: and exhaust this to ready
+ *  it." Auto-paid when the gear is ready, a body rune is available, and the
+ *  buffed unit is exhausted (readying it is the whole point — tempo). */
+function fireBuffReactions(s: MatchState, p: PlayerState, buffedIid: string): string[] {
+  const lines: string[] = []
+  const buffed = findUnitAnywhere(s, buffedIid)
+  if (!buffed || !buffed.exhausted) return lines // nothing worth readying
+  const mistfall = p.zones.base.find(
+    (g) => !g.exhausted && /when you buff a friendly unit[^.]*exhaust this to ready it/i.test(def(g)?.text ?? ''),
+  )
+  if (!mistfall) return lines
+  // Pay 1 body Power: recycle a ready body-producing rune from the pool.
+  const idx = p.zones.runePool.findIndex(
+    (r) => !r.exhausted && ((def(r) as { produces?: Domain[] })?.produces ?? []).includes('body'),
+  )
+  if (idx < 0) return lines
+  const [rune] = p.zones.runePool.splice(idx, 1)
+  p.zones.runeDeck.push({ ...rune, exhausted: false, damage: 0 })
+  mistfall.exhausted = true
+  buffed.exhausted = false
+  emit({ kind: 'buff', iid: buffed.iid, player: p.id })
+  lines.push(`Mistfall: paid a body Power and readied ${getCard(buffed.cardId)?.name}.`)
   return lines
 }
 
@@ -459,7 +486,22 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Ready ${cnt} unit(s) â€” choose which.`)
     }
   }
-  if (e.readySelf && sourceIid) {
+  // "spend a buff to buff me and ready me" (Wildclaw Shaman): pay the cost by
+  // removing a buff from one of your OTHER buffed units. If none is available,
+  // the optional self-buff/ready doesn't happen.
+  let costPaid = true
+  if (e.spendBuff && (e.buffSelf || e.readySelf)) {
+    const donor = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].find(
+      (u) => u.owner === p.id && (u.buffs ?? 0) > 0 && u.iid !== sourceIid,
+    )
+    if (donor) {
+      donor.buffs = (donor.buffs ?? 0) - 1
+      lines.push(`Spent a buff from ${getCard(donor.cardId)?.name}.`)
+    } else {
+      costPaid = false
+    }
+  }
+  if (costPaid && e.readySelf && sourceIid) {
     const u = findUnitAnywhere(s, sourceIid)
     if (u && u.owner === p.id && u.exhausted) {
       u.exhausted = false
@@ -467,7 +509,8 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Readied ${getCard(u.cardId)?.name}.`)
     }
   }
-  for (const l of applyBuff(s, p, e, sourceIid)) lines.push(l)
+  // Skip applyBuff when a spend-buff self-buff couldn't pay its cost.
+  if (costPaid) for (const l of applyBuff(s, p, e, sourceIid)) lines.push(l)
   return lines
 }
 
@@ -1801,6 +1844,12 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   if (alone && (role === 'attacker' || role === 'defender')) {
     const am = text.match(/while (?:i'm|i am) attacking (?:or defending )?alone,? i have \+(\d+)\s*(?::rb_might:|might)/)
     if (am) b += parseInt(am[1], 10)
+    // Controller's gear: Mask of Foresight — "When a friendly unit attacks or
+    // defends alone, give it +N Might this turn." Modeled as a lone-combatant aura.
+    for (const g of owner.zones.base) {
+      const gm = (getCard(g.cardId)?.text ?? '').toLowerCase().match(/when a friendly unit attacks or defends alone,? give it \+(\d+)\s*(?::rb_might:|might)/)
+      if (gm) b += parseInt(gm[1], 10)
+    }
   }
   // Legend-granted global buffs.
   const lt = (getCard(owner.legend?.cardId ?? '')?.text ?? '').toLowerCase()

@@ -45,6 +45,10 @@ export interface ParsedEffect {
   /** Ready the SOURCE unit itself ("ready me"). Distinct from `readyUnits`,
    *  which lets the controller choose which exhausted units to ready. */
   readySelf: boolean
+  /** A cost: spend (remove) a buff from one of your buffed units before the
+   *  self-buff/ready resolves ("spend a buff to …" — Wildclaw Shaman). If no
+   *  buff is available to spend, the optional effect doesn't happen. */
+  spendBuff: boolean
   /** Units to outright kill (no damage roll). */
   kill: number
   /** Signed Might-this-turn applied to each chosen target (e.g. Stupefy −1). */
@@ -94,6 +98,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   buffSelf: false,
   buffExcludesSelf: false,
   readySelf: false,
+  spendBuff: false,
   kill: 0,
   tempMight: 0,
   bounce: null,
@@ -287,6 +292,10 @@ function parse(text: string): ParsedEffect {
   // "ready me/myself/this" — un-exhaust the source unit (vs. `readyUnits`, a
   // choose-which-to-ready effect that needs a unit noun).
   if (/\bready (?:me|myself|this)\b/.test(t)) { eff.readySelf = true; hit = true }
+
+  // "spend a buff to …" — a cost paid by removing a buff from one of your units
+  // (Wildclaw Shaman). The actual effect after "to" supplies the `hit`.
+  if (/\bspend a buff to\b/.test(t)) eff.spendBuff = true
 
   // Multi-target count: "each of up to two units" / "up to 2 units".
   const multiM = t.match(new RegExp(`(?:each of )?up to ${NUM} units?`)) || t.match(new RegExp(`each of ${NUM} units?`))
