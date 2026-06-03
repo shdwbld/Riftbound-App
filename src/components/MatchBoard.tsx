@@ -15,6 +15,7 @@ import MechanicTooltip from './MechanicTooltip'
 import CombatBanner, { type BannerData } from './CombatBanner'
 import { type Card, type Domain, DOMAIN_META, DOMAINS } from '../types/cards'
 import { matGradient, domainGlow, domainAnimClass } from '../lib/theme'
+import { audio } from '../lib/audio'
 import BoardCard from './BoardCard'
 import CardBack from './CardBack'
 import CardPreview from './CardPreview'
@@ -189,6 +190,36 @@ export default function MatchBoard({
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
+
+  // Sound effects for this action's events (deduped per batch).
+  useEffect(() => {
+    if (!events?.length) return
+    const kinds = new Set(events.map((e) => e.kind))
+    const playEvt = events.find((e) => e.kind === 'play')
+    if (playEvt?.cardId) {
+      const c = getCard(playEvt.cardId)
+      if (c && c.type === 'spell') audio.play((c.energy ?? 0) >= 5 ? 'spellBig' : 'spell')
+      else if (c) audio.play('playCard')
+    }
+    if (kinds.has('draw')) audio.play('cardFlip')
+    if (kinds.has('channel')) audio.play('shuffle', { volume: 0.6 })
+    if (kinds.has('move')) audio.play('cardThrow')
+    if (kinds.has('damage')) audio.play(Math.random() < 0.5 ? 'sword' : 'punch')
+    if (kinds.has('defeat')) audio.play('unitKilled')
+    if (kinds.has('counter')) audio.play('spell')
+    if (kinds.has('conquer')) audio.play('sword')
+    if (kinds.has('score') && !kinds.has('conquer')) audio.play('confirm', { volume: 0.7 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.seq])
+
+  // Battle music + ambience while the board is mounted (gameplay phases). The
+  // music bus keeps it low; the per-track volumes are scaled by the settings.
+  useEffect(() => {
+    audio.init()
+    audio.playMusic(Math.random() < 0.5 ? 'battle' : 'battle2', { volume: 0.9 })
+    audio.playMusic('ambience', { volume: 0.5 })
+    return () => audio.stopMusic()
+  }, [])
 
   const openMenu = (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield') => {
     e.preventDefault()

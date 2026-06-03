@@ -1,4 +1,7 @@
+import { useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
+import { audio, type SfxName } from '../lib/audio'
+import AudioSettings from './AudioSettings'
 
 const navItems = [
   { to: '/', label: 'Home', end: true },
@@ -9,7 +12,32 @@ const navItems = [
   { to: '/online', label: 'Online' },
 ]
 
+/** Pick a click SFX for a pressed control based on its intent (text/aria). */
+function clickSfxFor(target: EventTarget | null): SfxName | null {
+  if (!(target instanceof Element)) return null
+  if (target.closest('[data-no-sfx]')) return null
+  const btn = target.closest('button, [role="button"], a')
+  if (!btn) return null
+  const label = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase()
+  if (/conced|delete|trash|banish|remove|cancel|discard|✕|leave|recycle/.test(label)) return 'undo'
+  if (/end turn|\bplay\b|confirm|\bpay\b|\bkeep\b|mulligan|\bstart\b|\broll\b|\bdone\b|create|share|\bload\b|import|\bsave\b|\bjoin\b|\bhost\b/.test(label))
+    return 'confirm'
+  return 'uiClick'
+}
+
 export default function Layout() {
+  // Global click SFX: first gesture also unlocks the AudioContext.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const name = clickSfxFor(e.target)
+      if (!name) return
+      audio.init()
+      void audio.play(name, { volume: name === 'uiClick' ? 0.55 : 0.8 })
+    }
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
+  }, [])
+
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b border-white/10 bg-[#10101a]/80 backdrop-blur">
@@ -38,8 +66,9 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
-          <div className="ml-auto hidden shrink-0 text-xs text-white/40 lg:block">
-            unofficial simulator
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <span className="hidden text-xs text-white/40 lg:block">unofficial simulator</span>
+            <AudioSettings />
           </div>
         </div>
       </header>

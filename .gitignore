@@ -9,3 +9,6 @@ dist-ssr
 *.log
 .vite
 coverage
+
+# Raw SFX source (served copies live in public/sfx)
+/sfx pack/
