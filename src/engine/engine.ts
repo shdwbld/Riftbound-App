@@ -3286,6 +3286,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             const tu = findUnitAnywhere(s1, t)
             if (tu) { tu.buffs = (tu.buffs ?? 0) + ab.effect.buff; emit({ kind: 'buff', iid: tu.iid, player: action.player }) }
           }
+          // "Move a friendly unit … to its base" (The Syren, Yasuo pull-back).
+          if (/\bmove\b/i.test(ab.effectText) && /\bbase\b/i.test(ab.effectText) && battlefieldOf(s1, t) >= 0)
+            sendUnitToBase(s1, t)
         }
       }
       // "Kill this" cost resolves after the effect (the source is sacrificed).

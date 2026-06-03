@@ -2391,6 +2391,35 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.players[0].legend!.exhausted).toBe(true)
     expect(r.state.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(1)
   })
+
+  it('Yasuo - Unforgiven: 2,exhaust → move a friendly battlefield unit to its base', () => {
+    const s = baseState()
+    s.players[0].legend = mk('ogn-259-298', 0) // "2, exhaust: Move a friendly unit to or from its base"
+    for (let i = 0; i < 2; i++) s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(ally)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend.iid, targets: [ally.iid] })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.length).toBe(0)
+    expect(r.state.players[0].zones.base.some((u) => u.iid === ally.iid)).toBe(true)
+    expect(r.state.players[0].legend!.exhausted).toBe(true)
+  })
+
+  it('The Syren (gear): 1,exhaust → move a friendly unit at a battlefield to its base', () => {
+    const s = baseState()
+    const syren = mk('ogn-184-298', 0)
+    s.players[0].zones.base.push(syren)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[1].units.push(ally)
+    const ab = canActivateUnit(s, 0, syren.iid)
+    expect(ab).toBeTruthy()
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: syren.iid, targets: [ally.iid] })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.length).toBe(0)
+    expect(r.state.players[0].zones.base.some((u) => u.iid === ally.iid)).toBe(true)
+    expect(r.state.players[0].zones.base.find((u) => u.iid === syren.iid)!.exhausted).toBe(true)
+  })
 })
 
 describe('Lillia - Bashful Bloom legend cost reduction', () => {
