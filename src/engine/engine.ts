@@ -493,6 +493,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Ready ${cnt} unit(s) â€” choose which.`)
     }
   }
+  if (e.grantAssaultHere && sourceIid != null) {
+    // "give your other units here [Assault] this turn" (Lord Broadmane).
+    const bi = battlefieldOf(s, sourceIid)
+    let n = 0
+    if (bi >= 0)
+      for (const u of s.battlefields[bi].units)
+        if (u.owner === p.id && u.iid !== sourceIid) { u.grantAssault = (u.grantAssault ?? 0) + e.grantAssaultHere; n++ }
+    if (n) lines.push(`Gave [Assault ${e.grantAssaultHere}] to ${n} other unit(s) here this turn.`)
+  }
   // "spend a buff to buff me and ready me" (Wildclaw Shaman): pay the cost by
   // removing a buff from one of your OTHER buffed units. If none is available,
   // the optional self-buff/ready doesn't happen.
@@ -1671,7 +1680,7 @@ function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
   const k = parseKeywords(d)
   if (k.backline) return 0
   let m = d.might - ci.damage + gearMight(ci) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
-  if (role === 'attacker') m += k.assault
+  if (role === 'attacker') m += k.assault + (ci.grantAssault ?? 0) // [Assault] granted this turn
   if (role === 'defender') m += k.shield
   m += levelBonus(d, xp).might // [Level N] passive while controller has enough XP
   return Math.max(0, m)
@@ -1904,6 +1913,7 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
  *  conditional grants like Bilgewater Bully's "While I'm buffed, I have [Ganking]"
  *  — the keyword scanner reads the bracket unconditionally, so re-gate it here. */
 function unitHasGanking(s: MatchState, u: EngineCard): boolean {
+  if (u.grantGanking) return true // [Ganking] granted this turn (Vault Breaker)
   const t = (def(u)?.text ?? '').toLowerCase()
   if (/while (?:i'm|i am) buffed,?[^.]*\[ganking\]/.test(t)) return (u.buffs ?? 0) > 0
   return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking
@@ -2282,6 +2292,15 @@ function resolveSpellEffects(
           u.stunned = true
           emit({ kind: 'stun', iid: t, player: controller })
           s = log(s, controller, `${card.name} stunned ${getCard(u.cardId)?.name}.`)
+        }
+      }
+      if (e.grantAssault || e.grantGanking) {
+        const u = findUnitAnywhere(s, t)
+        if (u) {
+          if (e.grantAssault) u.grantAssault = (u.grantAssault ?? 0) + e.grantAssault
+          if (e.grantGanking) u.grantGanking = true
+          emit({ kind: 'buff', iid: t, player: controller })
+          s = log(s, controller, `${card.name}: ${getCard(u.cardId)?.name} gains ${e.grantAssault ? `[Assault ${e.grantAssault}]` : ''}${e.grantAssault && e.grantGanking ? ' and ' : ''}${e.grantGanking ? '[Ganking]' : ''} this turn.`)
         }
       }
       if (e.tempMight) {
@@ -3196,10 +3215,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // End-of-turn cleanup: clear "this turn" Might modifiers and Stun.
       for (const pl of s.players) {
         for (const z of Object.keys(pl.zones) as ZoneId[])
-          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false }))
+          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false }))
       }
       for (const bf of s.battlefields)
-        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false }))
+        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false }))
       // Empty the ending player's resource pool.
       s.players[state.activePlayer].pool = { energy: 0, power: {} }
       s.activePlayer = nextPlayer(s, state.activePlayer)

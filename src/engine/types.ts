@@ -38,6 +38,12 @@ export interface EngineCard {
   /** This instance has [Temporary] granted to it (killed at the start of its
    *  controller's Beginning Phase), independent of its card's keywords. */
   temporary?: boolean
+  /** [Assault N] granted to this unit THIS TURN (Square Up, Vault Breaker, Lord
+   *  Broadmane). Cleared at end of turn. Adds to combat Might while attacking. */
+  grantAssault?: number
+  /** [Ganking] granted to this unit THIS TURN (Vault Breaker). Lets it move
+   *  battlefield-to-battlefield. Cleared at end of turn. */
+  grantGanking?: boolean
 }
 
 export type ZoneId =

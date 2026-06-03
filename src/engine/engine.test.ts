@@ -974,7 +974,7 @@ describe('validity API (canPlay / getLegalTargets)', () => {
     const { canPlay, getLegalTargets } = await import('./engine')
     const { needsTarget, spellEffect, hasUntargetedPart } = await import('./effects')
     // A PURE-damage spell (no draw/channel part), so no-target truly blocks it.
-    const dmgSpell = CARDS.find((c) => needsTarget(c) && !hasUntargetedPart(spellEffect(c)))
+    const dmgSpell = CARDS.find((c) => needsTarget(c) && spellEffect(c).damage > 0 && !hasUntargetedPart(spellEffect(c)))
     if (!dmgSpell) return
     const s = baseState()
     seedRunes(s, 0)
@@ -1438,6 +1438,47 @@ describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
     expect(r.state.phase).toBe('action')
     expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(true) // alive
     expect(r.state.players[0].zones.hand.length).toBe(1) // only the regular draw
+  })
+})
+
+describe('Vi deck — temporary keyword grants', () => {
+  it('parses [Assault]/[Ganking] grants (Square Up, Vault Breaker, Lord Broadmane)', async () => {
+    const { spellEffect, onPlayEffect } = await import('./effects')
+    const sq = CARDS.find((c) => c.type === 'spell' && c.name === 'Square Up')
+    if (sq) expect(spellEffect(sq).grantAssault).toBe(4)
+    const vb = CARDS.find((c) => c.type === 'spell' && c.name === 'Vault Breaker')
+    if (vb) { expect(spellEffect(vb).grantAssault).toBe(2); expect(spellEffect(vb).grantGanking).toBe(true) }
+    const lb = CARDS.find((c) => c.type === 'unit' && c.name === 'Lord Broadmane')
+    if (lb) expect(onPlayEffect(lb).grantAssaultHere).toBeGreaterThan(0)
+  })
+
+  it('Square Up: grants [Assault N] to a friendly unit this turn', () => {
+    const spellId = injectCard('su-test', 'Give a unit [Assault 4] this turn.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const myUnit = mk(injectCard('su-unit', 'A unit.', { might: 1 }), 0)
+    s.players[0].zones.base.push(myUnit)
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [myUnit.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.base.find((u) => u.iid === myUnit.iid)?.grantAssault).toBe(4)
+  })
+
+  it('Vault Breaker: granted [Ganking] enables a battlefield-to-battlefield move', () => {
+    const spellId = injectCard('vb-test', 'Give a unit [Assault 2] and [Ganking] this turn.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [], controller: null }
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [u.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    r = reduce(r.state, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 1 }) // ganking move
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[1].units.some((x) => x.iid === u.iid)).toBe(true)
   })
 })
 

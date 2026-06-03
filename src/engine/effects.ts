@@ -31,6 +31,14 @@ export interface ParsedEffect {
   /** Extra cards drawn, one per battlefield the controller (or allies) control
    *  ("draw 1 for each battlefield you control" — Right of Conquest). */
   drawPerBattlefield: number
+  /** [Assault N] granted to the chosen unit this turn ("give a unit [Assault 4]
+   *  this turn" — Square Up, Vault Breaker). 0 = none. */
+  grantAssault: number
+  /** [Ganking] granted to the chosen unit this turn (Vault Breaker). */
+  grantGanking: boolean
+  /** [Assault N] granted to your OTHER units at the source's battlefield this
+   *  turn ("give your other units here [Assault]" — Lord Broadmane). */
+  grantAssaultHere: number
   /** Damage to each chosen target unit, if the text calls for it. */
   damage: number
   /** Number of Recruit unit tokens to create. */
@@ -100,6 +108,9 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   stun: 0,
   killMightMax: null,
   drawPerBattlefield: 0,
+  grantAssault: 0,
+  grantGanking: false,
+  grantAssaultHere: 0,
   damage: 0,
   recruits: 0,
   goldTokens: 0,
@@ -126,11 +137,11 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.stun > 0
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.stun > 0 || e.grantAssault > 0 || e.grantGanking
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -261,6 +272,20 @@ function parse(text: string): ParsedEffect {
     if (cnt > 0) { eff.stun += cnt; hit = true }
   }
 
+  // Temporary keyword grants "this turn". Targeted: "give a unit [Assault N] (and
+  // [Ganking]) this turn" (Square Up, Vault Breaker). Area: "give your other
+  // units here [Assault] this turn" (Lord Broadmane).
+  if (/this turn/.test(t)) {
+    const areaM = t.match(/give your (?:other )?units here \[assault(?:\s*(\d+))?\]/)
+    if (areaM) { eff.grantAssaultHere = areaM[1] ? parseInt(areaM[1], 10) : 1; hit = true }
+    else {
+      const gaM = t.match(/give (?:a|an|target|another) (?:friendly |enemy )?unit[^.]*?\[assault(?:\s*(\d+))?\]/)
+      if (gaM) { eff.grantAssault = gaM[1] ? parseInt(gaM[1], 10) : 1; hit = true }
+      const ggM = t.match(/give (?:a|an|target|another) (?:friendly |enemy )?unit[^.]*?\[ganking\]/)
+      if (ggM) { eff.grantGanking = true; hit = true }
+    }
+  }
+
   // Bounce: "return a friendly unit to its owner's hand" (Retreat). Scope from
   // the determiner — friendly / enemy / any.
   const bounceM = t.match(/return (?:a|an|target|another) (friendly |enemy )?unit to (?:its owner'?s?|your|their) hand/)
@@ -345,8 +370,8 @@ function parse(text: string): ParsedEffect {
           ? 'friendly'
           : /enemy|opposing/.test(t)
             ? 'enemy'
-            : eff.tempMight > 0 || eff.buff > 0
-              ? 'friendly'
+            : eff.tempMight > 0 || eff.buff > 0 || eff.grantAssault > 0 || eff.grantGanking
+              ? 'friendly' // buffs / keyword grants help your own units
               : eff.bounce
                 ? 'any' // a generic "return a unit" can hit either side
                 : 'enemy' // damage / kill / debuff default to enemies
