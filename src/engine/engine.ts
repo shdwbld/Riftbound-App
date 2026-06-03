@@ -358,13 +358,15 @@ function bfIndexOfUnit(s: MatchState, iid: string | undefined): number {
  *  `bfIndex` is the relevant battlefield for "units at that battlefield"
  *  conditions (supplied by conquer triggers); without it such a condition
  *  cannot be satisfied. */
-function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number): boolean {
+function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, excess = 0): boolean {
   if (!e.condition) return true
   if (e.condition.kind === 'unitsHereAtLeast') {
     if (bfIndex == null) return false
     const count = s.battlefields[bfIndex]?.units.filter((u) => u.owner === p.id).length ?? 0
     return count >= e.condition.value
   }
+  // "if you assigned N+ excess damage" — supplied by the conquer trigger site.
+  if (e.condition.kind === 'excessAtLeast') return excess >= e.condition.value
   // [Level N][>] gate — the controller must have N+ XP (Wuju Apprentice).
   if (e.condition.kind === 'xpAtLeast') return p.xp >= e.condition.value
   const hand = p.zones.hand.length
@@ -446,10 +448,10 @@ function fireBuffReactions(s: MatchState, p: PlayerState, buffedIid: string): st
 /** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text.
  *  `bfIndex` scopes any "units at that battlefield" condition (conquer triggers).
  *  `sourceIid` is the unit the effect emanates from (for self-buff / ready-me). */
-function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, sourceIid?: string): string[] {
+function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, sourceIid?: string, excess = 0): string[] {
   const lines: string[] = []
   // A gated effect does nothing when its condition isn't met.
-  if (!conditionMet(s, p, e, bfIndex)) return lines
+  if (!conditionMet(s, p, e, bfIndex, excess)) return lines
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
   if (e.drawPerBattlefield) {
     // "draw 1 for each battlefield you control" (Right of Conquest).
@@ -563,7 +565,7 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
 
 /** Apply fired triggers' auto-resolvable effects (ordered turn-player first,
  *  rule 4.6); log the remainder for manual resolution. */
-function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number): MatchState {
+function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, excess = 0): MatchState {
   if (fired.length === 0) return s
   const ordered = orderTriggers(fired, s.activePlayer, s.players.length)
   for (const { player, ability, sourceIid } of ordered) {
@@ -571,11 +573,20 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number): M
     const p = s.players[player]
     const e = ability.effect
     let did = false
-    // `bfIndex` only scopes conquer triggers' "units at that battlefield";
-    // `sourceIid` lets self-buff / ready-me / "buff another" resolve correctly.
-    for (const line of applyParsed(s, p, e, ability.event === 'conquer' ? bfIndex : undefined, sourceIid)) {
+    const isConquer = ability.event === 'conquer'
+    // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
+    // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
+    // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
+    const gated = e.condition && !conditionMet(s, p, e, isConquer ? bfIndex : undefined, isConquer ? excess : 0)
+    for (const line of applyParsed(s, p, e, isConquer ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
       s = log(s, player, `${label}: ${line}`)
       did = true
+    }
+    // "you may exhaust me to …" (Vi - Piltover Enforcer) — exhaust the source when
+    // the gated effect actually resolved.
+    if (did && !gated && sourceIid && /\bexhaust me\b/i.test(ability.text)) {
+      const su = findUnitAnywhere(s, sourceIid) ?? (s.players[player].legend?.iid === sourceIid ? s.players[player].legend : undefined)
+      if (su) su.exhausted = true
     }
     // "give me +1 Might this turn" â€” temporary Might on the source unit.
     if (e.tempMightSelf && sourceIid) {
@@ -2187,8 +2198,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
     s = grantHunt(s, moverOwner, bfIndex)
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
-    s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex)
-    s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere), bfIndex)
+    s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex, excess)
+    s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere), bfIndex, excess)
     offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
   }
   return s

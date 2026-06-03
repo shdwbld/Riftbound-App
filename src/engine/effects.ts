@@ -86,7 +86,7 @@ export interface ParsedEffect {
    *  needs the relevant battlefield's index, supplied at the trigger site.
    *  `xpAtLeast` gates a `[Level N][>]` effect on the controller's XP (Wuju
    *  Apprentice — "[Level 6][>] … draw 1"). */
-  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast'; value: number } | null
+  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast' | 'excessAtLeast'; value: number } | null
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
@@ -167,6 +167,9 @@ function parse(text: string): ParsedEffect {
   // "if you have 4+ units at that battlefield" / "N or more units at …" (Garen).
   const condUnits = t.match(new RegExp(`if you have (\\d+)\\+? (?:or more )?units? at (?:that|this|the) battlefield`))
   if (condUnits) eff.condition = { kind: 'unitsHereAtLeast', value: parseInt(condUnits[1], 10) }
+  // "if you assigned 3 or more excess damage" (Vi - Piltover Enforcer, Yeti Brawler).
+  const condExcess = t.match(/if you assigned (\d+)\+? (?:or more )?excess damage/)
+  if (condExcess) eff.condition = { kind: 'excessAtLeast', value: parseInt(condExcess[1], 10) }
 
   // Conditional draw on a kill ("if this kills it … draw 1"); detected first so
   // its "draw N" isn't also counted as an unconditional draw.

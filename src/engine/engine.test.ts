@@ -1441,6 +1441,41 @@ describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
   })
 })
 
+describe('Vi deck — excess-damage conquer', () => {
+  it('a self-conquer unit makes its tokens only at 3+ excess damage (Yeti Brawler)', () => {
+    if (!GOLD_TOKEN_ID) return
+    const id = injectCard('yeti-test', 'When I conquer, if you assigned 3 or more excess damage, play two Gold gear tokens exhausted.', { might: 8 })
+    function goldAfter(defMight: number): number {
+      const s = baseState()
+      s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('yd' + defMight, 'x', { might: defMight }), 1, { exhausted: true })], controller: 1 }
+      const atk = mk(id, 0)
+      s.players[0].zones.base.push(atk)
+      let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: atk.iid, toBattlefield: 0 })
+      r = reduce(r.state, { type: 'PASS', player: 1 })
+      r = reduce(r.state, { type: 'PASS', player: 0 })
+      return r.state.players[0].zones.base.filter((u) => u.cardId === GOLD_TOKEN_ID).length
+    }
+    expect(goldAfter(1)).toBe(2) // 8−1 = 7 excess ≥ 3 → 2 Gold
+    expect(goldAfter(7)).toBe(0) // 8−7 = 1 excess < 3 → none
+  })
+
+  it('Vi - Piltover Enforcer: 3+ excess readies a unit and exhausts the legend', () => {
+    const vi = CARDS.find((c) => c.type === 'legend' && c.name === 'Vi - Piltover Enforcer')
+    if (!vi) return
+    const s = baseState()
+    s.players[0].legend = mk(vi.id, 0)
+    s.players[0].zones.base.push(mk(furyUnit.id, 0, { exhausted: true })) // a unit to ready
+    const atk = mk(injectCard('vi-atk', 'A unit.', { might: 8 }), 0)
+    s.players[0].zones.base.push(atk)
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('vi-def', 'x', { might: 1 }), 1, { exhausted: true })], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: atk.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.readyChoice?.player).toBe(0) // ready-a-unit prompt
+    expect(r.state.players[0].legend?.exhausted).toBe(true) // exhaust me
+  })
+})
+
 describe('Vi deck — combat/targeting', () => {
   it('Soul Harvest: restricts kill to units with N Might or less', () => {
     const spellId = injectCard('sh-test', 'Kill a unit at a battlefield with 3 :rb_might: or less.', { type: 'spell', energy: 0, power: {} })
