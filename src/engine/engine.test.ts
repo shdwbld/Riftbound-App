@@ -2448,6 +2448,25 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.players[0].zones.base.some((c) => c.cardId === GOLD_TOKEN_ID && c.exhausted)).toBe(true)
   })
 
+  it('Azir - Emperor of the Sands: Sand Soldier only after playing an Equipment this turn', () => {
+    const s = baseState()
+    s.players[0].legend = mk('sfd-197-221', 0)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    // Gate unmet → not activatable.
+    expect(canActivateUnit(s, 0, s.players[0].legend.iid)).toBeNull()
+    // After playing an Equipment this turn → activatable.
+    s.players[0].playedEquipmentThisTurn = true
+    const ab = canActivateUnit(s, 0, s.players[0].legend.iid)
+    expect(ab).toBeTruthy()
+    const baseBefore = s.players[0].zones.base.length
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.length).toBe(baseBefore + 1)
+    const tok = r.state.players[0].zones.base[r.state.players[0].zones.base.length - 1]
+    expect(tok.cardId).toBe(TOKEN_BY_NAME['sand soldier'])
+    expect(r.state.players[0].legend!.exhausted).toBe(true)
+  })
+
   it('Jax - Grandmaster At Arms: 1,exhaust → attach a detached Equipment to a unit (2-step)', () => {
     const s = baseState()
     s.players[0].legend = mk('sfd-193-221', 0)

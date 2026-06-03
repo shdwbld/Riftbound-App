@@ -77,6 +77,9 @@ export interface PlayerState {
   tokenPile: string[]
   /** Main-deck cards this player has played this turn (drives LEGION). */
   cardsPlayedThisTurn?: number
+  /** Whether this player has played an Equipment this turn (gates Azir -
+   *  Emperor of the Sands' Sand Soldier ability). Cleared at turn start. */
+  playedEquipmentThisTurn?: boolean
   /** Extra Energy non-token units cost to play this turn (Vaults of Helia). */
   unitCostBump?: number
   /** Set when a battlefield (The Academy) grants the next spell [Repeat] equal

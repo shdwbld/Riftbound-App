@@ -1142,11 +1142,22 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
   }
 }
 
+/** "Use only if …" gates printed on an activated ability. Currently: Azir's
+ *  "Use only if you've played an Equipment this turn." Returns false when a gate
+ *  is present and unmet, true otherwise. */
+function abilityUsableNow(card: Card | undefined, p: PlayerState): boolean {
+  const t = (card?.text ?? '').toLowerCase()
+  if (/use only if you('ve| have) played an equipment this turn/.test(t))
+    return !!p.playedEquipmentThisTurn
+  return true
+}
+
 /** Whether `player` can activate the unit `iid`'s own ability right now (controls
  *  it, not exhausted if exhaust-cost, at a battlefield if required, can pay). */
 export function canActivateUnit(s: MatchState, player: PlayerId, iid: string): UnitAbility | null {
   const u = controlledInstance(s, player, iid)
   if (!u) return null
+  if (!abilityUsableNow(getCard(u.cardId), s.players[player])) return null
   // Abilities the dedicated printed-activated path already handles (Orb of
   // Regret, Lux - Crownguard) go through ACTIVATE_ABILITY instead.
   if (printedActivated(getCard(u.cardId))) return null
@@ -1454,6 +1465,7 @@ export function beginTurn(state: MatchState): MatchState {
   // Reset per-turn counters (LEGION) and empty the resource pool (it does not
   // carry between turns â€” emptied at end of the Draw step / end of turn).
   p.cardsPlayedThisTurn = 0
+  p.playedEquipmentThisTurn = false
   p.pool = { energy: 0, power: {} }
   p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
   p.grantRepeatNextSpell = false
@@ -1681,7 +1693,7 @@ function finishBeginning(s: MatchState): MatchState {
   // Demacia drawing 2 each turn; Jinx already handled via the trigger system).
   if (p.legend && !p.legend.exhausted) {
     const legendCard = getCard(p.legend.cardId)
-    if (legendCard && parseTriggers(legendCard).length === 0) {
+    if (legendCard && parseTriggers(legendCard).length === 0 && abilityUsableNow(legendCard, p)) {
       const e = spellEffect(legendCard)
       if (e.draw || e.channel || e.recruits || e.goldTokens || e.namedToken) {
         // Costed activated abilities (":rb_energy_N:, :rb_exhaust:: â€¦", e.g. Viktor
@@ -2911,6 +2923,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       }
 
       if (action.type === 'PLAY_GEAR') {
+        // Track Equipment plays this turn (Azir - Emperor of the Sands gate).
+        if (parseKeywords(card).equip) p.playedEquipmentThisTurn = true
         // Attach to a target unit (granting its bonuses) if given, else base.
         if (action.targetIid) {
           for (const u of p.zones.base.concat(s.battlefields.flatMap((b) => b.units)))
@@ -3312,6 +3326,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)
+      // Named unit token (Azir: "Play a 2 Might Sand Soldier unit token to your
+      // base"). For an unscoped "here" we default to the player's base.
+      if (ab.effect.namedToken) {
+        const nt = ab.effect.namedToken
+        const bfHere = nt.here ? battlefieldOf(s1, u.iid) : -1
+        const dest = bfHere >= 0 ? s1.battlefields[bfHere].units : p.zones.base
+        spawnNamedToken(p, nt.name, nt.count, s1.turn, nt.exhausted, nt.temporary, dest)
+      }
       // Pyke - Bloodharbor Ripper: "… Play a Gold gear token exhausted." (the
       // second sentence isn't captured in effectText, so read the source text).
       if (/gold gear token/i.test(getCard(u.cardId)?.text ?? ''))
