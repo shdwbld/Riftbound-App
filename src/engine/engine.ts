@@ -3336,8 +3336,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       }
       // Pyke - Bloodharbor Ripper: "… Play a Gold gear token exhausted." (the
       // second sentence isn't captured in effectText, so read the source text).
-      if (/gold gear token/i.test(getCard(u.cardId)?.text ?? ''))
-        spawnGold(s1.players[action.player], 1, s1.turn)
+      const srcText = getCard(u.cardId)?.text ?? ''
+      if (/gold gear token/i.test(srcText)) spawnGold(s1.players[action.player], 1, s1.turn)
+      // Predict (Scryer's Bloom): peek the top of your deck; you may recycle it.
+      if (/\bpredict\b/i.test(srcText) && p.zones.mainDeck.length > 0)
+        s1.vision = { player: action.player, cardId: p.zones.mainDeck[0].cardId }
+      // "Gain N XP" (Scryer's Bloom's trailing sentence, not in effectText).
+      const xpM = srcText.match(/gain (\d+)\s*(?::rb_xp:|xp)/i)
+      if (xpM) p.xp += parseInt(xpM[1], 10)
       // "Kill this" cost resolves after the effect (the source is sacrificed).
       if (ab.killThis) s1 = fireDeaths(s1, killTarget(s1, u.iid))
       return ok(s1)

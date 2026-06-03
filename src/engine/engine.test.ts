@@ -2491,6 +2491,26 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.players[0].zones.base.some((c) => c.iid === equip.iid)).toBe(false) // left base
   })
 
+  it("Scryer's Bloom (gear): Kill this, 1, exhaust → Predict, Draw 1, Gain 1 XP", () => {
+    const s = baseState()
+    const bloom = mk('unl-136-219', 0, { exhausted: false }) // enters exhausted; readied here
+    s.players[0].zones.base.push(bloom)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    for (let i = 0; i < 2; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const ab = canActivateUnit(s, 0, bloom.iid)
+    expect(ab).toBeTruthy()
+    expect(ab!.killThis).toBe(true)
+    const handBefore = s.players[0].zones.hand.length
+    const xpBefore = s.players[0].xp
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: bloom.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(handBefore + 1) // drew 1
+    expect(r.state.players[0].xp).toBe(xpBefore + 1) // gained 1 XP
+    expect(r.state.vision?.player).toBe(0) // Predict — top card peek pending
+    // "Kill this": the gear is gone from base (sacrificed).
+    expect(r.state.players[0].zones.base.some((c) => c.iid === bloom.iid)).toBe(false)
+  })
+
   it('Garbage Grabber (gear): Recycle 3, 1, exhaust → Draw 1', () => {
     const s = baseState()
     const grab = mk('ogn-099-298', 0)
