@@ -621,8 +621,27 @@ function fireTokenPlay(s: MatchState, player: PlayerId, count: number): MatchSta
  *  whose "when you play a <type>" filter the played card doesn't match. */
 function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, playedCard?: Card, playedCost?: number): MatchState {
   let fired = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
+  // Triggers that pay by exhausting their own source ("…exhaust me to…") are
+  // cost-gated and handled explicitly (Chemtech Cask), not auto-resolved here —
+  // otherwise they'd fire for free on every spell.
+  fired = fired.filter((f) => !/exhaust me\b|exhaust this\b/i.test(f.ability.text))
   if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost))
   return fireTriggers(s, fired)
+}
+
+/** Chemtech Cask: "When you play a spell on an opponent's turn, you may exhaust
+ *  me to play a Gold gear token exhausted." Pure upside, so auto-fired — one ready
+ *  Cask per spell. No-op on the controller's own turn or with no ready Cask. */
+function fireChemtechCask(s: MatchState, player: PlayerId): MatchState {
+  if (s.activePlayer === player) return s // only on an opponent's turn
+  const baseName = (n: string) => n.replace(/\s*\([^)]*\)\s*$/, '').trim()
+  for (const g of s.players[player].zones.base) {
+    if (g.exhausted || baseName(getCard(g.cardId)?.name ?? '') !== 'Chemtech Cask') continue
+    g.exhausted = true
+    spawnGold(s.players[player], 1, s.turn)
+    return log(s, player, `Chemtech Cask: exhausted to create a Gold token.`)
+  }
+  return s
 }
 
 /** Engine primitives a battlefield script may call. Mutates `s` in place
@@ -2022,20 +2041,30 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     }
   }
 
+  // Altar of Blood: "If a unit here would die during combat, its controller may
+  // pay 3 [any] to heal it, exhaust it, and recall it instead." Pure rescue, so
+  // auto-paid when affordable; the saved unit is recalled (exhausted) to base.
+  const altarOfBlood = bfBaseNameAt(s, bfIndex) === 'Altar of Blood'
+  const rescued = new Set<string>()
   const survivors: EngineCard[] = []
   const defeated: EngineCard[] = []
   for (const u of bf.units) {
     const dead =
       (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
       (u.owner === moverOwner && attackersDefeated.has(u.iid))
-    if (dead) {
+    if (dead && altarOfBlood && getCard(u.cardId)?.supertype !== 'token' && makeBfApi(s).payPowerAny(u.owner, 3)) {
+      s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
+      emit({ kind: 'buff', iid: u.iid, player: u.owner })
+      rescued.add(u.iid)
+      s = log(s, u.owner, `Altar of Blood: paid 3 to heal, exhaust, and recall ${getCard(u.cardId)?.name} to base.`)
+    } else if (dead) {
       sendToTrash(s.players[u.owner], u)
       emit({ kind: 'defeat', iid: u.iid, cardId: u.cardId })
       defeated.push(u)
     } else survivors.push({ ...u, damage: 0 })
   }
   bf.units = survivors
-  const lost = defendersDefeated.size + attackersDefeated.size
+  const lost = defendersDefeated.size + attackersDefeated.size - rescued.size
   s = log(
     s,
     moverOwner,
@@ -2638,6 +2667,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         // "When you play a spell" triggers fire as it's played, before it resolves.
         let s1 = firePlayTriggers(s, action.player, ci.iid, card, effCost.energy)
+        s1 = fireChemtechCask(s1, action.player)
         s1 = bfSpellPlayed(s1, action.player, effCost.energy)
         s1 = resolveSpellEffects(s1, action.player, card, action.targets)
         if (repeatChosen) {
@@ -2663,6 +2693,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Play-triggers fire now (before the chain resolves), so they still happen
       // even if this spell is later Countered.
       let sPlayed = firePlayTriggers(s, action.player, ci.iid, card, effCost.energy)
+      sPlayed = fireChemtechCask(sPlayed, action.player)
       sPlayed = bfSpellPlayed(sPlayed, action.player, effCost.energy)
       return ok(
         log(sPlayed, action.player, `Played ${card.name} â€” it's on the Chain (opponents may respond).`),
