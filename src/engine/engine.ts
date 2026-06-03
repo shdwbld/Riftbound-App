@@ -25,7 +25,7 @@ function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
   const rank = (player - s.firstPlayer + s.players.length) % s.players.length
   return Math.floor((s.turn - 1 - rank) / s.players.length) + 1
 }
-import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, type ParsedEffect } from './effects'
+import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, type ParsedEffect } from './effects'
 import { triggersFor, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
 import { battlefieldPassive } from './battlefields'
 
@@ -227,7 +227,7 @@ function channelN(p: PlayerState, n: number): number {
 /** Send a card to a player's Trash as it leaves play. Tokens cease to exist
  *  (they don't go to the Trash), and buffs/temp modifiers are cleared. */
 function sendToTrash(p: PlayerState, card: EngineCard): void {
-  if (getCard(card.cardId)?.supertype === 'token') return // tokens cease to exist
+  if (getCard(card.cardId)?.supertype === 'token' || card.token) return // tokens cease to exist
   p.zones.trash.push({
     ...card,
     damage: 0,
@@ -314,6 +314,24 @@ function conditionMet(p: PlayerState, e: ParsedEffect): boolean {
   if (!e.condition) return true
   const hand = p.zones.hand.length
   return e.condition.kind === 'handAtMost' ? hand <= e.condition.value : hand >= e.condition.value
+}
+
+/** Make a Reflection token that copies `source`: a fresh instance pointing at
+ *  the source's card (so stats/keywords/abilities resolve live via getCard),
+ *  flagged as a token (ceases to exist) and Temporary (dies next Beginning
+ *  Phase before scoring). Enters fresh — no copied damage/buffs/gear. */
+function makeReflection(source: EngineCard, owner: PlayerId, turn: number, ready: boolean): EngineCard {
+  return {
+    iid: `${owner}:refl:${source.cardId}#${(tokenCounter++).toString(36)}`,
+    cardId: source.cardId,
+    owner,
+    exhausted: !ready,
+    damage: 0,
+    attached: [],
+    enteredTurn: turn,
+    token: true,
+    temporary: true,
+  }
 }
 
 /** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text. */
@@ -681,6 +699,17 @@ function offerChoice(s: MatchState, spec: NonNullable<MatchState['pendingChoice'
   s.pendingChoice = spec
 }
 
+/** LeBlanc - Deceiver: on conquer/hold, offer to discard 1 + exhaust LeBlanc to
+ *  play a Reflection copy of a unit at the battlefield (Temporary). */
+function offerLeblanc(s: MatchState, player: PlayerId, bfIndex: number): void {
+  const lg = s.players[player]?.legend
+  if (!lg || lg.exhausted) return
+  if ((getCard(lg.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim() !== 'LeBlanc - Deceiver') return
+  if (s.players[player].zones.hand.length === 0) return // need a card to discard
+  const opts = s.battlefields[bfIndex].units.map((u) => unitOpt(u)) // "another unit there"
+  offerChoice(s, { player, kind: 'leblancCopy', bfIndex, prompt: 'LeBlanc — discard 1 and exhaust LeBlanc to copy a unit here (Temporary)?', options: opts })
+}
+
 /** Fire "when a unit is played here" battlefield effects for a unit that just
  *  entered a battlefield (only happens via Ambush). */
 function bfUnitPlayedHere(s: MatchState, player: PlayerId, bfIndex: number, iid: string): void {
@@ -844,6 +873,7 @@ function moveUnits(
     s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'))
     const here = s2.battlefields[toBattlefield].units.filter((u) => u.owner === player).map((u) => u.iid)
     s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here))
+    offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
   }
   return ok(s2)
 }
@@ -919,7 +949,7 @@ export function beginTurn(state: MatchState): MatchState {
     const expired = bf.units.filter(
       (u) =>
         u.owner === ap &&
-        parseKeywords(def(u)).temporary &&
+        (parseKeywords(def(u)).temporary || u.temporary) &&
         (u.enteredTurn ?? 0) < s.turn,
     )
     if (expired.length) {
@@ -929,7 +959,7 @@ export function beginTurn(state: MatchState): MatchState {
     }
   }
   for (const u of p.zones.base.filter(
-    (u) => parseKeywords(def(u)).temporary && (u.enteredTurn ?? 0) < s.turn,
+    (u) => (parseKeywords(def(u)).temporary || u.temporary) && (u.enteredTurn ?? 0) < s.turn,
   )) {
     p.zones.base = p.zones.base.filter((x) => x.iid !== u.iid)
     sendToTrash(p, u)
@@ -1006,6 +1036,7 @@ function finishBeginning(s: MatchState): MatchState {
   for (let i = 0; i < s.battlefields.length; i++)
     if (s.battlefields[i].controller === ap) {
       s = grantHunt(s, ap, i)
+      offerLeblanc(s, ap, i) // LeBlanc - Deceiver: "when you hold" copy a unit here
       holdsAny = true
     }
   // Card "when you hold" (global) + "when I hold" (self, on units at held BFs).
@@ -1597,6 +1628,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
     s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'))
     s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere))
+    offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
   }
   return s
 }
@@ -1613,6 +1645,19 @@ function resolveSpellEffects(
 ): MatchState {
   const p = s.players[controller]
   const e = spellEffect(card)
+
+  // Copy-a-unit spell (Mirror Image): play a ready Reflection copy of the chosen
+  // unit to your base, Temporary. The parser can't express "copy", so handle it
+  // here from the chosen target.
+  if (isCopySpell(card)) {
+    const src = (targets ?? []).map((t) => findUnitAnywhere(s, t)).find(Boolean)
+    if (src) {
+      p.zones.base.push(makeReflection(src, controller, s.turn, true))
+      return log(s, controller, `${card.name}: played a Reflection copy of ${getCard(src.cardId)?.name}.`)
+    }
+    return log(s, controller, `${card.name} fizzled — no unit to copy.`)
+  }
+
   // Untargeted parts (draw / channel / recruit) always resolve.
   for (const line of applyParsed(s, p, e)) s = log(s, controller, line)
 
@@ -2049,6 +2094,13 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         } else {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
         }
+        // Keeper of Masks: when played, play two Reflection copies of itself here.
+        if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Keeper of Masks' && !legionGated) {
+          const dest = ambushBf != null ? s1.battlefields[ambushBf].units : s1.players[action.player].zones.base
+          for (let i = 0; i < 2; i++) dest.push(makeReflection(ci, action.player, s1.turn, false))
+          if (ambushBf != null) recomputeControllers(s1)
+          s1 = log(s1, action.player, `Keeper of Masks: played two Reflection copies.`)
+        }
         // Vision / Predict: peek the top of your Main Deck; a decision (keep /
         // recycle) is surfaced to the controller (same look, both keywords).
         if ((kw.vision || kw.predict) && p.zones.mainDeck.length > 0) {
@@ -2325,6 +2377,21 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         case 'moveAnyToBase':
           sendUnitToBase(s, action.iid)
           return ok(log(s, action.player, `Moved ${name} to base.`))
+        case 'leblancCopy': {
+          // Discard 1 + exhaust LeBlanc to play a ready Reflection copy of the
+          // chosen unit at the battlefield, Temporary.
+          const lg = s.players[action.player].legend
+          if (!lg || lg.exhausted) return fail(state, 'LeBlanc is unavailable.')
+          if (s.players[action.player].zones.hand.length === 0) return fail(state, 'No card to discard.')
+          const src = s.battlefields[pc.bfIndex].units.find((u) => u.iid === action.iid)
+          if (!src) return fail(state, 'That unit is no longer here.')
+          const discarded = s.players[action.player].zones.hand.shift()!
+          s.players[action.player].zones.trash.push(discarded)
+          lg.exhausted = true
+          s.battlefields[pc.bfIndex].units.push(makeReflection(src, action.player, s.turn, true))
+          recomputeControllers(s)
+          return ok(log(s, action.player, `LeBlanc — copied ${name} (Temporary); discarded a card.`))
+        }
         case 'daisReturn': {
           // Pay 1, return the chosen unit here to its owner's hand, then play a
           // Sand Soldier token at this battlefield.

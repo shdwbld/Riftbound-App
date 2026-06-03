@@ -1274,6 +1274,63 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
   })
 })
 
+describe('Reflection copy token', () => {
+  it('a Reflection copy is a token + Temporary and ceases to exist next turn', () => {
+    const s = baseState()
+    const refl = { ...mk(furyUnit.id, 0), token: true, temporary: true, enteredTurn: s.turn - 1 }
+    s.battlefields[0] = { cardId: battlefield.id, units: [refl], controller: 0 }
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const r = beginTurn(s)
+    expect(r.battlefields[0].units.some((u) => u.iid === refl.iid)).toBe(false) // expired
+    expect(r.players[0].zones.trash.some((c) => c.iid === refl.iid)).toBe(false) // ceased to exist, not trashed
+  })
+
+  it('a copy spell (Mirror Image) plays a Reflection copy of the chosen unit', () => {
+    const spellId = injectCard('mi-test', 'Choose a unit. Play a ready Reflection unit token to your base. It becomes a copy of that unit. Give it [Temporary].', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const target = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [target], controller: 1 }
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [target.iid], payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    const copy = r.state.players[0].zones.base.find((u) => u.cardId === furyUnit.id && u.token && u.temporary)
+    expect(copy).toBeTruthy()
+  })
+
+  it('Keeper of Masks plays two Reflection copies of itself', () => {
+    const id = injectCard('keeper-test', 'When you play me, play two Reflection unit tokens here. They become copies of me.', { name: 'Keeper of Masks', energy: 0, power: {} })
+    const s = baseState()
+    const keeper = mk(id, 0)
+    s.players[0].zones.hand.push(keeper)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: keeper.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    const copies = r.state.players[0].zones.base.filter((u) => u.cardId === id && u.iid !== keeper.iid && u.token)
+    expect(copies.length).toBe(2)
+  })
+
+  it('LeBlanc - Deceiver: conquering offers a copy that costs a discard + exhaust', () => {
+    const leblanc = CARDS.find((c) => c.type === 'legend' && c.name === 'LeBlanc - Deceiver')
+    if (!leblanc) return
+    const s = baseState()
+    s.players[0].legend = mk(leblanc.id, 0)
+    s.players[0].zones.hand.push(mk(furyUnit.id, 0)) // a card to discard
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 }) // uncontested conquer
+    expect(r.state.pendingChoice?.kind).toBe('leblancCopy')
+    const handBefore = r.state.players[0].zones.hand.length
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].legend?.exhausted).toBe(true)
+    expect(r.state.players[0].zones.hand.length).toBe(handBefore - 1) // discarded
+    expect(r.state.battlefields[0].units.some((x) => x.cardId === furyUnit.id && x.token && x.temporary)).toBe(true)
+  })
+})
+
 describe('Trapping Grounds (excess combat damage)', () => {
   const trap = () => CARDS.find((c) => c.type === 'battlefield' && c.name === 'Trapping Grounds')
   const birdId = TOKEN_BY_NAME['bird']

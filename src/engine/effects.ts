@@ -209,9 +209,17 @@ export function parseEffectText(text: string): ParsedEffect {
   return parse(text)
 }
 
-/** True if a spell has a part that targets unit(s) (damage / kill / ±Might). */
+/** A spell that copies a chosen unit ("becomes a copy of that unit" — Mirror
+ *  Image). The generic parser can't express "copy", so it's detected by text. */
+export function isCopySpell(card: Card): boolean {
+  return card.type === 'spell' && /becomes a copy of that unit/i.test(card.text ?? '')
+}
+
+/** True if a spell has a part that targets unit(s) (damage / kill / ±Might, or a
+ *  copy-a-unit spell that must choose its source). */
 export function needsTarget(card: Card): boolean {
   if (card.type !== 'spell') return false
+  if (isCopySpell(card)) return true
   const e = spellEffect(card)
   return hasTargetedPart(e) && e.targetCount > 0
 }

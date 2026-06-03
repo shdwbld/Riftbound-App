@@ -32,6 +32,12 @@ export interface EngineCard {
   enteredTurn?: number
   /** Facedown (Hidden keyword) — not yet revealed. */
   facedown?: boolean
+  /** This instance is a token (ceases to exist instead of going to the Trash),
+   *  even if its `cardId` points at a normal card — e.g. a Reflection copy. */
+  token?: boolean
+  /** This instance has [Temporary] granted to it (killed at the start of its
+   *  controller's Beginning Phase), independent of its card's keywords. */
+  temporary?: boolean
 }
 
 export type ZoneId =
@@ -178,7 +184,7 @@ export interface MatchState {
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {
     player: PlayerId
-    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice'
+    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]
