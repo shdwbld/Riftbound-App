@@ -97,6 +97,7 @@ export default function OnlinePage() {
   const countRef = useRef<number>(2)
   const joinsRef = useRef<JoinRecord[]>([])
   const startedRef = useRef(false)
+  const joinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const flash = (m: string) => {
     setToast(m)
@@ -153,7 +154,11 @@ export default function OnlinePage() {
           flash('A player left the room.')
         }
       } else {
-        // guest
+        // guest — a reply means we found the room; cancel the join timeout.
+        if (joinTimeoutRef.current) {
+          clearTimeout(joinTimeoutRef.current)
+          joinTimeoutRef.current = null
+        }
         if (msg.kind === 'lobby') {
           setLobbyInfo({ joined: msg.joined, needed: msg.needed })
         } else if (msg.kind === 'start') {
@@ -211,9 +216,20 @@ export default function OnlinePage() {
     wire(t)
     setStatus('waiting')
     t.send({ kind: 'join', name: deck.name, deck, clientId: clientIdRef.current })
+    // No host responds to an invalid/expired code — give feedback instead of
+    // hanging in "waiting" forever.
+    if (joinTimeoutRef.current) clearTimeout(joinTimeoutRef.current)
+    joinTimeoutRef.current = setTimeout(() => {
+      flash(`No room found for code "${code.toUpperCase()}". Check the code and try again.`)
+      leave()
+    }, 9000)
   }
 
   const leave = () => {
+    if (joinTimeoutRef.current) {
+      clearTimeout(joinTimeoutRef.current)
+      joinTimeoutRef.current = null
+    }
     transportRef.current?.close()
     transportRef.current = null
     matchRef.current = null

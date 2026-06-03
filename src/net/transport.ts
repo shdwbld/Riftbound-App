@@ -57,6 +57,11 @@ class SupabaseTransport implements Transport {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private channel: any
   private listeners = new Set<(m: NetMessage) => void>()
+  // Broadcasts sent before the channel reaches SUBSCRIBED are dropped by
+  // Realtime, so we queue them and flush once the subscription is live. This is
+  // what makes the join handshake reliable cross-device.
+  private ready = false
+  private queue: NetMessage[] = []
 
   constructor(roomCode: string) {
     const supabase = getSupabase()
@@ -68,10 +73,21 @@ class SupabaseTransport implements Transport {
       .on('broadcast', { event: 'msg' }, ({ payload }: any) => {
         for (const l of this.listeners) l(payload as NetMessage)
       })
-      .subscribe()
+      .subscribe((status: string) => {
+        if (status === 'SUBSCRIBED') {
+          this.ready = true
+          const pending = this.queue
+          this.queue = []
+          for (const m of pending) this.raw(m)
+        }
+      })
+  }
+  private raw(msg: NetMessage) {
+    this.channel.send({ type: 'broadcast', event: 'msg', payload: msg })
   }
   send(msg: NetMessage) {
-    this.channel.send({ type: 'broadcast', event: 'msg', payload: msg })
+    if (this.ready) this.raw(msg)
+    else this.queue.push(msg) // flushed in order on SUBSCRIBED
   }
   onMessage(cb: (m: NetMessage) => void) {
     this.listeners.add(cb)
