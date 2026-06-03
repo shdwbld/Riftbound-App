@@ -17,7 +17,7 @@ import {
 } from './types'
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
 import { parseKeywords, keywordsAt, accelerateCost, repeatCost, levelBonus } from './keywords'
-import { addCost, costOf, effectiveCostOf, autoPayEff } from './autopay'
+import { addCost, costOf, effectiveCostOf, autoPayEff, autoPay, costIsFree } from './autopay'
 import { bfScript, bfScriptAt, battlefieldOf, type BfApi } from './battlefieldScripts'
 
 /** How many turns the given player has taken (incl. the current one). */
@@ -25,7 +25,7 @@ function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
   const rank = (player - s.firstPlayer + s.players.length) % s.players.length
   return Math.floor((s.turn - 1 - rank) / s.players.length) + 1
 }
-import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, type ParsedEffect } from './effects'
+import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, parseEffectText, type ParsedEffect } from './effects'
 import { triggersFor, parseTriggers, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
 import { battlefieldPassive } from './battlefields'
 
@@ -1034,6 +1034,81 @@ function allUnitsInPlay(s: MatchState): EngineCard[] {
   ]
 }
 
+export interface UnitAbility {
+  exhaust: boolean
+  energy: number
+  power: Partial<Record<Domain, number>>
+  /** Cards to recycle from your trash as a cost (Vi - Destructive). */
+  recycleTrash: number
+  /** "Kill this" sacrifice cost (Divining Shells). */
+  killThis: boolean
+  /** Usable only while the source is at a battlefield (Xerath - Freed). */
+  requiresBattlefield: boolean
+  /** "Double my Might this turn" — a state-dependent self pump (Vi - Hotheaded). */
+  doubleMight: boolean
+  effect: ParsedEffect
+  effectText: string
+  label: string
+}
+
+/** A unit's own printed activated ability ("<cost>: <effect>"), or null. Parses
+ *  the cost glyphs (exhaust / energy / runes / recycle-from-trash / kill-this)
+ *  and the effect clause. Used to offer an Activate option and resolve it. */
+export function unitActivatedAbility(card: Card | undefined): UnitAbility | null {
+  const text = card?.text ?? ''
+  let sepEnd = -1
+  let costStr = ''
+  const dbl = text.lastIndexOf('::')
+  if (dbl >= 0) {
+    sepEnd = dbl + 2
+    const before = text.slice(0, dbl + 1) // keep the glyph's closing colon
+    costStr = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf(')')) + 1)
+  } else {
+    const wm = text.match(/(?:from your trash|kill this)\s*:/i)
+    if (!wm) return null
+    sepEnd = (wm.index ?? 0) + wm[0].length
+    const before = text.slice(0, sepEnd - 1)
+    costStr = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf(')')) + 1)
+  }
+  const cl = costStr.toLowerCase()
+  if (!/:rb_exhaust:|:rb_energy_\d+:|:rb_rune_[a-z]+:|recycle \d+ from your trash|kill this/.test(cl)) return null
+  const rest = text.slice(sepEnd).replace(/^\s+/, '')
+  const pIdx = rest.indexOf('.')
+  const effectText = (pIdx >= 0 ? rest.slice(0, pIdx) : rest).trim()
+  const power: Partial<Record<Domain, number>> = {}
+  for (const rm of cl.matchAll(/:rb_rune_([a-z]+):/g)) power[rm[1] as Domain] = (power[rm[1] as Domain] ?? 0) + 1
+  return {
+    exhaust: /:rb_exhaust:/.test(cl),
+    energy: parseInt((cl.match(/:rb_energy_(\d+):/) || [])[1] || '0', 10),
+    power,
+    recycleTrash: parseInt((cl.match(/recycle (\d+) from your trash/) || [])[1] || '0', 10),
+    killThis: /\bkill this\b/.test(cl),
+    requiresBattlefield: /only while (?:i'm|i am) at a battlefield/i.test(text),
+    doubleMight: /double my might/i.test(effectText),
+    effect: parseEffectText(effectText),
+    effectText,
+    label: effectText.replace(/\s*:rb_[a-z_0-9]+:\s*/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40),
+  }
+}
+
+/** Whether `player` can activate the unit `iid`'s own ability right now (controls
+ *  it, not exhausted if exhaust-cost, at a battlefield if required, can pay). */
+export function canActivateUnit(s: MatchState, player: PlayerId, iid: string): UnitAbility | null {
+  const u = controlledInstance(s, player, iid)
+  if (!u) return null
+  // Abilities the dedicated printed-activated path already handles (Orb of
+  // Regret, Lux - Crownguard) go through ACTIVATE_ABILITY instead.
+  if (printedActivated(getCard(u.cardId))) return null
+  const ab = unitActivatedAbility(getCard(u.cardId))
+  if (!ab) return null
+  if (ab.exhaust && u.exhausted) return null
+  if (ab.requiresBattlefield && battlefieldOf(s, iid) < 0) return null
+  if (ab.recycleTrash > s.players[player].zones.trash.length) return null
+  const cost = { energy: ab.energy, power: ab.power }
+  if (!costIsFree(cost) && !autoPay(s.players[player], cost)) return null
+  return ab
+}
+
 /** The battlefield-granted activated ability available on a unit/legend right
  *  now, or null. Pure function of state — the UI uses it to show an Activate
  *  affordance; the reducer uses it to validate ACTIVATE_ABILITY. */
@@ -1182,7 +1257,9 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       u.damage += amount
       emit({ kind: 'damage', iid: targetIid, amount, cardId: u.cardId })
       let dead: EngineCard[] = []
-      if (u.damage >= mightOf(u)) {
+      // mightOf already subtracts accrued damage, so a unit is defeated when its
+      // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
+      if (mightOf(u) <= 0) {
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
         sendToTrash(s.players[u.owner], u)
         emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
@@ -1197,7 +1274,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
     if (u) {
       u.damage += amount
       emit({ kind: 'damage', iid: targetIid, amount, cardId: u.cardId })
-      if (u.damage >= mightOf(u)) {
+      if (mightOf(u) <= 0) {
         p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
         sendToTrash(p, u)
         emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
@@ -3116,6 +3193,45 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const equips = p.zones.base.filter(isEquipment).map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid }))
       offerChoice(s, { player: action.player, kind: 'forgePickEquip', bfIndex: -1, prompt: 'Forge of the Fluft — choose an Equipment to attach.', options: equips })
       return ok(log(s, action.player, `Forge of the Fluft: exhausted your legend to attach an Equipment.`))
+    }
+
+    case 'ACTIVATE_UNIT': {
+      const guard = requireActiveAction(state, action.player)
+      if (guard) return fail(state, guard)
+      const ab = canActivateUnit(state, action.player, action.iid)
+      if (!ab) return fail(state, 'That ability can\'t be activated right now.')
+      const s = clone(state)
+      const p = s.players[action.player]
+      const u = controlledInstance(s, action.player, action.iid)!
+      const name = getCard(u.cardId)?.name ?? 'a unit'
+      const mightNow = mightOf(u) // for "double my Might" before any change
+      // Pay the cost: energy/runes, recycle-from-trash, exhaust, kill-this.
+      const cost = { energy: ab.energy, power: ab.power }
+      if (!costIsFree(cost)) {
+        const pay = autoPay(p, cost)
+        if (!pay || applyPayment(p, cost, pay)) return fail(state, 'Not enough resources.')
+      }
+      for (let i = 0; i < ab.recycleTrash && p.zones.trash.length > 0; i++) p.zones.mainDeck.push(p.zones.trash.shift()!)
+      if (ab.exhaust && !ab.killThis) u.exhausted = true
+      let s1 = log(s, action.player, `${name}: activated — ${ab.effectText}.`)
+      // Resolve the effect.
+      if (ab.doubleMight) {
+        u.tempMight = (u.tempMight ?? 0) + mightNow
+        emit({ kind: 'buff', iid: u.iid, player: action.player })
+      } else if (ab.effect.tempMightSelf) {
+        u.tempMight = (u.tempMight ?? 0) + ab.effect.tempMightSelf
+        emit({ kind: 'buff', iid: u.iid, player: action.player })
+      } else {
+        // Targeted parts (deal N / give a unit +N Might this turn).
+        for (const t of action.targets ?? []) {
+          if (!isValidTarget(s1, t)) continue
+          if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true))
+          if (ab.effect.tempMight) s1 = fireDeaths(s1, applyTempMight(s1, t, ab.effect.tempMight, ab.effect.tempMightFloor))
+        }
+      }
+      // "Kill this" cost resolves after the effect (the source is sacrificed).
+      if (ab.killThis) s1 = fireDeaths(s1, killTarget(s1, u.iid))
+      return ok(s1)
     }
 
     case 'ASSIGN_DAMAGE': {

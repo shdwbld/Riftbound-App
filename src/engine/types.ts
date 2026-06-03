@@ -283,6 +283,9 @@ export type Action =
   /** Activate a battlefield-granted activated ability on a unit/legend (Gardens
    *  of Becoming, Forge of the Fluft). */
   | { type: 'ACTIVATE_ABILITY'; player: PlayerId; iid: string }
+  /** Activate a unit's own printed activated ability ("cost: effect" — Arena
+   *  Kingpin, Xerath, Vi - Hotheaded, …). `targets` for effects that need one. */
+  | { type: 'ACTIVATE_UNIT'; player: PlayerId; iid: string; targets?: string[] }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number }
   | {
       type: 'PLAY_SPELL'

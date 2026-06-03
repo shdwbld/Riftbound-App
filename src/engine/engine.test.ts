@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets } from './engine'
+import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME, GOLD_TOKEN_ID } from './setup'
 import type { Deck } from '../types/deck'
@@ -1438,6 +1438,95 @@ describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
     expect(r.state.phase).toBe('action')
     expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(true) // alive
     expect(r.state.players[0].zones.hand.length).toBe(1) // only the regular draw
+  })
+})
+
+describe('Vi deck — unit activated abilities', () => {
+  const named = (n: string) => CARDS.find((c) => c.name === n)
+
+  it('parses each unit activated ability (cost + effect)', () => {
+    const ak = named('Arena Kingpin')
+    if (ak) { const a = unitActivatedAbility(ak)!; expect(a.exhaust).toBe(true); expect(a.effect.tempMight).toBe(3) }
+    const x = named('Xerath - Freed')
+    if (x) { const a = unitActivatedAbility(x)!; expect(a.power.fury).toBe(1); expect(a.requiresBattlefield).toBe(true); expect(a.effect.damage).toBe(3) }
+    const vh = named('Vi - Hotheaded')
+    if (vh) { const a = unitActivatedAbility(vh)!; expect(a.energy).toBe(2); expect(a.power.fury).toBe(1); expect(a.doubleMight).toBe(true) }
+    const vd = named('Vi - Destructive')
+    if (vd) { const a = unitActivatedAbility(vd)!; expect(a.recycleTrash).toBe(1); expect(a.effect.tempMightSelf).toBe(1) }
+    const ds = named('Divining Shells')
+    if (ds) { const a = unitActivatedAbility(ds)!; expect(a.killThis).toBe(true); expect(a.effect.tempMight).toBe(2) }
+  })
+
+  it('Arena Kingpin: exhaust to give a unit +3 Might this turn', () => {
+    const ak = named('Arena Kingpin')
+    if (!ak) return
+    const s = baseState()
+    const src = mk(ak.id, 0)
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(src, ally)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: src.iid, targets: [ally.iid] })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === ally.iid)?.tempMight).toBe(3)
+    expect(r.state.players[0].zones.base.find((u) => u.iid === src.iid)?.exhausted).toBe(true)
+  })
+
+  it('Xerath - Freed: fury+exhaust to deal 3, only while at a battlefield', () => {
+    const x = named('Xerath - Freed')
+    if (!x) return
+    // At base → cannot activate.
+    const s0 = baseState()
+    const src0 = mk(x.id, 0)
+    s0.players[0].zones.base.push(src0)
+    for (let i = 0; i < 3; i++) s0.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    expect(reduce(s0, { type: 'ACTIVATE_UNIT', player: 0, iid: src0.iid, targets: [] }).error).toBeDefined()
+    // At a battlefield → deal 3.
+    const s = baseState()
+    const src = mk(x.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [src], controller: 0 }
+    for (let i = 0; i < 3; i++) s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: src.iid, targets: [enemy.iid] })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[1].units.find((u) => u.iid === enemy.iid)?.damage).toBe(3)
+  })
+
+  it('Vi - Hotheaded: 2 Energy + fury to double its Might this turn', () => {
+    const vh = named('Vi - Hotheaded')
+    if (!vh) return
+    const s = baseState()
+    const src = mk(vh.id, 0)
+    s.players[0].zones.base.push(src)
+    for (let i = 0; i < 4; i++) s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: src.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === src.iid)?.tempMight).toBe((vh as { might: number }).might)
+  })
+
+  it('Vi - Destructive: recycle 1 from trash to give itself +1 Might', () => {
+    const vd = named('Vi - Destructive')
+    if (!vd) return
+    const s = baseState()
+    const src = mk(vd.id, 0)
+    s.players[0].zones.base.push(src)
+    s.players[0].zones.trash.push(mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: src.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === src.iid)?.tempMight).toBe(1)
+    expect(r.state.players[0].zones.trash.length).toBe(0)
+  })
+
+  it('Divining Shells: kill this + exhaust to give a unit +2 Might', () => {
+    const ds = named('Divining Shells')
+    if (!ds) return
+    const s = baseState()
+    const src = mk(ds.id, 0)
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(src, ally)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: src.iid, targets: [ally.iid] })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === ally.iid)?.tempMight).toBe(2)
+    expect(r.state.players[0].zones.base.some((u) => u.iid === src.iid)).toBe(false) // killed
   })
 })
 
