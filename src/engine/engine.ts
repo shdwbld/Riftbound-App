@@ -3128,12 +3128,19 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (!card) return fail(state, 'Card not in your hand.')
       if (!parseKeywords(getCard(card.cardId)).hidden) return fail(state, 'Only a card with [Hidden] can be hidden.')
       const rune = p.zones.runePool.find((r) => r.iid === action.runeIid && !r.exhausted)
-      if (!rune) return fail(state, 'Need a ready rune to recycle (1 Wild Power) to Hide.')
+      if (!rune) return fail(state, 'Need a ready rune to pay the Hide cost.')
       removeFromZone(p, 'hand', action.iid)
-      const recycled = removeFromZone(p, 'runePool', action.runeIid)!
-      p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
+      // Teemo - Swift Scout: "pay :rb_energy_1: to hide instead of :rb_rune_rainbow:"
+      // → exhaust the rune (Energy) and KEEP it, rather than recycling it.
+      const legendName = getCard(p.legend?.cardId ?? '')?.name?.replace(/\s*\([^)]*\)\s*$/, '').trim()
+      if (legendName === 'Teemo - Swift Scout') {
+        rune.exhausted = true
+      } else {
+        const recycled = removeFromZone(p, 'runePool', action.runeIid)!
+        p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
+      }
       s.battlefields[bfi].facedown = { ...card, facedown: true, hiddenTurn: s.turn }
-      return ok(log(s, action.player, `Hid a card facedown at ${getCard(s.battlefields[bfi].cardId)?.name ?? 'a battlefield'}.`))
+      return ok(log(s, action.player, `Hid a card facedown at ${getCard(s.battlefields[bfi].cardId)?.name ?? 'a battlefield'}${legendName === 'Teemo - Swift Scout' ? ' (Teemo: paid 1 Energy)' : ''}.`))
     }
 
     case 'REVEAL': {

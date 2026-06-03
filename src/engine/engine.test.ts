@@ -828,6 +828,23 @@ describe('Batch D — Banish + Hidden', () => {
     expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid && !x.facedown)).toBe(true)
   })
 
+  it('Teemo - Swift Scout: hide pays 1 Energy (rune exhausted & kept), not recycled', () => {
+    const hid = injectCard('d-hidden-teemo', '[Hidden]', { type: 'spell', energy: 1, power: {} })
+    const s = baseState()
+    s.battlefields[0].controller = 0
+    s.players[0].legend = mk('ogn-263-298', 0) // Teemo - Swift Scout
+    const hu = mk(hid, 0)
+    s.players[0].zones.hand.push(hu)
+    const rune = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(rune)
+    const r = reduce(s, { type: 'HIDE', player: 0, iid: hu.iid, toBattlefield: 0, runeIid: rune.iid })
+    expect(r.error).toBeFalsy()
+    // Rune stays in the pool (exhausted), not recycled to the rune deck.
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === rune.iid)?.exhausted).toBe(true)
+    expect(r.state.players[0].zones.runeDeck.some((x) => x.iid === rune.iid)).toBe(false)
+    expect(r.state.battlefields[0].facedown?.iid).toBe(hu.iid)
+  })
+
   it('removes an unsupported facedown card at begin turn (owner no longer controls)', () => {
     const hid = injectCard('d-hidden2', '[Hidden]', { type: 'spell', energy: 1, power: {} })
     const s = baseState()
