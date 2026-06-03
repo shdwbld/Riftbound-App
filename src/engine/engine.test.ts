@@ -558,6 +558,31 @@ describe('tokens (Recruit)', () => {
     expect(spellEffect(mkCard('Play three 1 :rb_might: Recruit unit tokens.')).recruits).toBe(3)
   })
 
+  it('auto-parses "return a card from your trash to your hand"', async () => {
+    const { onPlayEffect, spellEffect } = await import('./effects')
+    const mkCard = (text: string, type = 'unit') =>
+      ({ id: 't', name: 'T', type, domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {}, might: 1 }) as never
+    expect(onPlayEffect(mkCard('When you play me, return a unit from your trash to your hand.')).returnFromTrash).toEqual({ type: 'unit', count: 1 })
+    expect(spellEffect(mkCard('Return a spell from your trash to your hand.', 'spell')).returnFromTrash).toEqual({ type: 'spell', count: 1 })
+    expect(spellEffect(mkCard('Return up to two cards with [Hidden] from your trash to your hand.', 'spell')).returnFromTrash).toEqual({ type: 'card', count: 2 })
+    expect(spellEffect(mkCard('Return a unit or gear from your trash to your hand.', 'spell')).returnFromTrash).toEqual({ type: 'card', count: 1 })
+  })
+
+  it('returnFromTrash: a played unit returns a trash unit to hand', () => {
+    const uid = injectCard('rft-attendant', 'When you play me, return a unit from your trash to your hand.', { type: 'unit', might: 1, energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(uid, 0)
+    s.players[0].zones.hand.push(u)
+    const a = mk(furyUnit.id, 0)
+    const b = mk(furyUnit.id, 0)
+    s.players[0].zones.trash.push(a, b) // two units in trash
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    // One unit pulled back from trash → hand.
+    expect(r.state.players[0].zones.trash.filter((x) => CARD_INDEX[x.cardId]?.type === 'unit').length).toBe(1)
+    expect(r.state.players[0].zones.hand.some((x) => x.iid === a.iid || x.iid === b.iid)).toBe(true)
+  })
+
   it('auto-parses named token creation (Sand Soldier / Bird / Mech)', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) =>

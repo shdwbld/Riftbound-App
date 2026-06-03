@@ -71,6 +71,10 @@ export interface ParsedEffect {
   tempMight: number
   /** Return a chosen unit to its owner's hand ("Retreat"). Scope: whose unit. */
   bounce: 'friendly' | 'enemy' | 'any' | null
+  /** Return a card from YOUR TRASH to your hand ("return a unit from your trash
+   *  to your hand" — Morbid Return, Cemetery Attendant). `type` filters the trash
+   *  by card type ('card' = any). Resolves by returning the highest-cost match. */
+  returnFromTrash: { type: 'unit' | 'spell' | 'gear' | 'card'; count: number } | null
   /** Runes the affected unit's owner channels exhausted (Retreat: "channels 1
    *  rune exhausted"). Distinct from `channel`, which gives the caster ready runes. */
   channelExhausted: number
@@ -124,6 +128,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   kill: 0,
   tempMight: 0,
   bounce: null,
+  returnFromTrash: null,
   channelExhausted: 0,
   tempMightSelf: 0,
   tempMightAll: 0,
@@ -141,7 +146,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -291,6 +296,21 @@ function parse(text: string): ParsedEffect {
   const bounceM = t.match(/return (?:a|an|target|another) (friendly |enemy )?unit to (?:its owner'?s?|your|their) hand/)
   if (bounceM) {
     eff.bounce = bounceM[1]?.trim() === 'friendly' ? 'friendly' : bounceM[1]?.trim() === 'enemy' ? 'enemy' : 'any'
+    hit = true
+  }
+  // Return a card from your TRASH to your hand ("return a unit/spell/gear from
+  // your trash to your hand" — Morbid Return, Annie, Aspiring Engineer, …). The
+  // type word filters the trash; "or"/named-subtypes fall back to any card.
+  const rftM = t.match(/return (?:a|an|up to (\d+|two|three))\s+([a-z][a-z, ]*?)\s*(?:with \[[^\]]+\] )?from your trash to your hand/)
+  if (rftM) {
+    const count = rftM[1] ? num(rftM[1]) : 1
+    const ph = rftM[2]
+    const type: 'unit' | 'spell' | 'gear' | 'card' =
+      /\bor\b|,/.test(ph) ? 'card'
+        : /\bspell\b/.test(ph) ? 'spell'
+          : /\bgear\b/.test(ph) ? 'gear'
+            : /\bunit\b/.test(ph) ? 'unit' : 'card'
+    eff.returnFromTrash = { type, count }
     hit = true
   }
   // "its owner channels N rune(s) exhausted" — tied to the bounced unit's owner.

@@ -474,6 +474,27 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}${hereBf >= 0 ? ' here' : ''}.`)
     }
   }
+  if (e.returnFromTrash) {
+    // Return card(s) from your Trash to your hand (Morbid Return, Cemetery
+    // Attendant, …). Auto-resolves to the highest-cost match(es) — pure benefit;
+    // Override can adjust the pick.
+    const { type, count } = e.returnFromTrash
+    const cost = (c: EngineCard): number => {
+      const d = getCard(c.cardId) as { energy?: number; power?: Record<string, number> } | undefined
+      const pw = d?.power ? Object.values(d.power).reduce((a, b) => a + (b || 0), 0) : 0
+      return (d?.energy ?? 0) + pw
+    }
+    const matches = p.zones.trash
+      .filter((c) => type === 'card' || getCard(c.cardId)?.type === type)
+      .sort((a, b) => cost(b) - cost(a))
+      .slice(0, count)
+    let n = 0
+    for (const c of matches) {
+      const i = p.zones.trash.findIndex((x) => x.iid === c.iid)
+      if (i >= 0) { p.zones.hand.push(p.zones.trash.splice(i, 1)[0]); n++ }
+    }
+    if (n) lines.push(`Returned ${n} ${type === 'card' ? 'card' : type}(s) from trash to hand.`)
+  }
   if (e.tempMightAll) {
     // Board-wide temp Might to all the controller's units (Grand Strategem).
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
