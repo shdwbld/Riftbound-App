@@ -129,6 +129,11 @@ export interface FiredTrigger {
   ability: TriggeredAbility
   /** The unit that owns a 'self' trigger, when applicable. */
   sourceIid?: string
+  /** The source card's id — lets the resolver dispatch hand-coded champion/legend
+   *  handlers even after the source has left play (e.g. a dead unit's Deathknell). */
+  sourceCardId?: string
+  /** The battlefield the source died at, for location-scoped death triggers. */
+  bfIndex?: number
 }
 
 /** Order simultaneously-fired triggers: the turn player's resolve first, then

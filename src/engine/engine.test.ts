@@ -736,6 +736,44 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.trash.some((x) => x.iid === u.iid)).toBe(false)
   })
 
+  it("Kog'Maw - Caustic (champion): Deathknell deals 4 to all units at its battlefield, doubled by Karthus", () => {
+    const kog = 'ogn-190-298'
+    if (!CARD_INDEX[kog]) return // dataset lacks Kog'Maw - Caustic
+    const bigId = injectCard('kog-target', 'A unit.', { might: 12 })
+    // Without Karthus → 4 damage to the co-located enemy.
+    let s = baseState()
+    s.sandbox = true
+    let kogU = mk(kog, 0)
+    let enemy = mk(bigId, 1)
+    s.battlefields[0].units.push(kogU, enemy)
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: kogU.iid })
+    expect(r.state.battlefields[0].units.find((u) => u.iid === enemy.iid)?.damage).toBe(4)
+    // With Karthus - Eternal in base → the Deathknell fires twice (4 → 8).
+    const karthus = injectCard('karthus-kog', 'Your [Deathknell] effects trigger an additional time.', { might: 5 })
+    s = baseState()
+    s.sandbox = true
+    s.players[0].zones.base.push(mk(karthus, 0))
+    kogU = mk(kog, 0)
+    enemy = mk(bigId, 1)
+    s.battlefields[0].units.push(kogU, enemy)
+    r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: kogU.iid })
+    expect(r.state.battlefields[0].units.find((u) => u.iid === enemy.iid)?.damage).toBe(8)
+  })
+
+  it('Ekko - Recurrent (champion): Deathknell recycles itself and readies your runes', () => {
+    const ekko = 'ogn-110-298'
+    if (!CARD_INDEX[ekko]) return // dataset lacks Ekko - Recurrent
+    const s = baseState()
+    s.sandbox = true
+    const ek = mk(ekko, 0)
+    s.battlefields[0].units.push(ek)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0, { exhausted: true }), mk(furyRune.id, 0, { exhausted: true }))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: ek.iid })
+    expect(r.state.players[0].zones.runeDeck.some((c) => c.cardId === ekko)).toBe(true) // recycled
+    expect(r.state.players[0].zones.trash.some((c) => c.cardId === ekko)).toBe(false)
+    expect(r.state.players[0].zones.runePool.every((rr) => !rr.exhausted)).toBe(true) // runes readied
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never

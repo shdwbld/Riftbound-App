@@ -52,6 +52,10 @@ export interface EngineCard {
   /** A one-shot "if it would die this turn, banish it instead" replacement
    *  (Smite). Banished instead of trashed; the death is replaced (no Deathknell). */
   banishShield?: boolean
+  /** The battlefield index this unit was at when it died, stamped just before
+   *  removal so location-scoped death triggers ("deal N to all units at my
+   *  battlefield" — Kog'Maw - Caustic) can resolve after the unit is gone. */
+  diedAtBf?: number
   /** This instance is a token (ceases to exist instead of going to the Trash),
    *  even if its `cardId` points at a normal card — e.g. a Reflection copy. */
   token?: boolean

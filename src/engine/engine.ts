@@ -695,7 +695,7 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
 function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, excess = 0): MatchState {
   if (fired.length === 0) return s
   const ordered = orderTriggers(fired, s.activePlayer, s.players.length)
-  for (const { player, ability, sourceIid } of ordered) {
+  for (const { player, ability, sourceIid, sourceCardId, bfIndex: deathBf } of ordered) {
     const label = ability.event === 'death' ? 'Deathknell' : `Trigger (${ability.event})`
     const p = s.players[player]
     const e = ability.effect
@@ -729,8 +729,35 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         did = true
       }
     }
-    if (e.damage) s = log(s, player, `${label}: deal ${e.damage} â€” choose a target (resolve manually).`)
-    else if (!did) s = log(s, player, `${label}: ${ability.text} â€” resolve manually.`)
+    // --- Hand-coded champion/legend handlers (the parser can't express these
+    // unique abilities; per-card code keeps the marquee cards correct). ---
+    let handled = false
+    if (ability.event === 'death' && sourceCardId) {
+      const baseName = (getCard(sourceCardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+      if (baseName === "Kog'Maw - Caustic" && deathBf != null && s.battlefields[deathBf]) {
+        // "[Deathknell] Deal 4 to all units at my battlefield." AoE — no target
+        // choice. Fired once per copy, so Karthus - Eternal doubles it (4 → 8).
+        const amt = e.damage || 4
+        const dead: EngineCard[] = []
+        for (const tu of [...s.battlefields[deathBf].units]) dead.push(...applyTargetDamage(s, tu.iid, amt, true))
+        s = log(s, player, `${label}: ${baseName} dealt ${amt} to all units at its battlefield.`)
+        s = fireDeaths(s, dead)
+        handled = true
+      } else if (baseName === 'Ekko - Recurrent') {
+        // "[Deathknell] Recycle me to ready your runes." Recycle Ekko into the
+        // rune deck and un-exhaust the controller's rune pool.
+        const ti = p.zones.trash.findIndex((c) => c.iid === sourceIid)
+        if (ti >= 0) { const [ek] = p.zones.trash.splice(ti, 1); p.zones.runeDeck.push({ ...ek, exhausted: false, damage: 0 }) }
+        let readied = 0
+        for (const r of p.zones.runePool) if (r.exhausted) { r.exhausted = false; readied++ }
+        s = log(s, player, `${label}: recycled ${baseName} and readied ${readied} rune(s).`)
+        handled = true
+      }
+    }
+    if (!handled) {
+      if (e.damage) s = log(s, player, `${label}: deal ${e.damage} â€” choose a target (resolve manually).`)
+      else if (!did) s = log(s, player, `${label}: ${ability.text} â€” resolve manually.`)
+    }
   }
   return s
 }
@@ -756,7 +783,7 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
     const mult = deathknellMultiplier(s, u.owner)
     for (const ab of triggersFor(def(u), 'death'))
       if (ab.scope !== 'global')
-        for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
+        for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex: u.diedAtBf })
     // Global "when a unit you control dies" triggers (Viktor - Leader), on the
     // dead unit's controller's other permanents.
     for (const perm of controlledPermanents(s, u.owner)) {
@@ -1487,6 +1514,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       // mightOf already subtracts accrued damage, so a unit is defeated when its
       // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
       if (mightOf(u) <= 0) {
+        u.diedAtBf = i // for location-scoped death triggers (Kog'Maw)
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u, i)) {
           recallToBase(s, u)
@@ -2486,6 +2514,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
       rescued.add(u.iid) // not a death for trigger purposes
       s = log(s, u.owner, `${getCard(u.cardId)?.name} was banished instead of dying.`)
     } else if (dead) {
+      u.diedAtBf = bfIndex // for location-scoped death triggers (Kog'Maw)
       emit({ kind: 'defeat', iid: u.iid, cardId: u.cardId })
       defeated.push(u)
     } else survivors.push({ ...u, damage: 0 })
@@ -2692,6 +2721,7 @@ function killTarget(s: MatchState, iid: string): EngineCard[] {
     const idx = bf.units.findIndex((u) => u.iid === iid)
     if (idx >= 0) {
       const [u] = bf.units.splice(idx, 1)
+      u.diedAtBf = bi // for location-scoped death triggers (Kog'Maw)
       if (tryRecallInsteadOfDeath(s, u, bi)) { recallToBase(s, u); recomputeControllers(s); return [] }
       if (trashOrBanish(s, u)) { recomputeControllers(s); return [] }
       emit({ kind: 'defeat', iid, cardId: u.cardId })
