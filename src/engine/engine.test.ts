@@ -774,6 +774,47 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.runePool.every((rr) => !rr.exhausted)).toBe(true) // runes readied
   })
 
+  it('score effect: "you score N points" adds points (and parses, not the noun "Score")', async () => {
+    const { spellEffect } = await import('./effects')
+    const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
+    expect(spellEffect(mkCard('You score 2 points.')).score).toBe(2)
+    expect(spellEffect(mkCard("If an opponent's score is within 3 points of the Victory Score, do nothing.")).score).toBe(0) // noun, not the verb
+    const uid = injectCard('score-test', 'When you play me, you score 2 points.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(uid, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].points).toBe(2)
+  })
+
+  it('score effect: reaching pointsToWin ends the game', () => {
+    const uid = injectCard('score-win', 'When you play me, you score 1 point.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.pointsToWin = 5
+    s.players[0].points = 4
+    const u = mk(uid, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].points).toBe(5)
+    expect(r.state.winner).toBe(0)
+  })
+
+  it("Kha'Zix - Voidreaver (legend): gains 1 XP when you win a combat", () => {
+    const khazix = 'unl-201-219'
+    if (!CARD_INDEX[khazix]) return // dataset lacks Kha'Zix - Voidreaver
+    const s = baseState()
+    s.players[0].legend = mk(khazix, 0)
+    // A stunned weak defender (deals 0) so combat auto-resolves; attacker wins.
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('kz-def', 'A unit.', { might: 3 }), 1, { exhausted: true, stunned: true })], controller: 1 }
+    const atk = mk(injectCard('kz-atk', 'A unit.', { might: 8 }), 0)
+    s.players[0].zones.base.push(atk)
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [atk.iid], toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.players[0].xp).toBe(1)
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never

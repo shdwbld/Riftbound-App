@@ -25,6 +25,8 @@ export interface ParsedEffect {
   cullEachPlayer: boolean
   /** Number of units to Stun ("[Stun] an enemy unit" — Vi - Peacekeeper). */
   stun: number
+  /** Points scored directly ("you score N point" — Ahri, Draven - Audacious). */
+  score: number
   /** An alternate action taken on the stun target if it was ALREADY stunned,
    *  instead of stunning it: 'bounce' = return it to hand (Existential Dread),
    *  'kill' = kill it (Solari Chief). Null = always just stun. */
@@ -135,6 +137,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   tempMightFloor: 0,
   cullEachPlayer: false,
   stun: 0,
+  score: 0,
   ifTargetStunned: null,
   killMightMax: null,
   drawPerBattlefield: 0,
@@ -177,7 +180,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -312,6 +315,12 @@ function parse(text: string): ParsedEffect {
     if (/(?:already stunned|it is stunned|it's stunned)[^.]*?(?:return it|to (?:its owner'?s?|their) hand)/.test(t)) eff.ifTargetStunned = 'bounce'
     else if (/if it(?:'s| is) (?:already )?stunned, kill it/.test(t)) eff.ifTargetStunned = 'kill'
   }
+
+  // Direct scoring: "you score 1 point" / "score 2 points" (Ahri, Draven -
+  // Audacious, Renata, Power Nexus). Not the noun "score" ("opponent's score",
+  // "Victory Score") — requires a number + "point(s)".
+  const scoreM = t.match(new RegExp(`score ${NUM} points?`))
+  if (scoreM) { eff.score += num(scoreM[1]); hit = true }
 
   // Temporary keyword grants "this turn". Targeted: "give a unit [Assault N] (and
   // [Ganking]) this turn" (Square Up, Vault Breaker). Area: "give your other

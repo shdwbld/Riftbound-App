@@ -64,6 +64,8 @@ const PATTERNS: Pattern[] = [
   { event: 'attack', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+attacks?/i },
   { event: 'defend', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+defends?/i },
   { event: 'winCombat', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+wins?(?:\s+a)?\s+combat/i },
+  // "When you win a combat" (Kha'Zix - Voidreaver, Draven - Glorious Executioner).
+  { event: 'winCombat', scope: 'global', re: /when(?:ever)?\s+you\s+win(?:\s+a)?\s+combat/i },
   { event: 'move', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+moves?/i },
   { event: 'play', scope: 'global', re: /when(?:ever)?\s+you\s+play\s+(?:a|an|another)\b/i },
   { event: 'play', scope: 'self', re: /when(?:ever)?\s+(?:i['’]?m|i am|you\s+play\s+(?:me|this))/i },

@@ -461,6 +461,14 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
   // "Channel N rune(s) exhausted" (Soaring Scout) — the channeled runes enter exhausted.
   if (e.channelExhausted) lines.push(`Channeled ${channelN(p, e.channelExhausted, true)} (exhausted).`)
+  // Direct scoring ("you score N point" — Ahri, Draven - Audacious). Mutates in
+  // place (applyParsed can't reassign s), so the win is flagged inline.
+  if (e.score) {
+    p.points += e.score
+    emit({ kind: 'score', player: p.id, amount: e.score })
+    lines.push(`Scored ${e.score} point(s).`)
+    if (s.winner == null && p.points >= s.pointsToWin) { s.winner = p.id; s.phase = 'gameover' }
+  }
   if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
   if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn)} Gold token(s).`)
   if (e.namedToken) {
@@ -673,7 +681,7 @@ function collectGlobal(s: MatchState, player: PlayerId, event: TriggerEvent): Fi
   const out: FiredTrigger[] = []
   for (const u of controlledPermanents(s, player))
     for (const ab of triggersFor(def(u), event))
-      if (ab.scope === 'global') out.push({ player, ability: ab, sourceIid: u.iid })
+      if (ab.scope === 'global') out.push({ player, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
   return out
 }
 
@@ -685,7 +693,7 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
   for (const u of controlledPermanents(s, player)) {
     if (only && !only.has(u.iid)) continue
     for (const ab of triggersFor(def(u), event))
-      if (ab.scope === 'self') out.push({ player, ability: ab, sourceIid: u.iid })
+      if (ab.scope === 'self') out.push({ player, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
   }
   return out
 }
@@ -732,8 +740,15 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // --- Hand-coded champion/legend handlers (the parser can't express these
     // unique abilities; per-card code keeps the marquee cards correct). ---
     let handled = false
+    const srcName = (getCard(sourceCardId ?? '')?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+    // Kha'Zix - Voidreaver (legend): "When you win a combat, gain 1 XP."
+    if (ability.event === 'winCombat' && srcName === "Kha'Zix - Voidreaver") {
+      p.xp += 1
+      s = log(s, player, `${label}: ${srcName} gained 1 XP (now ${p.xp}).`)
+      handled = true
+    }
     if (ability.event === 'death' && sourceCardId) {
-      const baseName = (getCard(sourceCardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+      const baseName = srcName
       if (baseName === "Kog'Maw - Caustic" && deathBf != null && s.battlefields[deathBf]) {
         // "[Deathknell] Deal 4 to all units at my battlefield." AoE — no target
         // choice. Fired once per copy, so Karthus - Eternal doubles it (4 → 8).
@@ -2546,11 +2561,15 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   s.showdown = null
   s.phase = 'action'
 
-  // "When I win a combat" â€” the mover cleared the defenders and still holds units.
+  // "When I win a combat" / "When you win a combat" — the mover cleared the
+  // defenders and still holds units. Self triggers (Draven - Vanquisher, Nidalee)
+  // and global ones (Kha'Zix - Voidreaver "gain 1 XP", Draven - Glorious "draw 1").
   const moverHere = s.battlefields[bfIndex].units.filter((u) => u.owner === moverOwner).map((u) => u.iid)
   const enemyHere = s.battlefields[bfIndex].units.some((u) => u.owner !== moverOwner)
-  if (moverHere.length > 0 && !enemyHere)
+  if (moverHere.length > 0 && !enemyHere) {
     s = fireTriggers(s, collectSelf(s, moverOwner, 'winCombat', moverHere))
+    s = fireTriggers(s, collectGlobal(s, moverOwner, 'winCombat'))
+  }
 
   // Conquer: mover ends as sole controller of a battlefield they didn't hold.
   const nowController = s.battlefields[bfIndex].controller
