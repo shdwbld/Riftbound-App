@@ -508,10 +508,18 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       .filter((c) => { const st = stats(c); return st.isUnit && (maxEnergy == null || st.energy <= maxEnergy) && (maxPower == null || st.power <= maxPower) })
       .sort((a, b) => (stats(b).energy + stats(b).power) - (stats(a).energy + stats(a).power))[0]
     if (pick) {
-      const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
-      const [card] = p.zones.trash.splice(i, 1)
-      p.zones.base.push({ ...card, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
-      lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (ignoring cost).`)
+      // "ignoring its ENERGY cost" still charges the unit's Power cost (The
+      // Harrowing, Soulgorger). Auto-pay it from the pool (generic, like Altar);
+      // if it can't be paid, the play doesn't happen.
+      const powerDue = e.playUnitFromTrash.energyOnly ? stats(pick).power : 0
+      if (powerDue > 0 && !makeBfApi(s).payPowerAny(p.id, powerDue)) {
+        lines.push(`Couldn't play ${getCard(pick.cardId)?.name ?? 'a unit'} from trash — can't pay its Power cost.`)
+      } else {
+        const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
+        const [card] = p.zones.trash.splice(i, 1)
+        p.zones.base.push({ ...card, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+        lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (ignoring ${powerDue > 0 ? 'Energy' : ''} cost${powerDue > 0 ? `, paid ${powerDue} Power` : ''}).`)
+      }
     }
   }
   if (e.revealPlayFromDeck) {
@@ -581,6 +589,17 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       u.exhausted = false
       emit({ kind: 'buff', iid: u.iid, player: p.id })
       lines.push(`Readied ${getCard(u.cardId)?.name}.`)
+    }
+  }
+  // "give me +N Might this turn" — temporary Might on the source (Teemo - Scout's
+  // on-play, Eclipse Herald's on-stun, …). Handled here so EVERY applyParsed site
+  // (on-play, reveal, end-of-turn) applies it, not just fireTriggers/ACTIVATE_UNIT.
+  if (e.tempMightSelf && sourceIid) {
+    const u = findUnitAnywhere(s, sourceIid) ?? (p.legend?.iid === sourceIid ? p.legend : undefined)
+    if (u && u.owner === p.id) {
+      u.tempMight = (u.tempMight ?? 0) + e.tempMightSelf
+      emit({ kind: 'buff', iid: u.iid, player: p.id })
+      lines.push(`${e.tempMightSelf > 0 ? '+' : ''}${e.tempMightSelf} Might this turn.`)
     }
   }
   // Skip applyBuff when a spend-buff self-buff couldn't pay its cost.
@@ -696,16 +715,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const su = findUnitAnywhere(s, sourceIid) ?? (s.players[player].legend?.iid === sourceIid ? s.players[player].legend : undefined)
       if (su) su.exhausted = true
     }
-    // "give me +1 Might this turn" â€” temporary Might on the source unit.
-    if (e.tempMightSelf && sourceIid) {
-      const u = findUnitAnywhere(s, sourceIid)
-      if (u) {
-        u.tempMight = (u.tempMight ?? 0) + e.tempMightSelf
-        emit({ kind: 'buff', iid: sourceIid, player })
-        s = log(s, player, `${label}: ${e.tempMightSelf > 0 ? '+' : ''}${e.tempMightSelf} Might this turn.`)
-        did = true
-      }
-    }
+    // ("give me +N Might this turn" is applied inside applyParsed above.)
     // Stun from a trigger ("When I attack, [Stun] an enemy unit here" — Vi -
     // Peacekeeper): auto-stun an enemy unit at the source's battlefield.
     if (e.stun && sourceIid) {

@@ -587,8 +587,10 @@ describe('tokens (Recruit)', () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) =>
       ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
-    expect(spellEffect(mkCard('Play a unit from your trash, ignoring its Energy cost.')).playUnitFromTrash).toEqual({ maxEnergy: null, maxPower: null })
-    expect(spellEffect(mkCard('Play a unit costing no more than :rb_energy_3: and no more than :rb_rune_rainbow: from your trash, ignoring its cost.')).playUnitFromTrash).toEqual({ maxEnergy: 3, maxPower: 1 })
+    // "ignoring its ENERGY cost" still owes Power (energyOnly: true).
+    expect(spellEffect(mkCard('Play a unit from your trash, ignoring its Energy cost.')).playUnitFromTrash).toEqual({ maxEnergy: null, maxPower: null, energyOnly: true })
+    // "ignoring its cost" (no qualifier) waives everything.
+    expect(spellEffect(mkCard('Play a unit costing no more than :rb_energy_3: and no more than :rb_rune_rainbow: from your trash, ignoring its cost.')).playUnitFromTrash).toEqual({ maxEnergy: 3, maxPower: 1, energyOnly: false })
   })
 
   it('playUnitFromTrash: a played unit brings a qualifying trash unit into base', () => {
@@ -603,6 +605,44 @@ describe('tokens (Recruit)', () => {
     // The trash unit is now in base (exhausted), no longer in trash.
     expect(r.state.players[0].zones.trash.some((x) => x.iid === dead.iid)).toBe(false)
     expect(r.state.players[0].zones.base.some((x) => x.iid === dead.iid && x.exhausted)).toBe(true)
+  })
+
+  it('on-play "give me +N Might this turn" applies via applyParsed (Teemo - Scout)', () => {
+    const uid = injectCard('tms-onplay', 'When you play me, give me +3 :rb_might: this turn.', { type: 'unit', might: 2, energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(uid, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.tempMight).toBe(3)
+  })
+
+  it('playUnitFromTrash "ignoring its Energy cost" still pays the Power cost (The Harrowing)', () => {
+    const sid = injectCard('harrowing-test', 'Play a unit from your trash, ignoring its Energy cost.', { type: 'spell', energy: 0, power: {} })
+    const trashUnit = injectCard('powered-trash-unit', 'A unit.', { type: 'unit', might: 3, energy: 5, power: { fury: 1 } })
+    // A ready Power rune available → unit enters play, the rune is spent.
+    let s = baseState()
+    const dead = mk(trashUnit, 0)
+    s.players[0].zones.trash.push(dead)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    let sp = mk(sid, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.base.some((x) => x.iid === dead.iid)).toBe(true)
+    expect(r.state.players[0].zones.runePool.length).toBe(0) // Power rune spent
+    // No Power available → the unit is NOT played for free (stays in trash).
+    s = baseState()
+    const dead2 = mk(trashUnit, 0)
+    s.players[0].zones.trash.push(dead2)
+    sp = mk(sid, 0)
+    s.players[0].zones.hand.push(sp)
+    r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.base.some((x) => x.iid === dead2.iid)).toBe(false)
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === dead2.iid)).toBe(true)
   })
 
   it('Dazzling Aurora: at end of turn, reveal-until-unit → play it free, recycle the rest', () => {

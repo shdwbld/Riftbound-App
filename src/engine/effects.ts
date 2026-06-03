@@ -93,8 +93,10 @@ export interface ParsedEffect {
   returnFromTrash: { type: 'unit' | 'spell' | 'gear' | 'card'; count: number } | null
   /** Play a UNIT from your trash into play (base), ignoring its cost — Soulgorger,
    *  The Harrowing, Spectral Matron, Glasc Mixologist. Optional cost cap
-   *  (≤maxEnergy Energy / ≤maxPower Power). Resolves to the highest-cost qualifier. */
-  playUnitFromTrash: { maxEnergy: number | null; maxPower: number | null } | null
+   *  (≤maxEnergy Energy / ≤maxPower Power). Resolves to the highest-cost qualifier.
+   *  `energyOnly` = "ignoring its ENERGY cost" (still pay Power) vs "ignoring its
+   *  cost" (free). */
+  playUnitFromTrash: { maxEnergy: number | null; maxPower: number | null; energyOnly: boolean } | null
   /** Reveal from the top of your Main Deck until a unit, play that unit ignoring
    *  its cost, and recycle the rest to the bottom (Dazzling Aurora). */
   revealPlayFromDeck: boolean
@@ -371,11 +373,13 @@ function parse(text: string): ParsedEffect {
   // Play a unit from your trash, ignoring its cost (Soulgorger, The Harrowing,
   // Spectral Matron, Glasc Mixologist). Optional "no more than :rb_energy_N:
   // and no more than :rb_rune_*:" cost cap.
-  const putM = t.match(/play a unit[^.]*?from your trash[^.]*?ignoring its (?:energy )?cost/)
+  const putM = t.match(/play a unit[^.]*?from your trash[^.]*?ignoring its (energy )?cost/)
   if (putM) {
     const me = putM[0].match(/no more than :rb_energy_(\d+):/)
     const mp = (putM[0].match(/:rb_rune_[a-z]+:/g) || []).length
-    eff.playUnitFromTrash = { maxEnergy: me ? parseInt(me[1], 10) : null, maxPower: mp || null }
+    // "ignoring its ENERGY cost" (The Harrowing, Soulgorger) still charges the
+    // Power cost; "ignoring its cost" (Spectral Matron, Glasc) waives everything.
+    eff.playUnitFromTrash = { maxEnergy: me ? parseInt(me[1], 10) : null, maxPower: mp || null, energyOnly: !!putM[1] }
     hit = true
   }
   // "reveal cards from the top of your Main Deck until you reveal a unit … play
