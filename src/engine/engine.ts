@@ -321,7 +321,7 @@ function spawnGold(p: PlayerState, n: number, turn: number): number {
 
 /** Create N copies of a named unit token (Sprite / Sand Soldier / Bird / Mech)
  *  onto a player's Base. Returns how many were actually created. */
-function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, exhausted: boolean): number {
+function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, exhausted: boolean, temporary = false): number {
   const id = TOKEN_BY_NAME[name.toLowerCase()]
   if (!id) return 0
   for (let i = 0; i < n; i++)
@@ -333,6 +333,7 @@ function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, 
       damage: 0,
       attached: [],
       enteredTurn: turn,
+      ...(temporary ? { temporary: true } : {}),
     })
   return n
 }
@@ -411,11 +412,19 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
   if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn)} Gold token(s).`)
   if (e.namedToken) {
-    const made = spawnNamedToken(p, e.namedToken.name, e.namedToken.count, s.turn, e.namedToken.exhausted)
+    const made = spawnNamedToken(p, e.namedToken.name, e.namedToken.count, s.turn, e.namedToken.exhausted, e.namedToken.temporary)
     if (made) {
       const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
-      lines.push(`Created ${made} ${label} token(s).`)
+      lines.push(`Created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}.`)
     }
+  }
+  if (e.tempMightAll) {
+    // Board-wide temp Might to all the controller's units (Grand Strategem).
+    const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+      (u) => u.owner === p.id && getCard(u.cardId)?.type === 'unit',
+    )
+    for (const u of units) u.tempMight = (u.tempMight ?? 0) + e.tempMightAll
+    if (units.length) lines.push(`${e.tempMightAll > 0 ? '+' : ''}${e.tempMightAll} Might this turn to ${units.length} unit(s).`)
   }
   if (e.readyUnits) {
     // Surface a "choose which unit(s) to ready" prompt for the player.

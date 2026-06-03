@@ -563,11 +563,11 @@ describe('tokens (Recruit)', () => {
     const mkCard = (text: string) =>
       ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
     const sand = spellEffect(mkCard('Play a 2 :rb_might: Sand Soldier unit token.')).namedToken
-    expect(sand).toEqual({ name: 'sand soldier', count: 1, exhausted: true })
+    expect(sand).toEqual({ name: 'sand soldier', count: 1, exhausted: true, temporary: false })
     const bird = spellEffect(mkCard('Play three Bird unit tokens.')).namedToken
-    expect(bird).toEqual({ name: 'bird', count: 3, exhausted: true })
+    expect(bird).toEqual({ name: 'bird', count: 3, exhausted: true, temporary: false })
     const mech = spellEffect(mkCard('Play a ready 3 :rb_might: Mech unit token.')).namedToken
-    expect(mech).toEqual({ name: 'mech', count: 1, exhausted: false })
+    expect(mech).toEqual({ name: 'mech', count: 1, exhausted: false, temporary: false })
   })
 
   it('spawns a named token onto the base when an on-play effect resolves', () => {
@@ -1438,6 +1438,41 @@ describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
     expect(r.state.phase).toBe('action')
     expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(true) // alive
     expect(r.state.players[0].zones.hand.length).toBe(1) // only the regular draw
+  })
+})
+
+describe('Viktor deck — buffs + tokens', () => {
+  it('Grand Strategem: parses "give friendly units +5 Might this turn"', async () => {
+    const { spellEffect } = await import('./effects')
+    const gs = CARDS.find((c) => c.type === 'spell' && c.name === 'Grand Strategem')
+    if (!gs) return
+    expect(spellEffect(gs).tempMightAll).toBe(5)
+  })
+
+  it('a board-wide +Might buff applies to all your units this turn', () => {
+    const id = injectCard('gs-test', 'When you play me, give friendly units +5 :rb_might: this turn.', { energy: 0, power: {} })
+    const s = baseState()
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(ally)
+    const self = mk(id, 0)
+    s.players[0].zones.hand.push(self)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: self.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === ally.iid)?.tempMight).toBe(5)
+  })
+
+  it('Sprite Mother: the spawned Sprite is granted [Temporary]', () => {
+    const spriteId = TOKEN_BY_NAME['sprite']
+    if (!spriteId) return
+    const id = injectCard('sm-test', 'When you play me, play a ready 3 :rb_might: Sprite unit token with [Temporary] here.', { energy: 0, power: {} })
+    const s = baseState()
+    const self = mk(id, 0)
+    s.players[0].zones.hand.push(self)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: self.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    const sprite = r.state.players[0].zones.base.find((u) => u.cardId === spriteId)
+    expect(sprite?.temporary).toBe(true)
+    expect(sprite?.exhausted).toBe(false) // "ready"
   })
 })
 

@@ -23,17 +23,29 @@ export interface ParsedEffect {
   /** Number of Gold gear tokens to create. */
   goldTokens: number
   /** A named unit token to create (Sprite / Sand Soldier / Bird / Mech). */
-  namedToken: { name: string; count: number; exhausted: boolean } | null
+  namedToken: { name: string; count: number; exhausted: boolean; temporary: boolean } | null
   /** Number of your units to ready (un-exhaust) — the player chooses which. */
   readyUnits: number
-  /** +1 Might buff counters to apply (e.g. "gains +1 Might"). */
+  /** +1 Might buff counters to apply (e.g. "gains +1 Might" / "buff a unit"). A
+   *  "buff" is the Riftbound +1 Might token, capped at one per unit. */
   buff: number
+  /** The buff(s) target the SOURCE unit ("buff me" / "gains +1 Might"), not a
+   *  chosen friendly unit ("buff a friendly unit"). */
+  buffSelf: boolean
+  /** A targeted buff that must not pick the source ("buff ANOTHER unit"). */
+  buffExcludesSelf: boolean
+  /** Ready the SOURCE unit itself ("ready me"). Distinct from `readyUnits`,
+   *  which lets the controller choose which exhausted units to ready. */
+  readySelf: boolean
   /** Units to outright kill (no damage roll). */
   kill: number
   /** Signed Might-this-turn applied to each chosen target (e.g. Stupefy −1). */
   tempMight: number
   /** Signed Might-this-turn applied to the SOURCE (e.g. "give me +1 this turn"). */
   tempMightSelf: number
+  /** Signed Might-this-turn applied to ALL the controller's units ("give
+   *  friendly units +5 Might this turn" — Grand Strategem). */
+  tempMightAll: number
   /** Extra cards drawn if a chosen target dies during this resolution. */
   drawOnKill: number
   /** Who the targeted part may hit. */
@@ -46,8 +58,10 @@ export interface ParsedEffect {
    *  (e.g. Jinx — "draw 1 if you have one or fewer cards in your hand"; Garen —
    *  "if you have 4+ units at that battlefield"). The caller (applyParsed)
    *  evaluates it against game state. Null = unconditional. `unitsHereAtLeast`
-   *  needs the relevant battlefield's index, supplied at the trigger site. */
-  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast'; value: number } | null
+   *  needs the relevant battlefield's index, supplied at the trigger site.
+   *  `xpAtLeast` gates a `[Level N][>]` effect on the controller's XP (Wuju
+   *  Apprentice — "[Level 6][>] … draw 1"). */
+  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast'; value: number } | null
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
@@ -61,9 +75,13 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   namedToken: null,
   readyUnits: 0,
   buff: 0,
+  buffSelf: false,
+  buffExcludesSelf: false,
+  readySelf: false,
   kill: 0,
   tempMight: 0,
   tempMightSelf: 0,
+  tempMightAll: 0,
   drawOnKill: 0,
   targetScope: null,
   targetCount: 0,
@@ -78,7 +96,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.channel > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0
+  return e.draw > 0 || e.channel > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -137,9 +155,14 @@ function parse(text: string): ParsedEffect {
 
   // Named unit tokens: "play a 2 :rb_might: Sand Soldier unit token",
   // "play a ready 3 Sprite unit token", "play a 1 Might Bird unit token".
-  const namedM = t.match(/play (?:a |an |(\d+|two|three) )?(?:ready |exhausted )?[^.]*?\b(sprite|sand soldier|bird|mech)\b[^.]*?tokens?/)
+  const namedM = t.match(/play (?:a |an |(\d+|two|three) )?(?:ready |exhausted )?[^.]*?\b(sprite|sand soldier|bird|mech)\b[^.]*?tokens?(?:\s+with\s+\[temporary\])?/)
   if (namedM) {
-    eff.namedToken = { name: namedM[2], count: namedM[1] ? num(namedM[1]) : 1, exhausted: !/\bready\b/.test(namedM[0]) }
+    eff.namedToken = {
+      name: namedM[2],
+      count: namedM[1] ? num(namedM[1]) : 1,
+      exhausted: !/\bready\b/.test(namedM[0]),
+      temporary: /\[temporary\]/.test(namedM[0]),
+    }
     hit = true
   }
 
@@ -176,11 +199,44 @@ function parse(text: string): ParsedEffect {
     hit = true
   }
 
-  // Permanent +Might buff counter ("gains +1 Might"), not "this turn".
+  // Signed Might-this-turn to ALL your units: "give friendly units +5 Might this
+  // turn" (Grand Strategem). Plural "units" — a board-wide buff, no target.
+  const tmAllM = t.match(new RegExp(`give (?:all |your )?friendly units (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
+  if (tmAllM) {
+    eff.tempMightAll += (tmAllM[1] === '-' ? -1 : 1) * parseInt(tmAllM[2], 10)
+    hit = true
+  }
+
+  // Permanent +Might buff counter ("this unit gains +1 Might"), not "this turn".
+  // This phrasing always refers to the source unit, so it's a self-buff.
   if (!/this turn/.test(t)) {
     const buffM = t.match(new RegExp(`(?:gains?|grant|put) \\+?${NUM} ${MIGHT}`))
-    if (buffM) { eff.buff += num(buffM[1]); hit = true }
+    if (buffM) { eff.buff += num(buffM[1]); eff.buffSelf = true; hit = true }
   }
+
+  // The Riftbound "buff" action (give a +1 Might buff token; max one per unit).
+  // "buff me/this" buffs the source; "buff a/another friendly unit" buffs a
+  // chosen friendly unit. The alternation requires a determiner/pronoun right
+  // after "buff ", so "spend a buff" (a cost) and "Buffs give"/"buffed"
+  // (adjectives) don't match. Skip when already captured as a "gains +N" self-buff.
+  if (!eff.buff) {
+    if (/\bbuff (?:me|myself|this)\b/.test(t)) {
+      eff.buff += 1; eff.buffSelf = true; hit = true
+    } else {
+      const bm = t.match(
+        new RegExp(`\\bbuff (?:up to ${NUM} )?(?:a|an|another|the chosen|target|one|two|\\d+)?\\s*(?:other )?(?:friendly )?units?`),
+      )
+      if (bm) {
+        eff.buff += bm[1] ? num(bm[1]) : 1
+        if (/\banother\b/.test(t)) eff.buffExcludesSelf = true
+        hit = true
+      }
+    }
+  }
+
+  // "ready me/myself/this" — un-exhaust the source unit (vs. `readyUnits`, a
+  // choose-which-to-ready effect that needs a unit noun).
+  if (/\bready (?:me|myself|this)\b/.test(t)) { eff.readySelf = true; hit = true }
 
   // Multi-target count: "each of up to two units" / "up to 2 units".
   const multiM = t.match(new RegExp(`(?:each of )?up to ${NUM} units?`)) || t.match(new RegExp(`each of ${NUM} units?`))
@@ -196,6 +252,21 @@ function parse(text: string): ParsedEffect {
         : eff.tempMight > 0 || eff.buff > 0
           ? 'friendly'
           : 'enemy' // damage / kill / debuff default to enemies
+  }
+
+  // [Level N][>] activated gate (Wuju Apprentice — "[Level 6][>] … draw 1"): a
+  // resource effect (draw/channel/recruit/token) that lives ONLY inside the gated
+  // clause must be conditioned on the controller having N+ XP. We compare against
+  // the pre-gate text so a base effect the Level clause merely upgrades (Combat
+  // Experience's +1 → +3 Might) stays ungated. Continuous "+Might / enters ready"
+  // Levels are handled separately by levelBonus(); only resource effects need this.
+  const lvlGate = t.match(/\[level\s*(\d+)\]\s*\[(?:&gt;|>)\]/)
+  if (lvlGate && lvlGate.index != null && !eff.condition) {
+    const pre = parse(t.slice(0, lvlGate.index))
+    const resources: (keyof ParsedEffect)[] = ['draw', 'channel', 'recruits', 'goldTokens', 'namedToken']
+    const hasRes = (e: ParsedEffect) => resources.some((k) => e[k])
+    // Gate only when every present resource effect comes from the gated portion.
+    if (hasRes(eff) && !hasRes(pre)) eff.condition = { kind: 'xpAtLeast', value: num(lvlGate[1]) }
   }
 
   if (!hit && t.trim().length > 0) eff.manual = true
