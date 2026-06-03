@@ -8,7 +8,7 @@ import {
   type Action,
   type GameEvent,
 } from '../engine/types'
-import { canPlay, combatMight, matchUsesXp, grantedAbilityFor } from '../engine/engine'
+import { canPlay, combatMight, matchUsesXp, grantedAbilityFor, canActivateUnit } from '../engine/engine'
 import { parseKeywords, keywordsAt } from '../engine/keywords'
 import { RULES } from '../engine/setup'
 import MechanicTooltip from './MechanicTooltip'
@@ -48,6 +48,8 @@ export interface MatchBoardProps {
   onConcede?: () => void
   /** Right-click card actions (buff / recycle / trash). */
   onCardAction?: (action: Action) => void
+  /** Activate a unit's own printed ability (the page handles its targeting). */
+  onActivateUnit?: (iid: string) => void
   /** Targeting mode: clicking a legal unit picks it as a spell target. */
   targetingActive?: boolean
   /** The unit iids that are legal targets for the spell being aimed. */
@@ -106,6 +108,7 @@ export default function MatchBoard({
   onEndTurn,
   onConcede,
   onCardAction,
+  onActivateUnit,
   targetingActive,
   legalTargets,
   targetProgress,
@@ -119,7 +122,7 @@ export default function MatchBoard({
   const [selectedUnits, setSelectedUnits] = useState<string[]>([])
   const toggleSelected = (iid: string) =>
     setSelectedUnits((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : [...s, iid]))
-  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action: Action }[] } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action?: Action; activateIid?: string }[] } | null>(null)
   const me = match.players[perspective]
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
@@ -225,7 +228,7 @@ export default function MatchBoard({
     e.preventDefault()
     if (!onCardAction) return
     const card = getCard(ci.cardId)
-    const items: { label: string; action: Action }[] = []
+    const items: { label: string; action?: Action; activateIid?: string }[] = []
     if (card?.type === 'unit') {
       items.push({ label: '⊘ Stun', action: { type: 'STUN_UNIT', player: perspective, iid: ci.iid } })
       items.push({ label: '⊗ Banish', action: { type: 'BANISH', player: perspective, iid: ci.iid } })
@@ -234,6 +237,10 @@ export default function MatchBoard({
       // Battlefield-granted activated ability (Gardens of Becoming → gain XP).
       const ga = grantedAbilityFor(match, perspective, ci.iid)
       if (ga) items.push({ label: `⚡ ${ga.label}`, action: { type: 'ACTIVATE_ABILITY', player: perspective, iid: ci.iid } })
+      // A unit's OWN printed activated ability (Arena Kingpin, Xerath, …). The
+      // page handles its cost + targeting via onActivateUnit.
+      const ua = onActivateUnit && canActivateUnit(match, perspective, ci.iid)
+      if (ua) items.push({ label: `⚡ ${ua.label}`, activateIid: ci.iid })
       if (card?.type === 'rune' && zone === 'runePool')
         items.push({ label: '♺ Recycle rune', action: { type: 'RECYCLE_RUNE', player: perspective, iid: ci.iid } })
       if (card?.type === 'unit')
@@ -602,7 +609,8 @@ export default function MatchBoard({
               <button
                 key={it.label}
                 onClick={() => {
-                  onCardAction?.(it.action)
+                  if (it.activateIid) onActivateUnit?.(it.activateIid)
+                  else if (it.action) onCardAction?.(it.action)
                   setMenu(null)
                 }}
                 className="block w-full px-3 py-1.5 text-left hover:bg-white/10"

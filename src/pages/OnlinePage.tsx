@@ -14,7 +14,7 @@ import {
   type GameEvent,
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
@@ -75,7 +75,7 @@ export default function OnlinePage() {
   const [match, setMatch] = useState<MatchState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
-  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; kind: 'spell' | 'gear'; count: number; picked: string[]; repeat?: boolean } | null>(null)
+  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; kind: 'spell' | 'gear' | 'activateUnit'; count: number; picked: string[]; repeat?: boolean; targetScope?: 'enemy' | 'friendly' | 'any' } | null>(null)
   const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
   // The pending play awaiting a chosen rune payment (the overlay).
   const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean } | null>(null)
@@ -547,10 +547,34 @@ export default function OnlinePage() {
     dispatch({ type: 'PLAY_SPELL', player: seat, iid: t.iid, payment: t.payment, targets, repeat: t.repeat })
   }
 
+  const activateUnit = (iid: string) => {
+    const ab = canActivateUnit(match, seat, iid)
+    if (!ab) return
+    const needsTgt = ab.effect.damage > 0 || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
+    if (!needsTgt) { dispatch({ type: 'ACTIVATE_UNIT', player: seat, iid }); return }
+    const scope: 'enemy' | 'friendly' = ab.effect.damage > 0 ? 'enemy' : 'friendly'
+    setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, kind: 'activateUnit', count: 1, picked: [], targetScope: scope })
+    flash(scope === 'enemy' ? 'Pick an enemy unit.' : 'Pick a unit to buff.')
+  }
+  const activeLegalTargets = (): string[] => {
+    if (!targeting) return []
+    if (targeting.kind === 'gear') return friendlyUnitIids(match, seat)
+    if (targeting.kind === 'activateUnit') {
+      const units = match.battlefields.flatMap((b) => b.units).concat(match.players.flatMap((p) => p.zones.base.filter((c) => getCard(c.cardId)?.type === 'unit')))
+      return units.filter((u) => (targeting.targetScope === 'enemy' ? u.owner !== seat : u.owner === seat)).map((u) => u.iid)
+    }
+    return getLegalTargets(match, getCard(targeting.cardId)!, seat)
+  }
+
   const onTarget = (targetIid: string) => {
     if (!targeting) return
     if (targeting.kind === 'gear') {
       dispatch({ type: 'PLAY_GEAR', player: seat, iid: targeting.iid, payment: targeting.payment, targetIid })
+      setTargeting(null)
+      return
+    }
+    if (targeting.kind === 'activateUnit') {
+      dispatch({ type: 'ACTIVATE_UNIT', player: seat, iid: targeting.iid, targets: [targetIid] })
       setTargeting(null)
       return
     }
@@ -599,13 +623,11 @@ export default function OnlinePage() {
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
         onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}
         onCardAction={(a) => dispatch(a)}
+        onActivateUnit={activateUnit}
         targetingActive={!!targeting}
         legalTargets={
           targeting
-            ? (targeting.kind === 'gear'
-                ? friendlyUnitIids(match, seat)
-                : getLegalTargets(match, getCard(targeting.cardId)!, seat)
-              ).filter((id) => !targeting.picked.includes(id))
+            ? activeLegalTargets().filter((id) => !targeting.picked.includes(id))
             : undefined
         }
         targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}

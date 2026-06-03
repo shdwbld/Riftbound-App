@@ -6,7 +6,7 @@ import type { Deck } from '../types/deck'
 import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
@@ -50,7 +50,7 @@ export default function MatchPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
   const [showHelp, setShowHelp] = useState(false)
-  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear'; count: number; picked: string[]; repeat?: boolean } | null>(null)
+  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear' | 'activateUnit'; count: number; picked: string[]; repeat?: boolean; targetScope?: 'enemy' | 'friendly' | 'any' } | null>(null)
   const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
   // Rune picker is ON by default — every rune-spending play opens the overlay.
   // Toggle off to auto-pay silently.
@@ -309,6 +309,21 @@ export default function MatchPage() {
     act({ type: 'PLAY_SPELL', player: t.player, iid: t.iid, payment: t.payment, targets, repeat: t.repeat })
   }
 
+  // Activate a unit's own printed ability: dispatch directly when it needs no
+  // target, else open the picker (damage → enemies, +Might → friendlies).
+  const activateUnit = (iid: string) => {
+    const ab = canActivateUnit(match, controlling, iid)
+    if (!ab) return
+    const needsTgt = ab.effect.damage > 0 || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
+    if (!needsTgt) {
+      act({ type: 'ACTIVATE_UNIT', player: controlling, iid })
+      return
+    }
+    const scope: 'enemy' | 'friendly' = ab.effect.damage > 0 ? 'enemy' : 'friendly'
+    setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, player: controlling, kind: 'activateUnit', count: 1, picked: [], targetScope: scope })
+    flash(scope === 'enemy' ? 'Pick an enemy unit.' : 'Pick a unit to buff.')
+  }
+
   const onTarget = (targetIid: string) => {
     if (!targeting) return
     if (targeting.kind === 'gear') {
@@ -316,9 +331,26 @@ export default function MatchPage() {
       setTargeting(null)
       return
     }
+    if (targeting.kind === 'activateUnit') {
+      act({ type: 'ACTIVATE_UNIT', player: targeting.player, iid: targeting.iid, targets: [targetIid] })
+      setTargeting(null)
+      return
+    }
     const picked = [...targeting.picked, targetIid]
     if (picked.length >= targeting.count) castSpell(targeting, picked)
     else setTargeting({ ...targeting, picked }) // keep choosing
+  }
+
+  /** Legal targets for the active picker (spell/gear via getLegalTargets, or a
+   *  unit-ability via its scope). */
+  const activeLegalTargets = (): string[] => {
+    if (!targeting) return []
+    if (targeting.kind === 'gear') return friendlyUnitIids(match, controlling)
+    if (targeting.kind === 'activateUnit') {
+      const units = match.battlefields.flatMap((b) => b.units).concat(match.players.flatMap((p) => p.zones.base.filter((c) => getCard(c.cardId)?.type === 'unit')))
+      return units.filter((u) => (targeting.targetScope === 'enemy' ? u.owner !== controlling : u.owner === controlling)).map((u) => u.iid)
+    }
+    return getLegalTargets(match, getCard(targeting.cardId)!, controlling)
   }
   // Resolve a multi-target spell with the targets picked so far ("up to N").
   const confirmTargets = () => {
@@ -347,15 +379,9 @@ export default function MatchPage() {
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
         onCardAction={(a) => act(a)}
+        onActivateUnit={activateUnit}
         targetingActive={!!targeting}
-        legalTargets={
-          targeting
-            ? (targeting.kind === 'gear'
-                ? friendlyUnitIids(match, controlling)
-                : getLegalTargets(match, getCard(targeting.cardId)!, controlling)
-              ).filter((id) => !targeting.picked.includes(id))
-            : undefined
-        }
+        legalTargets={targeting ? activeLegalTargets().filter((id) => !targeting.picked.includes(id)) : undefined}
         targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}
         onTarget={onTarget}
         onConfirmTargets={confirmTargets}
