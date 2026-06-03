@@ -1490,6 +1490,70 @@ describe('Phase A — cost increases + Repeat grant/discount', () => {
   })
 })
 
+describe('Master Yi — conditional + legend Might', () => {
+  // Run a 1-defender showdown; return whether the defender survived.
+  function defenderSurvives(s: MatchState, defIid: string, attacker: EngineCard): boolean {
+    s.players[0].zones.base.push(attacker)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    return r.state.battlefields[0].units.some((u) => u.iid === defIid)
+  }
+
+  it('Meditative: +4 Might (8 HP) while you have 8+ runes lets it survive 5 damage', () => {
+    const med = CARDS.find((c) => c.type === 'unit' && c.name === 'Master Yi - Meditative')
+    if (!med) return
+    const s = baseState()
+    const medU = mk(med.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [medU], controller: 1 }
+    for (let i = 0; i < 8; i++) s.players[1].zones.runePool.push(mk(furyRune.id, 1)) // 8 runes → +4
+    expect(defenderSurvives(s, medU.iid, mk(furyUnit.id, 0))).toBe(true) // 4+4 HP > 5 dmg
+  })
+
+  it('Meditative: without 8 runes it dies to the same 5 damage', () => {
+    const med = CARDS.find((c) => c.type === 'unit' && c.name === 'Master Yi - Meditative')
+    if (!med) return
+    const s = baseState()
+    const medU = mk(med.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [medU], controller: 1 }
+    expect(defenderSurvives(s, medU.iid, mk(furyUnit.id, 0))).toBe(false) // 4 HP < 5 dmg
+  })
+
+  it('Wuju Bladesman: a lone defender gets +2 Might', () => {
+    const bm = CARDS.find((c) => c.type === 'legend' && c.name.startsWith('Master Yi - Wuju Bladesman'))
+    if (!bm) return
+    const s = baseState()
+    s.players[1].legend = mk(bm.id, 1)
+    const d = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [d], controller: 1 }
+    const atk = mk(injectCard('bm-atk', 'A unit.', { might: 6 }), 0)
+    expect(defenderSurvives(s, d.iid, atk)).toBe(true) // 5+2 HP > 6 dmg
+  })
+
+  it('Wuju Master: [Level 6] your units +1 Might (with 6+ XP)', () => {
+    const wm = CARDS.find((c) => c.type === 'legend' && c.name === 'Master Yi - Wuju Master')
+    if (!wm) return
+    const s = baseState()
+    s.players[1].legend = mk(wm.id, 1)
+    s.players[1].xp = 6
+    const d = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [d], controller: 1 }
+    expect(defenderSurvives(s, d.iid, mk(furyUnit.id, 0))).toBe(true) // 5+1 HP > 5 dmg
+  })
+
+  it('Wuju Master: [Level 11] your units enter ready (with 11+ XP)', () => {
+    const wm = CARDS.find((c) => c.type === 'legend' && c.name === 'Master Yi - Wuju Master')
+    if (!wm) return
+    const s = baseState()
+    s.players[0].legend = mk(wm.id, 0)
+    s.players[0].xp = 11
+    const u = mk(injectCard('wm-unit', 'A unit.', { energy: 0, power: {} }), 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: emptyPayment() })
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.exhausted).toBe(false)
+  })
+})
+
 describe('Master Yi — quick wins', () => {
   it('Honed: a base "I enter ready" unit enters ready', () => {
     const id = injectCard('honed-test', '[Ganking] (I can move from battlefield to battlefield.) I enter ready.', { energy: 0, power: {} })

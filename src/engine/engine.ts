@@ -1554,8 +1554,35 @@ function buildAssignStep(
   return { dealer, side, targets: ordered.map((u) => u.iid), amount, manual, defeated, hp, tanks }
 }
 
-/** Flat combat-Might delta a battlefield grants units fighting on it (Trifarian
- *  War Camp +1, Forbidding Waste âˆ’2 alone, Black Flame Altar shield). */
+/** Conditional / legend-granted combat Might for a unit (not from its printed
+ *  stats): rune-count self buffs and global legend buffs. */
+function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone: boolean): number {
+  const d = def(u)
+  const owner = s.players[u.owner]
+  if (!d || !owner) return 0
+  let b = 0
+  const text = (d.text ?? '').toLowerCase()
+  // Self: "While you have N+ runes, I have +X Might." (Master Yi - Meditative)
+  const runeM = text.match(/while you have (\d+)\+? (?:or more )?runes?, i have \+(\d+)\s*(?::rb_might:|might)/)
+  if (runeM && owner.zones.runePool.length >= parseInt(runeM[1], 10)) b += parseInt(runeM[2], 10)
+  // Legend-granted global buffs.
+  const lt = (getCard(owner.legend?.cardId ?? '')?.text ?? '').toLowerCase()
+  if (lt) {
+    // "While a friendly unit defends alone, it gets +N Might." (Wuju Bladesman)
+    if (role === 'defender' && alone) {
+      const m = lt.match(/while a friendly unit defends alone,? it gets \+(\d+)\s*(?::rb_might:|might)/)
+      if (m) b += parseInt(m[1], 10)
+    }
+    // "[Level N] Your units have +M Might." while the controller has N+ XP. (Wuju Master)
+    const lvlM = lt.match(/\[level\s*(\d+)\][^.]*?your units have \+(\d+)\s*(?::rb_might:|might)/)
+    if (lvlM && owner.xp >= parseInt(lvlM[1], 10)) b += parseInt(lvlM[2], 10)
+  }
+  return b
+}
+
+/** Flat combat-Might delta granted to a unit fighting at a battlefield: the
+ *  battlefield's own bonus (Trifarian War Camp +1, Forbidding Waste âˆ’2 alone,
+ *  Black Flame Altar shield) plus any conditional / legend Might buffs. */
 function bfCombatBonus(
   s: MatchState,
   bfIndex: number,
@@ -1563,11 +1590,12 @@ function bfCombatBonus(
   defendersAlone: boolean,
 ): (u: EngineCard, role: CombatRole) => number {
   const script = bfScriptAt(s, bfIndex)
-  if (!script || (!script.mightHere && !script.shieldHere)) return () => 0
   return (u, role) => {
     const alone = role === 'attacker' ? attackersAlone : role === 'defender' ? defendersAlone : false
-    let b = script.mightHere ? script.mightHere(u, role, alone) : 0
-    if (role === 'defender' && script.shieldHere) b += script.shieldHere(u)
+    let b = 0
+    if (script?.mightHere) b += script.mightHere(u, role, alone)
+    if (role === 'defender' && script?.shieldHere) b += script.shieldHere(u)
+    b += conditionalMight(s, u, role, alone)
     return b
   }
 }
@@ -2263,7 +2291,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Yi - Honed), or the controller's legend grants it (Wuju Master L11).
         const levelReady = levelBonus(card, p.xp).ready
         const baseReady = /\bi enters? ready\b/i.test(card.text ?? '')
-        const entersReady = accelChosen || levelReady || baseReady
+        // Wuju Master: "[Level 11] Your units enter ready." while the controller has 11+ XP.
+        const legText = (getCard(p.legend?.cardId ?? '')?.text ?? '').toLowerCase()
+        const legReadyM = legText.match(/\[level\s*(\d+)\][^.]*?your units enter(?:s)? ready/)
+        const legendReady = !!legReadyM && p.xp >= parseInt(legReadyM[1], 10)
+        const entersReady = accelChosen || levelReady || baseReady || legendReady
         // Ambush: a Reaction unit enters directly at a contested battlefield.
         const ambushBf = kw.ambush && action.toBattlefield != null ? action.toBattlefield : null
         if (ambushBf != null) {
@@ -2841,9 +2873,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (s.showdown) {
         if (s.showdown.invite && (s.showdown.invite.from === action.player || s.showdown.invite.to === action.player))
           s.showdown.invite = undefined
-        // Their units left the battlefield; if a side is now empty the combat fizzles.
-        const parts = showdownParticipants(s)
-        if (parts.length < 2) {
+        // Their units left the battlefield. The combat fizzles if a side is now
+        // empty (fewer than two participants) or the attacker who opened it left.
+        const bfUnits = s.battlefields[s.showdown.battlefield].units
+        const moverGone = !bfUnits.some((u) => u.iid === s.showdown!.movedUnit)
+        if (showdownParticipants(s).length < 2 || moverGone) {
           s.showdown = null
           s.phase = 'action'
         } else if (s.showdown && s.showdown.priority === action.player) {
