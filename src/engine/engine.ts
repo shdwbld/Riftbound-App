@@ -348,6 +348,8 @@ function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: 
     const count = s.battlefields[bfIndex]?.units.filter((u) => u.owner === p.id).length ?? 0
     return count >= e.condition.value
   }
+  // [Level N][>] gate — the controller must have N+ XP (Wuju Apprentice).
+  if (e.condition.kind === 'xpAtLeast') return p.xp >= e.condition.value
   const hand = p.zones.hand.length
   return e.condition.kind === 'handAtMost' ? hand <= e.condition.value : hand >= e.condition.value
 }
@@ -370,9 +372,37 @@ function makeReflection(source: EngineCard, owner: PlayerId, turn: number, ready
   }
 }
 
+/** Auto-resolve a parsed "buff" effect (the +1 Might token). Self-buffs land on
+ *  the source unit; targeted buffs ("buff a/another friendly unit") auto-pick the
+ *  controller's highest-base-Might un-buffed unit — buffs can't stack, so already
+ *  buffed units gain nothing, and a fat target also turns on Lee Sin's auras. No
+ *  manual prompt (abilities auto-resolve). */
+function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: string): string[] {
+  if (!e.buff) return []
+  const lines: string[] = []
+  const give = (u: EngineCard | undefined) => {
+    if (!u || u.owner !== p.id || (u.buffs ?? 0) >= 1) return false
+    u.buffs = 1
+    emit({ kind: 'buff', iid: u.iid, player: p.id })
+    lines.push(`Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
+    return true
+  }
+  if (e.buffSelf) {
+    give(sourceIid ? findUnitAnywhere(s, sourceIid) : undefined)
+    return lines
+  }
+  const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+    .filter((u) => u.owner === p.id && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
+    .filter((u) => !(e.buffExcludesSelf && u.iid === sourceIid))
+    .sort((a, b) => (def(b)?.type === 'unit' ? (def(b) as { might: number }).might : 0) - (def(a)?.type === 'unit' ? (def(a) as { might: number }).might : 0))
+  for (let i = 0; i < e.buff && i < candidates.length; i++) give(candidates[i])
+  return lines
+}
+
 /** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text.
- *  `bfIndex` scopes any "units at that battlefield" condition (conquer triggers). */
-function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number): string[] {
+ *  `bfIndex` scopes any "units at that battlefield" condition (conquer triggers).
+ *  `sourceIid` is the unit the effect emanates from (for self-buff / ready-me). */
+function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, sourceIid?: string): string[] {
   const lines: string[] = []
   // A gated effect does nothing when its condition isn't met.
   if (!conditionMet(s, p, e, bfIndex)) return lines
@@ -398,6 +428,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Ready ${cnt} unit(s) â€” choose which.`)
     }
   }
+  if (e.readySelf && sourceIid) {
+    const u = findUnitAnywhere(s, sourceIid)
+    if (u && u.owner === p.id && u.exhausted) {
+      u.exhausted = false
+      emit({ kind: 'buff', iid: u.iid, player: p.id })
+      lines.push(`Readied ${getCard(u.cardId)?.name}.`)
+    }
+  }
+  for (const l of applyBuff(s, p, e, sourceIid)) lines.push(l)
   return lines
 }
 
@@ -453,19 +492,11 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number): M
     const p = s.players[player]
     const e = ability.effect
     let did = false
-    // `bfIndex` only scopes conquer triggers' "units at that battlefield".
-    for (const line of applyParsed(s, p, e, ability.event === 'conquer' ? bfIndex : undefined)) {
+    // `bfIndex` only scopes conquer triggers' "units at that battlefield";
+    // `sourceIid` lets self-buff / ready-me / "buff another" resolve correctly.
+    for (const line of applyParsed(s, p, e, ability.event === 'conquer' ? bfIndex : undefined, sourceIid)) {
       s = log(s, player, `${label}: ${line}`)
       did = true
-    }
-    if (e.buff && sourceIid) {
-      const u = findUnitAnywhere(s, sourceIid)
-      if (u && (u.buffs ?? 0) < 1) {
-        u.buffs = 1
-        emit({ kind: 'buff', iid: sourceIid, player })
-        s = log(s, player, `${label}: +1 Might.`)
-        did = true
-      }
     }
     // "give me +1 Might this turn" â€” temporary Might on the source unit.
     if (e.tempMightSelf && sourceIid) {
@@ -485,27 +516,53 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number): M
 
 /** Fire the self death triggers (Deathknell) of a set of defeated units. */
 function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
+  const isRecruit = (u: EngineCard) => (getCard(u.cardId)?.tags ?? []).includes('Recruit')
   const fired: FiredTrigger[] = []
-  for (const u of defeated)
+  for (const u of defeated) {
+    // Self death triggers (Deathknell).
     for (const ab of triggersFor(def(u), 'death'))
-      fired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
+      if (ab.scope !== 'global') fired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
+    // Global "when a unit you control dies" triggers (Viktor - Leader), on the
+    // dead unit's controller's other permanents.
+    for (const perm of controlledPermanents(s, u.owner)) {
+      if (perm.iid === u.iid) continue // "another" — not the dying unit itself
+      for (const ab of triggersFor(def(perm), 'death')) {
+        if (ab.scope !== 'global') continue
+        // "non-Recruit" gate (the qualifier sits in the trigger phrase, so check
+        // the source card's full text, not the parsed clause).
+        if (/non-recruit/i.test(getCard(perm.cardId)?.text ?? '') && isRecruit(u)) continue
+        fired.push({ player: u.owner, ability: ab, sourceIid: perm.iid })
+      }
+    }
+  }
   return fireTriggers(s, fired)
 }
 
 /** Whether a "when you play a <X>" trigger matches the card actually played.
  *  `text` is the trigger's clause (after "when you play a/an/another"), so the
  *  filter is its leading noun phrase (e.g. "token unit", "spell", "gear",
- *  "[Mighty] unit"). Gates the common card-type filters; "card" and conditions
- *  we can't parse (on an opponent's turn, from Hidden, cost thresholds) are not
- *  gated, so they fire as before. */
-function playTriggerMatches(text: string, card: Card): boolean {
-  const f = (text.toLowerCase().match(/^\s*([a-z[\] ]*?)(?:\s+(?:on|from|with|that|this|here|cost)\b|[.,;]|$)/)?.[1] ?? '').trim()
-  if (!f || f === 'card') return true
-  if (f.includes('token')) return card.supertype === 'token'
-  if (f.includes('spell')) return card.type === 'spell'
-  if (f.includes('gear')) return card.type === 'gear'
-  if (f.includes('mighty')) return isUnit(card) && card.might >= 5
-  if (f.includes('unit')) return card.type === 'unit'
+ *  "[Mighty] unit"). Gates the common card-type filters and a "that costs N or
+ *  more / or less" cost threshold (e.g. Lux — spells costing 5+). `cost` is the
+ *  effective Energy cost paid; when a threshold is present but `cost` is unknown
+ *  the trigger does NOT fire (better to under- than over-trigger). Filters we
+ *  still can't parse (opponent's turn, from Hidden) are left ungated. */
+function playTriggerMatches(text: string, card: Card, cost?: number): boolean {
+  const lc = text.toLowerCase()
+  const f = (lc.match(/^\s*([a-z[\] ]*?)(?:\s+(?:on|from|with|that|this|here|cost)\b|[.,;]|$)/)?.[1] ?? '').trim()
+  let typeOk = true
+  if (f && f !== 'card') {
+    if (f.includes('token')) typeOk = card.supertype === 'token'
+    else if (f.includes('spell')) typeOk = card.type === 'spell'
+    else if (f.includes('gear')) typeOk = card.type === 'gear'
+    else if (f.includes('mighty')) typeOk = isUnit(card) && card.might >= 5
+    else if (f.includes('unit')) typeOk = card.type === 'unit'
+  }
+  if (!typeOk) return false
+  // Cost threshold: "that costs :rb_energy_5: or more" / "… or less".
+  const moreM = lc.match(/costs?\s*(?::rb_energy_)?(\d+):?\s*or more/)
+  if (moreM && (cost == null || cost < parseInt(moreM[1], 10))) return false
+  const lessM = lc.match(/costs?\s*(?::rb_energy_)?(\d+):?\s*or less/)
+  if (lessM && (cost == null || cost > parseInt(lessM[1], 10))) return false
   return true
 }
 
@@ -531,9 +588,9 @@ function fireTokenPlay(s: MatchState, player: PlayerId, count: number): MatchSta
  *  countered on the chain still triggers these â€” rule 4.x / T2). Excludes the
  *  card just played so it doesn't react to its own entry, and skips triggers
  *  whose "when you play a <type>" filter the played card doesn't match. */
-function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, playedCard?: Card): MatchState {
+function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, playedCard?: Card, playedCost?: number): MatchState {
   let fired = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
-  if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard))
+  if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost))
   return fireTriggers(s, fired)
 }
 
@@ -959,7 +1016,7 @@ function moveUnits(
           // - Tempered) OR granted by the source battlefield (Windswept
           // Hillock). The destination must also allow it.
           const gankU = s.battlefields[i].units[idx]
-          const hasGank = keywordsAt(def(gankU), s.players[gankU.owner]?.xp ?? 0).ganking || !!bfScriptAt(s, i)?.grantsGanking
+          const hasGank = unitHasGanking(s, gankU) || !!bfScriptAt(s, i)?.grantsGanking
           if (!hasGank)
             return fail(state, 'Only units with Ganking can move between battlefields.')
           unit = s.battlefields[i].units.splice(idx, 1)[0]
@@ -1276,14 +1333,29 @@ function finishBeginning(s: MatchState): MatchState {
     if (legendCard && parseTriggers(legendCard).length === 0) {
       const e = spellEffect(legendCard)
       if (e.draw || e.channel || e.recruits || e.goldTokens || e.namedToken) {
-        p.legend.exhausted = true
-        for (const line of applyParsed(s, p, e)) s = log(s, ap, `${legendCard.name} (auto): ${line}`)
+        // Costed activated abilities (":rb_energy_N:, :rb_exhaust:: â€¦", e.g. Viktor
+        // - Herald of the Arcane) must pay their Energy cost â€” fire only when the
+        // player can afford it (auto-pay), never for free.
+        const act = legendActivationCost(legendCard)
+        if (!act || makeBfApi(s).payEnergy(ap, act.energy)) {
+          p.legend.exhausted = true
+          for (const line of applyParsed(s, p, e)) s = log(s, ap, `${legendCard.name} (auto): ${line}`)
+        }
       }
     }
   }
 
   s.phase = 'action'
   return s
+}
+
+/** The Energy cost of a legend's costed activated ability (":rb_energy_N:,
+ *  :rb_exhaust:: â€¦"), or null when the legend isn't an exhaust-activated ability. */
+function legendActivationCost(card: Card): { energy: number } | null {
+  const t = (card.text ?? '').toLowerCase()
+  if (!t.includes(':rb_exhaust:')) return null
+  const m = t.slice(0, t.indexOf(':rb_exhaust:')).match(/:rb_energy_(\d+):/)
+  return { energy: m ? parseInt(m[1], 10) : 0 }
 }
 
 /** Burn Out (empty-deck draw): recycle Trash into the Main Deck, shuffle, and a
@@ -1465,6 +1537,18 @@ export function combatMight(ci: EngineCard, role: 'attacker' | 'defender'): numb
   return damageOutput(ci, role)
 }
 
+/** A unit's full state-aware combat Might at a battlefield: its printed/buff/gear
+ *  Might plus conditional self-bonuses ("while buffed", "while alone"), unit auras
+ *  (Lee Sin - Centered), battlefield scripts, and legend buffs. "Alone" means u's
+ *  side fields exactly one unit here. */
+export function combatMightAt(s: MatchState, bfIndex: number, u: EngineCard, role: 'attacker' | 'defender'): number {
+  const bf = s.battlefields[bfIndex]
+  if (!bf) return 0
+  const alone = bf.units.filter((x) => x.owner === u.owner).length === 1
+  const bonusOf = bfCombatBonus(s, bfIndex, role === 'attacker' && alone, role === 'defender' && alone)
+  return Math.max(0, mightOf(u, role, s.players[u.owner]?.xp ?? 0) + bonusOf(u, role))
+}
+
 /** Flat +Might from attached gear (for UI badges). */
 export function gearBonus(ci: EngineCard): number {
   return gearMight(ci)
@@ -1565,6 +1649,16 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   // Self: "While you have N+ runes, I have +X Might." (Master Yi - Meditative)
   const runeM = text.match(/while you have (\d+)\+? (?:or more )?runes?, i have \+(\d+)\s*(?::rb_might:|might)/)
   if (runeM && owner.zones.runePool.length >= parseInt(runeM[1], 10)) b += parseInt(runeM[2], 10)
+  // Self: "While I'm buffed, I have an additional +N Might." (Wizened Elder)
+  if ((u.buffs ?? 0) > 0) {
+    const bm = text.match(/while (?:i'm|i am) buffed,? i have (?:an? )?(?:additional )?\+(\d+)\s*(?::rb_might:|might)/)
+    if (bm) b += parseInt(bm[1], 10)
+  }
+  // Self: "While I'm attacking or defending alone, I have +N Might." (Wielder of Water)
+  if (alone && (role === 'attacker' || role === 'defender')) {
+    const am = text.match(/while (?:i'm|i am) attacking (?:or defending )?alone,? i have \+(\d+)\s*(?::rb_might:|might)/)
+    if (am) b += parseInt(am[1], 10)
+  }
   // Legend-granted global buffs.
   const lt = (getCard(owner.legend?.cardId ?? '')?.text ?? '').toLowerCase()
   if (lt) {
@@ -1580,6 +1674,29 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   return b
 }
 
+/** Whether a unit can Gank (move battlefield-to-battlefield) right now. Honors
+ *  conditional grants like Bilgewater Bully's "While I'm buffed, I have [Ganking]"
+ *  — the keyword scanner reads the bracket unconditionally, so re-gate it here. */
+function unitHasGanking(s: MatchState, u: EngineCard): boolean {
+  const t = (def(u)?.text ?? '').toLowerCase()
+  if (/while (?:i'm|i am) buffed,?[^.]*\[ganking\]/.test(t)) return (u.buffs ?? 0) > 0
+  return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking
+}
+
+/** Unit-granted auras among units sharing a battlefield. Lee Sin - Centered:
+ *  "Other buffed friendly units at my battlefield have +2 Might." applies to
+ *  each OTHER friendly buffed unit standing with him. */
+function auraMightHere(here: EngineCard[], u: EngineCard): number {
+  let b = 0
+  for (const src of here) {
+    if (src.iid === u.iid || src.owner !== u.owner) continue // OTHER friendly units only
+    const t = (def(src)?.text ?? '').toLowerCase()
+    const m = t.match(/other buffed friendly units at my battlefield have \+(\d+)\s*(?::rb_might:|might)/)
+    if (m && (u.buffs ?? 0) > 0) b += parseInt(m[1], 10)
+  }
+  return b
+}
+
 /** Flat combat-Might delta granted to a unit fighting at a battlefield: the
  *  battlefield's own bonus (Trifarian War Camp +1, Forbidding Waste âˆ’2 alone,
  *  Black Flame Altar shield) plus any conditional / legend Might buffs. */
@@ -1590,12 +1707,14 @@ function bfCombatBonus(
   defendersAlone: boolean,
 ): (u: EngineCard, role: CombatRole) => number {
   const script = bfScriptAt(s, bfIndex)
+  const here = s.battlefields[bfIndex]?.units ?? []
   return (u, role) => {
     const alone = role === 'attacker' ? attackersAlone : role === 'defender' ? defendersAlone : false
     let b = 0
     if (script?.mightHere) b += script.mightHere(u, role, alone)
     if (role === 'defender' && script?.shieldHere) b += script.shieldHere(u)
     b += conditionalMight(s, u, role, alone)
+    b += auraMightHere(here, u)
     return b
   }
 }
@@ -2162,15 +2281,20 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const p = s.players[action.player]
       if (!p.legend) return fail(state, 'No legend in play.')
       if (p.legend.exhausted) return fail(state, 'Legend already used this turn.')
-      // Generic activation: exhaust the legend. Specific effects are surfaced
-      // for manual resolution (per-legend scripting is out of scope).
-      p.legend = { ...p.legend, exhausted: true }
       const legendCard = getCard(p.legend.cardId)
+      // Pay the activated ability's Energy cost ("1, exhaust: …" — Lee Sin's
+      // buff). The exhaust half is the legend tapping below.
+      const costM = (legendCard?.text ?? '').match(/:rb_energy_(\d+):\s*,\s*:rb_exhaust:/)
+      if (costM && !makeBfApi(s).payEnergy(action.player, parseInt(costM[1], 10)))
+        return fail(state, `Not enough Energy to use ${legendCard?.name ?? 'the legend'}.`)
+      // Generic activation: exhaust the legend, then auto-resolve its parsed
+      // effect (draw/channel/buff/…); anything we can't parse is surfaced.
+      p.legend = { ...p.legend, exhausted: true }
       let s1 = log(s, action.player, `${legendCard?.name ?? 'Legend'} ability used.`)
       if (legendCard) {
         const e = spellEffect(legendCard)
         for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
-        if (!e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken)
+        if (!e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !e.buff && !e.readySelf)
           s1 = log(s1, action.player, `(Resolve the legend's effect manually.)`)
       }
       return ok(s1)
@@ -2314,7 +2438,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const e = onPlayEffect(card)
         const legionGated = kw.legion && !legionActive
         if (!legionGated) {
-          for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
+          for (const line of applyParsed(s1, p, e, undefined, ci.iid)) s1 = log(s1, action.player, line)
           s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(e)) // Lillia: token-unit play synergy
         } else {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
@@ -2347,7 +2471,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             s1 = log(s1, action.player, `Weaponmaster: no Equipment in hand to attach.`)
           }
         }
-        s1 = firePlayTriggers(s1, action.player, ci.iid, card)
+        s1 = firePlayTriggers(s1, action.player, ci.iid, card, effCost.energy)
         return ok(s1)
       }
 
@@ -2358,12 +2482,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             if (u.iid === action.targetIid && u.owner === action.player) {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
-              return ok(firePlayTriggers(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`), action.player, ci.iid, card))
+              return ok(firePlayTriggers(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`), action.player, ci.iid, card, effCost.energy))
             }
         }
         p.zones.base.push({ ...ci })
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
-        return ok(firePlayTriggers(log(s, action.player, `Played gear ${card.name} (unattached).`), action.player, ci.iid, card))
+        return ok(firePlayTriggers(log(s, action.player, `Played gear ${card.name} (unattached).`), action.player, ci.iid, card, effCost.energy))
       }
 
       // Spell. In a showdown we resolve immediately (legacy path). In the
@@ -2371,7 +2495,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (inShowdown) {
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         // "When you play a spell" triggers fire as it's played, before it resolves.
-        let s1 = firePlayTriggers(s, action.player, ci.iid, card)
+        let s1 = firePlayTriggers(s, action.player, ci.iid, card, effCost.energy)
         s1 = bfSpellPlayed(s1, action.player, effCost.energy)
         s1 = resolveSpellEffects(s1, action.player, card, action.targets)
         if (repeatChosen) {
@@ -2396,7 +2520,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       s.priority = nextPlayer(s, action.player)
       // Play-triggers fire now (before the chain resolves), so they still happen
       // even if this spell is later Countered.
-      let sPlayed = firePlayTriggers(s, action.player, ci.iid, card)
+      let sPlayed = firePlayTriggers(s, action.player, ci.iid, card, effCost.energy)
       sPlayed = bfSpellPlayed(sPlayed, action.player, effCost.energy)
       return ok(
         log(sPlayed, action.player, `Played ${card.name} â€” it's on the Chain (opponents may respond).`),

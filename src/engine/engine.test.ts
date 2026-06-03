@@ -1441,6 +1441,52 @@ describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
   })
 })
 
+describe('Viktor deck — core engine', () => {
+  const recruit = TOKEN_PILE_IDS[0]
+  const recruitCount = (st: MatchState, pl: number) => st.players[pl].zones.base.filter((u) => u.cardId === recruit).length
+
+  it('Viktor - Herald (legend): auto-recruits but PAYS its 1 Energy (not free)', () => {
+    const herald = CARDS.find((c) => c.type === 'legend' && c.name === 'Viktor - Herald of the Arcane')
+    if (!herald || !recruit) return
+    const s = baseState()
+    s.players[0].legend = mk(herald.id, 0)
+    s.players[0].zones.runeDeck = [mk(furyRune.id, 0), mk(furyRune.id, 0)] // channels 2 → can pay 1
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const r = beginTurn(s)
+    expect(recruitCount(r, 0)).toBe(1) // fired
+    expect(r.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(1) // paid 1
+  })
+
+  it('Viktor - Herald: does NOT fire when it can\'t pay the Energy', () => {
+    const herald = CARDS.find((c) => c.type === 'legend' && c.name === 'Viktor - Herald of the Arcane')
+    if (!herald || !recruit) return
+    const s = baseState()
+    s.players[0].legend = mk(herald.id, 0)
+    s.players[0].zones.runeDeck = [] // nothing to channel → no Energy
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    expect(recruitCount(beginTurn(s), 0)).toBe(0)
+  })
+
+  it('Viktor - Leader: a non-Recruit ally dying makes a Recruit; a Recruit dying does not', () => {
+    const leader = CARDS.find((c) => c.type === 'unit' && c.name === 'Viktor - Leader')
+    if (!leader || !recruit) return
+    const leaderId = leader.id
+    const strongId = injectCard('vl-strong', 'A unit.', { might: 9 })
+    function killAllyAtBf(victim: EngineCard): number {
+      const s = baseState()
+      s.players[0].zones.base.push(mk(leaderId, 0)) // Leader in play
+      s.battlefields[0] = { cardId: battlefield.id, units: [mk(strongId, 1, { exhausted: true })], controller: 1 }
+      s.players[0].zones.base.push(victim)
+      let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: victim.iid, toBattlefield: 0 }) // victim dies (5/9)
+      r = reduce(r.state, { type: 'PASS', player: 1 })
+      r = reduce(r.state, { type: 'PASS', player: 0 })
+      return recruitCount(r.state, 0)
+    }
+    expect(killAllyAtBf(mk(furyUnit.id, 0))).toBe(1) // non-Recruit died → +1 Recruit
+    expect(killAllyAtBf(mk(recruit, 0))).toBe(0) // a Recruit died → gated, no new Recruit
+  })
+})
+
 describe('Phase A — cost increases + Repeat grant/discount', () => {
   const bf = (name: string) => CARDS.find((c) => c.type === 'battlefield' && c.name === name)
 
@@ -1758,6 +1804,42 @@ describe('Vex - Gloomist legend (draws only on hold, not every turn)', () => {
   })
 })
 
+describe('[Level N][>] gated on-play draw (Wuju Apprentice)', () => {
+  // "[Level 6][>] When you play me, draw 1." — the draw must only happen with
+  // 6+ XP. Previously the parser stripped the gate and drew on every play.
+  const unitId = injectCard(
+    'wuju-apprentice-test',
+    '[Hunt] [Level 6][&gt;] When you play me, draw 1.',
+    { energy: 0, power: {} },
+  )
+
+  function drawnAtXp(xp: number): number {
+    const s = baseState()
+    s.players[0].xp = xp
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const card = mk(unitId, 0)
+    s.players[0].zones.hand.push(card)
+    const before = s.players[0].zones.hand.length
+    const { state, error } = reduce(s, {
+      type: 'PLAY_UNIT', player: 0, iid: card.iid,
+      payment: { exhaust: [], recycle: [], poolEnergy: 0, poolPower: {} },
+    })
+    expect(error).toBeUndefined()
+    // -1 because the played unit left the hand; the net delta is the cards drawn.
+    return state.players[0].zones.hand.length - (before - 1)
+  }
+
+  it('does not draw below the XP threshold', () => {
+    expect(drawnAtXp(0)).toBe(0)
+    expect(drawnAtXp(5)).toBe(0)
+  })
+
+  it('draws once at or above the XP threshold', () => {
+    expect(drawnAtXp(6)).toBe(1)
+    expect(drawnAtXp(9)).toBe(1)
+  })
+})
+
 describe('battlefield choice prompts (Emperor\'s Dais / move-to-base)', () => {
   it("Emperor's Dais: conquering offers return-a-unit, which plays a Sand Soldier", () => {
     const dais = CARDS.find((c) => c.type === 'battlefield' && c.name === "Emperor's Dais")
@@ -1847,5 +1929,64 @@ describe('Predict / Repeat keywords', () => {
     expect(r.state.chain.length).toBe(0)
     // -1 spell leaves hand, +2 drawn from the repeated effect → net +1.
     expect(r.state.players[0].zones.hand.length).toBe(before - 1 + 2)
+  })
+})
+
+describe('Lux — spell-cost play triggers gate on cost', () => {
+  // Play a spell of the given Energy cost (paying with that many runes) and
+  // resolve the chain, returning the post-resolution state.
+  function playSpellOfCost(s: MatchState, energy: number) {
+    const spellId = injectCard(`lux-spell-${energy}-${n}`, 'Channel 1.', { type: 'spell', energy, power: {} })
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    const runeIids: string[] = []
+    for (let i = 0; i < energy; i++) {
+      const r = mk(furyRune.id, 0)
+      s.players[0].zones.runePool.push(r)
+      runeIids.push(r.iid)
+    }
+    let r = reduce(s, {
+      type: 'PLAY_SPELL', player: 0, iid: sp.iid,
+      payment: { exhaust: runeIids, recycle: [], poolEnergy: 0, poolPower: {} },
+    })
+    expect(r.error).toBeUndefined()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    return r.state
+  }
+
+  it('Lux - Illuminated: +3 Might only when the spell costs 5+', () => {
+    // Cheap spell (cost 1) — no buff.
+    let s = baseState()
+    const luxA = mk('ogs-006-024', 0)
+    s.players[0].zones.base.push(luxA)
+    s = playSpellOfCost(s, 1)
+    expect(s.players[0].zones.base.find((u) => u.iid === luxA.iid)!.tempMight ?? 0).toBe(0)
+
+    // Expensive spell (cost 6) — +3 Might this turn.
+    let s2 = baseState()
+    const luxB = mk('ogs-006-024', 0)
+    s2.players[0].zones.base.push(luxB)
+    s2 = playSpellOfCost(s2, 6)
+    expect(s2.players[0].zones.base.find((u) => u.iid === luxB.iid)!.tempMight ?? 0).toBe(3)
+  })
+
+  it('Lux - Lady of Luminosity (legend): draw 1 only when the spell costs 5+', () => {
+    // Cheap spell — no extra draw.
+    let s = baseState()
+    s.players[0].legend = mk('ogs-021-024', 0)
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const handBeforeCheap = s.players[0].zones.hand.length
+    s = playSpellOfCost(s, 1)
+    // played spell left hand (−1), no draw → hand back to start − 1 net of the added spell.
+    expect(s.players[0].zones.hand.length).toBe(handBeforeCheap)
+
+    // Expensive spell — draw 1.
+    let s2 = baseState()
+    s2.players[0].legend = mk('ogs-021-024', 0)
+    for (let i = 0; i < 4; i++) s2.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const handBeforeBig = s2.players[0].zones.hand.length
+    s2 = playSpellOfCost(s2, 6)
+    expect(s2.players[0].zones.hand.length).toBe(handBeforeBig + 1)
   })
 })

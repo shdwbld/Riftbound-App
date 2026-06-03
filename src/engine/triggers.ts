@@ -45,6 +45,8 @@ interface Pattern {
 // Order matters only for readability; each pattern is tested independently.
 const PATTERNS: Pattern[] = [
   { event: 'death', scope: 'self', re: /when(?:ever)?\s+(?:i['’]?m|i am|this(?:\s+unit)?\s+is|this(?:\s+unit)?)\s+(?:defeated|killed|destroyed|dies)/i },
+  // "When another non-Recruit unit you control dies" (Viktor - Leader) — global.
+  { event: 'death', scope: 'global', re: /when(?:ever)?\s+(?:another\s+|an?\s+)?(?:non-recruit\s+)?units?\s+you\s+control\s+(?:dies|is\s+defeated|are\s+defeated)/i },
   { event: 'conquer', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+conquers?/i },
   { event: 'conquer', scope: 'global', re: /when(?:ever)?\s+you\s+conquer/i },
   // "When you hold", "When you or an ally hold", "When an ally holds" (Vex - Gloomist).
