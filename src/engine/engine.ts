@@ -575,7 +575,8 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     }
   }
   if (costPaid && e.readySelf && sourceIid) {
-    const u = findUnitAnywhere(s, sourceIid)
+    // The source may be a legend (Sivir - Battle Mistress: "… ready me").
+    const u = findUnitAnywhere(s, sourceIid) ?? (p.legend?.iid === sourceIid ? p.legend : undefined)
     if (u && u.owner === p.id && u.exhausted) {
       u.exhausted = false
       emit({ kind: 'buff', iid: u.iid, player: p.id })
@@ -724,14 +725,28 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
   return s
 }
 
-/** Fire the self death triggers (Deathknell) of a set of defeated units. */
+/** How many times a player's [Deathknell] effects fire: 1 plus one per controlled
+ *  permanent reading "your [Deathknell] effects trigger an additional time"
+ *  (Karthus - Eternal). */
+function deathknellMultiplier(s: MatchState, player: PlayerId): number {
+  return 1 + controlledPermanents(s, player).filter(
+    (p) => /your \[?deathknell\]? effects trigger an additional time/i.test(getCard(p.cardId)?.text ?? ''),
+  ).length
+}
+
+/** Fire the death triggers of a set of defeated units: each unit's own
+ *  [Deathknell] (×N if its controller has Karthus - Eternal), the controller's
+ *  global "when a unit you control dies" triggers (Viktor), and every OTHER
+ *  player's "when an enemy unit dies" triggers (Pyke - Returned, Sivir). */
 function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
   const isRecruit = (u: EngineCard) => (getCard(u.cardId)?.tags ?? []).includes('Recruit')
   const fired: FiredTrigger[] = []
   for (const u of defeated) {
-    // Self death triggers (Deathknell).
+    // Self death triggers (Deathknell) — fired an extra time per Karthus - Eternal.
+    const mult = deathknellMultiplier(s, u.owner)
     for (const ab of triggersFor(def(u), 'death'))
-      if (ab.scope !== 'global') fired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
+      if (ab.scope !== 'global')
+        for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
     // Global "when a unit you control dies" triggers (Viktor - Leader), on the
     // dead unit's controller's other permanents.
     for (const perm of controlledPermanents(s, u.owner)) {
@@ -742,6 +757,18 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
         // the source card's full text, not the parsed clause).
         if (/non-recruit/i.test(getCard(perm.cardId)?.text ?? '') && isRecruit(u)) continue
         fired.push({ player: u.owner, ability: ab, sourceIid: perm.iid })
+      }
+    }
+    // Enemy-death triggers: OTHER players reacting to this unit dying (Pyke -
+    // Returned, Sivir - Battle Mistress). "while I'm at a battlefield" gates the
+    // source to a battlefield (Pyke).
+    for (let pl = 0; pl < s.players.length; pl++) {
+      if (pl === u.owner) continue
+      for (const perm of controlledPermanents(s, pl)) {
+        for (const ab of triggersFor(def(perm), 'enemyDeath')) {
+          if (/while i'?m at a battlefield/i.test(getCard(perm.cardId)?.text ?? '') && battlefieldOf(s, perm.iid) < 0) continue
+          fired.push({ player: pl, ability: ab, sourceIid: perm.iid })
+        }
       }
     }
   }

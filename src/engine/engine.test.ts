@@ -715,6 +715,65 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[1].zones.trash.some((x) => x.iid === enemy.iid)).toBe(false)
   })
 
+  it('Karthus - Eternal: a Deathknell fires an additional time (draw 1 → draw 2)', () => {
+    const karthus = injectCard('karthus-test', 'Your [Deathknell] effects trigger an additional time.', { might: 5 })
+    const sentry = injectCard('sentry-test', '[Deathknell] — Draw 1. (When I die, get the effect.)', { might: 1 })
+    const s = baseState()
+    s.sandbox = true
+    s.players[0].zones.base.push(mk(karthus, 0))
+    const sentryU = mk(sentry, 0)
+    s.battlefields[0].units.push(sentryU)
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: sentryU.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(2) // Deathknell doubled
+  })
+
+  it('Karthus absent: the same Deathknell fires once (draw 1)', () => {
+    const sentry = injectCard('sentry-test2', '[Deathknell] — Draw 1. (When I die, get the effect.)', { might: 1 })
+    const s = baseState()
+    s.sandbox = true
+    const sentryU = mk(sentry, 0)
+    s.battlefields[0].units.push(sentryU)
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: sentryU.iid })
+    expect(r.state.players[0].zones.hand.length).toBe(1)
+  })
+
+  it('Sivir - Battle Mistress: readies when an enemy unit dies', () => {
+    const sivir = injectCard('sivir-test', 'When one or more enemy units die, ready me.', { type: 'legend' })
+    const s = baseState()
+    s.sandbox = true
+    s.players[0].legend = mk(sivir, 0, { exhausted: true })
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0].units.push(enemy)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: enemy.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].legend?.exhausted).toBe(false) // readied
+  })
+
+  it('Pyke - Returned: makes a Gold token on an enemy death, only while at a battlefield', () => {
+    if (!GOLD_TOKEN_ID) return // dataset has no Gold token
+    const pyke = injectCard('pyke-test', "Once each turn, when an enemy unit dies while I'm at a battlefield, play a Gold gear token exhausted.", { might: 4 })
+    const goldCount = (st: MatchState) => st.players[0].zones.base.filter((u) => u.cardId === GOLD_TOKEN_ID).length
+    // Pyke at a battlefield → token created.
+    let s = baseState()
+    s.sandbox = true
+    s.battlefields[0].units.push(mk(pyke, 0))
+    let enemy = mk(furyUnit.id, 1)
+    s.battlefields[1].units.push(enemy)
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: enemy.iid })
+    expect(goldCount(r.state)).toBe(1)
+    // Pyke in base (not at a battlefield) → no token.
+    s = baseState()
+    s.sandbox = true
+    s.players[0].zones.base.push(mk(pyke, 0))
+    enemy = mk(furyUnit.id, 1)
+    s.battlefields[1].units.push(enemy)
+    r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: enemy.iid })
+    expect(goldCount(r.state)).toBe(0)
+  })
+
   it('auto-parses named token creation (Sand Soldier / Bird / Mech)', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) =>
