@@ -26,7 +26,7 @@ function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
   return Math.floor((s.turn - 1 - rank) / s.players.length) + 1
 }
 import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, type ParsedEffect } from './effects'
-import { triggersFor, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
+import { triggersFor, parseTriggers, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
 import { battlefieldPassive } from './battlefields'
 
 // ---------------------------------------------------------------------------
@@ -309,9 +309,17 @@ function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, 
   return n
 }
 
-/** Whether a parsed effect's gating condition (if any) is satisfied for `p`. */
-function conditionMet(p: PlayerState, e: ParsedEffect): boolean {
+/** Whether a parsed effect's gating condition (if any) is satisfied for `p`.
+ *  `bfIndex` is the relevant battlefield for "units at that battlefield"
+ *  conditions (supplied by conquer triggers); without it such a condition
+ *  cannot be satisfied. */
+function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number): boolean {
   if (!e.condition) return true
+  if (e.condition.kind === 'unitsHereAtLeast') {
+    if (bfIndex == null) return false
+    const count = s.battlefields[bfIndex]?.units.filter((u) => u.owner === p.id).length ?? 0
+    return count >= e.condition.value
+  }
   const hand = p.zones.hand.length
   return e.condition.kind === 'handAtMost' ? hand <= e.condition.value : hand >= e.condition.value
 }
@@ -334,12 +342,12 @@ function makeReflection(source: EngineCard, owner: PlayerId, turn: number, ready
   }
 }
 
-/** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text. */
-function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect): string[] {
+/** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text.
+ *  `bfIndex` scopes any "units at that battlefield" condition (conquer triggers). */
+function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number): string[] {
   const lines: string[] = []
-  // A gated effect ("… if you have one or fewer cards in your hand") does
-  // nothing when its condition isn't met.
-  if (!conditionMet(p, e)) return lines
+  // A gated effect does nothing when its condition isn't met.
+  if (!conditionMet(s, p, e, bfIndex)) return lines
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
   if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
@@ -409,7 +417,7 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
 
 /** Apply fired triggers' auto-resolvable effects (ordered turn-player first,
  *  rule 4.6); log the remainder for manual resolution. */
-function fireTriggers(s: MatchState, fired: FiredTrigger[]): MatchState {
+function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number): MatchState {
   if (fired.length === 0) return s
   const ordered = orderTriggers(fired, s.activePlayer, s.players.length)
   for (const { player, ability, sourceIid } of ordered) {
@@ -417,7 +425,8 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[]): MatchState {
     const p = s.players[player]
     const e = ability.effect
     let did = false
-    for (const line of applyParsed(s, p, e)) {
+    // `bfIndex` only scopes conquer triggers' "units at that battlefield".
+    for (const line of applyParsed(s, p, e, ability.event === 'conquer' ? bfIndex : undefined)) {
       s = log(s, player, `${label}: ${line}`)
       did = true
     }
@@ -907,9 +916,9 @@ function moveUnits(
     s2 = awardPoints(s2, player, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
     s2 = grantHunt(s2, player, toBattlefield)
     s2 = applyConquerPassive(s2, player, toBattlefield)
-    s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'))
+    s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'), toBattlefield)
     const here = s2.battlefields[toBattlefield].units.filter((u) => u.owner === player).map((u) => u.iid)
-    s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here))
+    s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here), toBattlefield)
     offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
   }
   return ok(s2)
@@ -1173,12 +1182,13 @@ function finishBeginning(s: MatchState): MatchState {
 
   // Auto-activate the Legend's ability once per turn (its auto-resolvable parts:
   // draw / channel / recruit). No manual button â€” abilities resolve themselves.
-  // Skip legends whose ability is a "start of your Beginning Phase" trigger:
-  // those already fired via the trigger system above, so re-running them here
-  // would double-apply (e.g. Jinx - Loose Cannon drawing twice).
+  // Skip legends whose ability is a TRIGGERED ability (conquer / start-of-turn /
+  // death / â€¦): those fire on their own event, so auto-resolving the parsed
+  // "draw N" here would wrongly fire it every turn (e.g. Garen - Might of
+  // Demacia drawing 2 each turn; Jinx already handled via the trigger system).
   if (p.legend && !p.legend.exhausted) {
     const legendCard = getCard(p.legend.cardId)
-    if (legendCard && triggersFor(legendCard, 'startOfTurn').length === 0) {
+    if (legendCard && parseTriggers(legendCard).length === 0) {
       const e = spellEffect(legendCard)
       if (e.draw || e.channel || e.recruits || e.goldTokens || e.namedToken) {
         p.legend.exhausted = true
@@ -1663,8 +1673,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
     s = grantHunt(s, moverOwner, bfIndex)
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
-    s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'))
-    s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere))
+    s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex)
+    s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere), bfIndex)
     offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
   }
   return s

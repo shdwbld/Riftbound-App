@@ -1490,6 +1490,36 @@ describe('Phase A — cost increases + Repeat grant/discount', () => {
   })
 })
 
+describe('Garen - Might of Demacia legend (conquer-conditioned draw)', () => {
+  const garen = () => CARDS.find((c) => c.type === 'legend' && c.name === 'Garen - Might of Demacia')
+
+  function conquerWith(units: number): number {
+    const s = baseState()
+    s.players[0].legend = mk(garen()!.id, 0)
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    const us = Array.from({ length: units }, () => mk(furyUnit.id, 0))
+    us.forEach((u) => s.players[0].zones.base.push(u))
+    const before = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: us.map((u) => u.iid), toBattlefield: 0 })
+    return r.state.players[0].zones.hand.length - before
+  }
+
+  it('draws 2 only when conquering with 4+ units at that battlefield', () => {
+    if (!garen()) return
+    expect(conquerWith(4)).toBe(2) // 4+ units → draw 2
+    expect(conquerWith(3)).toBe(0) // fewer than 4 → no draw
+  })
+
+  it('does NOT auto-draw at the start of turn (it is a conquer trigger, not passive)', () => {
+    if (!garen()) return
+    const s = baseState()
+    s.players[0].legend = mk(garen()!.id, 0)
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    expect(beginTurn(s).players[0].zones.hand.length).toBe(1) // just the regular draw, not +2
+  })
+})
+
 describe("Jinx - Loose Cannon legend (conditional, no double-draw)", () => {
   const legendText = 'At start of your Beginning Phase, draw 1 if you have one or fewer cards in your hand.'
   const legendId = injectCard('jinx-loose-cannon', legendText, { type: 'legend' })

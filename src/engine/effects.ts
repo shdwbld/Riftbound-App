@@ -43,9 +43,11 @@ export interface ParsedEffect {
   /** A target must be on a battlefield (not at base). */
   battlefieldOnly: boolean
   /** A gating condition the effect's controller must meet for it to apply
-   *  (e.g. Jinx — "draw 1 if you have one or fewer cards in your hand"). The
-   *  caller (applyParsed) evaluates it against game state. Null = unconditional. */
-  condition: { kind: 'handAtMost' | 'handAtLeast'; value: number } | null
+   *  (e.g. Jinx — "draw 1 if you have one or fewer cards in your hand"; Garen —
+   *  "if you have 4+ units at that battlefield"). The caller (applyParsed)
+   *  evaluates it against game state. Null = unconditional. `unitsHereAtLeast`
+   *  needs the relevant battlefield's index, supplied at the trigger site. */
+  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast'; value: number } | null
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
@@ -110,6 +112,9 @@ function parse(text: string): ParsedEffect {
   if (condAtMost) eff.condition = { kind: 'handAtMost', value: num(condAtMost[1]) }
   const condAtLeast = t.match(new RegExp(`if you have ${NUM} or more cards? in your hand`))
   if (condAtLeast) eff.condition = { kind: 'handAtLeast', value: num(condAtLeast[1]) }
+  // "if you have 4+ units at that battlefield" / "N or more units at …" (Garen).
+  const condUnits = t.match(new RegExp(`if you have (\\d+)\\+? (?:or more )?units? at (?:that|this|the) battlefield`))
+  if (condUnits) eff.condition = { kind: 'unitsHereAtLeast', value: parseInt(condUnits[1], 10) }
 
   // Conditional draw on a kill ("if this kills it … draw 1"); detected first so
   // its "draw N" isn't also counted as an unconditional draw.
