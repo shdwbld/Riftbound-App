@@ -243,10 +243,10 @@ function drawN(p: PlayerState, n: number): number {
   return drew
 }
 
-function channelN(p: PlayerState, n: number): number {
+function channelN(p: PlayerState, n: number, exhausted = false): number {
   let ch = 0
   for (let i = 0; i < n && p.zones.runeDeck.length > 0; i++) {
-    p.zones.runePool.push({ ...p.zones.runeDeck.shift()!, exhausted: false })
+    p.zones.runePool.push({ ...p.zones.runeDeck.shift()!, exhausted })
     ch++
   }
   return ch
@@ -319,13 +319,23 @@ function spawnGold(p: PlayerState, n: number, turn: number): number {
   return n
 }
 
-/** Create N copies of a named unit token (Sprite / Sand Soldier / Bird / Mech)
- *  onto a player's Base. Returns how many were actually created. */
-function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, exhausted: boolean, temporary = false): number {
+/** Create N copies of a named unit token (Sprite / Sand Soldier / Bird / Mech).
+ *  Pushes onto `dest` (a battlefield's unit list for "… here") or the player's
+ *  Base by default. Returns how many were actually created. */
+function spawnNamedToken(
+  p: PlayerState,
+  name: string,
+  n: number,
+  turn: number,
+  exhausted: boolean,
+  temporary = false,
+  dest?: EngineCard[],
+): number {
   const id = TOKEN_BY_NAME[name.toLowerCase()]
   if (!id) return 0
+  const pile = dest ?? p.zones.base
   for (let i = 0; i < n; i++)
-    p.zones.base.push({
+    pile.push({
       iid: `${p.id}:tok:${id}#${(tokenCounter++).toString(36)}`,
       cardId: id,
       owner: p.id,
@@ -336,6 +346,12 @@ function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, 
       ...(temporary ? { temporary: true } : {}),
     })
   return n
+}
+
+/** The battlefield index a unit instance sits on, or -1 if at base / not found. */
+function bfIndexOfUnit(s: MatchState, iid: string | undefined): number {
+  if (!iid) return -1
+  return s.battlefields.findIndex((b) => b.units.some((u) => u.iid === iid))
 }
 
 /** Whether a parsed effect's gating condition (if any) is satisfied for `p`.
@@ -409,13 +425,19 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (!conditionMet(s, p, e, bfIndex)) return lines
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
+  // "Channel N rune(s) exhausted" (Soaring Scout) — the channeled runes enter exhausted.
+  if (e.channelExhausted) lines.push(`Channeled ${channelN(p, e.channelExhausted, true)} (exhausted).`)
   if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
   if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn)} Gold token(s).`)
   if (e.namedToken) {
-    const made = spawnNamedToken(p, e.namedToken.name, e.namedToken.count, s.turn, e.namedToken.exhausted, e.namedToken.temporary)
+    // "… here" plays the token at the source unit's battlefield; otherwise base.
+    const hereBf = e.namedToken.here ? bfIndexOfUnit(s, sourceIid) : -1
+    const dest = hereBf >= 0 ? s.battlefields[hereBf].units : undefined
+    const made = spawnNamedToken(p, e.namedToken.name, e.namedToken.count, s.turn, e.namedToken.exhausted, e.namedToken.temporary, dest)
     if (made) {
+      if (hereBf >= 0) recomputeControllers(s)
       const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
-      lines.push(`Created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}.`)
+      lines.push(`Created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}${hereBf >= 0 ? ' here' : ''}.`)
     }
   }
   if (e.tempMightAll) {
@@ -812,6 +834,15 @@ function hasTank(s: MatchState, u: EngineCard): boolean {
   return getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Lillia - Protector of Dreams')
 }
 
+/** State-aware static Might auras a controller grants its own units. Soul
+ *  Shepherd: "Your token units have +1 Might." Added on top of printed/role
+ *  Might wherever combat Might is computed. */
+function auraMightBonus(s: MatchState, u: EngineCard): number {
+  let b = 0
+  if (getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Soul Shepherd')) b += 1
+  return b
+}
+
 /** The effective [Repeat] cost when `player` plays `card`: the printed keyword
  *  cost, or — if The Academy granted Repeat this turn — the spell's base cost;
  *  then reduced by 1 Energy (min 0) while the player controls Marai Spire.
@@ -868,7 +899,41 @@ function unitsControlledBy(s: MatchState, player: PlayerId): EngineCard[] {
   )
 }
 
-export type GrantedAbility = { kind: 'gainXP' | 'forgeAttach'; label: string }
+export type GrantedAbility =
+  | { kind: 'gainXP' | 'forgeAttach'; label: string }
+  /** A card's own printed ":exhaust:" ability. `amount` is parsed from the text. */
+  | { kind: 'addEnergySpells' | 'minusMightTarget'; label: string; amount: number }
+
+/** A permanent the player controls (unit at a battlefield or in base, or a gear
+ *  in base), by iid — the carrier of a printed ":exhaust:" activated ability. */
+function controlledInstance(s: MatchState, player: PlayerId, iid: string): EngineCard | undefined {
+  return (
+    s.players[player]?.zones.base.find((c) => c.iid === iid) ??
+    s.battlefields.flatMap((b) => b.units).find((u) => u.iid === iid && u.owner === player)
+  )
+}
+
+/** A card's OWN printed ":exhaust:" activated ability, if we recognize it. Kept
+ *  separate from battlefield-granted abilities so both surface the same way. */
+function printedActivated(card: Card | undefined): GrantedAbility | null {
+  const t = (card?.text ?? '').toLowerCase()
+  if (!t.includes(':rb_exhaust:')) return null
+  // Lux - Crownguard: ":exhaust:: [Reaction] — [Add] :energy_2:. Use only to play spells."
+  const addM = t.match(/\[?add\]?\s*:rb_energy_(\d+):/)
+  if (addM && /play spells?/.test(t)) return { kind: 'addEnergySpells', label: `Add ${addM[1]} Energy (spells)`, amount: parseInt(addM[1], 10) }
+  // Orb of Regret: ":exhaust:: Give a unit -1 :might: this turn, to a minimum of 1."
+  const minusM = t.match(/give a unit -(\d+)\s*(?::rb_might:|might) this turn/)
+  if (minusM) return { kind: 'minusMightTarget', label: `Give a unit -${minusM[1]} Might`, amount: parseInt(minusM[1], 10) }
+  return null
+}
+
+/** Any unit currently in play (any owner), for "give a unit …" targeting. */
+function allUnitsInPlay(s: MatchState): EngineCard[] {
+  return [
+    ...s.battlefields.flatMap((b) => b.units),
+    ...s.players.flatMap((p) => p.zones.base.filter((c) => getCard(c.cardId)?.type === 'unit')),
+  ]
+}
 
 /** The battlefield-granted activated ability available on a unit/legend right
  *  now, or null. Pure function of state — the UI uses it to show an Activate
@@ -887,6 +952,13 @@ export function grantedAbilityFor(s: MatchState, player: PlayerId, iid: string):
     if (bfBaseNameAt(s, i) !== 'Gardens of Becoming') continue
     if (s.battlefields[i].units.some((x) => x.iid === iid && x.owner === player && !x.exhausted))
       return { kind: 'gainXP', label: 'Gain 1 XP' }
+  }
+  // A card's own printed ":exhaust:" ability (Lux - Crownguard, Orb of Regret).
+  const inst = controlledInstance(s, player, iid)
+  if (inst && !inst.exhausted) {
+    const pa = printedActivated(getCard(inst.cardId))
+    // "Give a unit …" needs at least one unit on the board to target.
+    if (pa && (pa.kind !== 'minusMightTarget' || allUnitsInPlay(s).length > 0)) return pa
   }
   return null
 }
@@ -939,6 +1011,41 @@ function returnUnitToHand(s: MatchState, bfIndex: number, iid: string): EngineCa
     }
   }
   return u
+}
+
+/** Bounce a unit (at any battlefield or in base) to its owner's hand, then have
+ *  that owner channel `channelExhausted` runes exhausted (Retreat). Tokens cease
+ *  to exist rather than return. Returns the updated state. */
+function bounceUnitToHand(s: MatchState, iid: string, by: PlayerId, spellName: string, channelExhausted: number): MatchState {
+  const u = findUnitAnywhere(s, iid)
+  if (!u) return s
+  const owner = u.owner
+  const isToken = getCard(u.cardId)?.supertype === 'token' || u.token
+  const bfi = s.battlefields.findIndex((b) => b.units.some((x) => x.iid === iid))
+  if (bfi >= 0) {
+    if (isToken) {
+      s.battlefields[bfi].units = s.battlefields[bfi].units.filter((x) => x.iid !== iid)
+      recomputeControllers(s)
+    } else {
+      returnUnitToHand(s, bfi, iid)
+    }
+  } else {
+    const base = s.players[owner].zones.base
+    const idx = base.findIndex((x) => x.iid === iid)
+    if (idx < 0) return s
+    const [bu] = base.splice(idx, 1)
+    if (!isToken) s.players[owner].zones.hand.push({ iid: bu.iid, cardId: bu.cardId, owner, exhausted: false, damage: 0, attached: [] })
+  }
+  emit({ kind: 'play', iid, player: owner })
+  s = log(s, by, `${spellName}: returned ${getCard(u.cardId)?.name}${isToken ? ' (token — it ceases to exist)' : ` to ${owner === by ? 'your' : "its owner's"} hand`}.`)
+  // The bounced unit's owner channels N runes exhausted.
+  let ch = 0
+  for (let i = 0; i < channelExhausted && s.players[owner].zones.runeDeck.length > 0; i++) {
+    s.players[owner].zones.runePool.push({ ...s.players[owner].zones.runeDeck.shift()!, exhausted: true })
+    ch++
+  }
+  if (ch) s = log(s, owner, `${spellName}: channeled ${ch} rune(s) exhausted.`)
+  return s
 }
 
 const unitOpt = (u: EngineCard) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? u.iid })
@@ -1555,7 +1662,7 @@ export function combatMightAt(s: MatchState, bfIndex: number, u: EngineCard, rol
   if (!bf) return 0
   const alone = bf.units.filter((x) => x.owner === u.owner).length === 1
   const bonusOf = bfCombatBonus(s, bfIndex, role === 'attacker' && alone, role === 'defender' && alone)
-  return Math.max(0, mightOf(u, role, s.players[u.owner]?.xp ?? 0) + bonusOf(u, role))
+  return Math.max(0, mightOf(u, role, s.players[u.owner]?.xp ?? 0) + bonusOf(u, role) + auraMightBonus(s, u))
 }
 
 /** Flat +Might from attached gear (for UI badges). */
@@ -1827,7 +1934,8 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   const xpOf = (u: EngineCard) => s.players[u.owner]?.xp ?? 0
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
   const defenders = bf.units.filter((u) => u.owner !== moverOwner)
-  const bonusOf = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
+  const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
+  const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
   const dealt = (u: EngineCard, role: CombatRole) =>
     u.stunned ? 0 : Math.max(0, mightOf(u, role, xpOf(u)) + bonusOf(u, role))
   const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
@@ -1878,7 +1986,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const xpOf = (u: EngineCard) => s.players[u.owner]?.xp ?? 0
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
   const defenders = bf.units.filter((u) => u.owner !== moverOwner)
-  const bonusOf = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
+  const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
+  const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
   const dealt = (u: EngineCard, role: CombatRole) =>
     u.stunned ? 0 : Math.max(0, mightOf(u, role, xpOf(u)) + bonusOf(u, role))
   const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
@@ -2005,6 +2114,22 @@ function resolveSpellEffects(
   for (const line of applyParsed(s, p, e)) s = log(s, controller, line)
   s = fireTokenPlay(s, controller, tokenUnitsIn(e)) // Lillia: token-unit play synergy
 
+  // "Each player kills one of their units" (Cull the Weak): every player loses
+  // their lowest-Might unit (a faithful auto-pick; firing death triggers).
+  if (e.cullEachPlayer) {
+    const dead: EngineCard[] = []
+    for (const pl of s.players) {
+      const own = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+        (u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit',
+      )
+      if (!own.length) continue
+      const victim = own.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+      dead.push(...killTarget(s, victim.iid))
+    }
+    if (dead.length) s = log(s, controller, `${card.name}: each player killed a unit.`)
+    s = fireDeaths(s, dead)
+  }
+
   // Targeted parts: damage / kill / Â±Might-this-turn, applied to each chosen
   // target that's still in play.
   if (hasTargetedPart(e)) {
@@ -2019,12 +2144,18 @@ function resolveSpellEffects(
       } else if (e.kill) {
         dead = killTarget(s, t)
         s = log(s, controller, `${card.name} killed a unit.`)
+        // "Its controller draws N" (Hidden Blade): the killed unit's owner draws.
+        if (e.controllerDrawOnKill && dead.length) {
+          const drew = drawN(s.players[dead[0].owner], e.controllerDrawOnKill)
+          s = log(s, dead[0].owner, `${card.name}: drew ${drew} (a unit was killed).`)
+        }
       }
       if (e.tempMight) {
-        const more = applyTempMight(s, t, e.tempMight)
+        const more = applyTempMight(s, t, e.tempMight, e.tempMightFloor)
         dead = dead.concat(more)
         s = log(s, controller, `${card.name}: ${e.tempMight > 0 ? '+' : ''}${e.tempMight} Might this turn.`)
       }
+      if (e.bounce) s = bounceUnitToHand(s, t, controller, card.name, e.channelExhausted)
       if (dead.length && e.drawOnKill) {
         const drew = drawN(p, e.drawOnKill)
         s = log(s, controller, `${card.name}: drew ${drew} (a unit died).`)
@@ -2073,9 +2204,11 @@ function killTarget(s: MatchState, iid: string): EngineCard[] {
 
 /** Apply a signed Might-this-turn modifier to a unit; if its Might drops to 0 it
  *  is defeated. Returns any unit defeated this way. */
-function applyTempMight(s: MatchState, iid: string, delta: number): EngineCard[] {
+function applyTempMight(s: MatchState, iid: string, delta: number, floor = 0): EngineCard[] {
   const u = findUnitAnywhere(s, iid)
   if (!u) return []
+  // A "to a minimum of N Might" debuff can't push the unit below the floor.
+  if (delta < 0 && floor > 0) delta = Math.max(delta, floor - mightOf(u))
   u.tempMight = (u.tempMight ?? 0) + delta
   emit({ kind: delta >= 0 ? 'buff' : 'damage', iid })
   if (mightOf(u) <= 0) {
@@ -2778,6 +2911,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           target.attached = [...target.attached, `${gear.cardId}|${gear.iid}`]
           return ok(log(s, action.player, `Forge of the Fluft: attached ${getCard(gear.cardId)?.name} to ${getCard(target.cardId)?.name}.`))
         }
+        case 'orbMinusMight': {
+          // Orb of Regret: -N Might this turn, to a minimum of 1 current Might.
+          const u = findUnitAnywhere(s, action.iid)
+          if (!u) return fail(state, 'That unit is no longer in play.')
+          const amt = parseInt(pc.payload ?? '1', 10)
+          applyTempMight(s, action.iid, -amt, 1)
+          return ok(log(s, action.player, `Orb of Regret: ${name} -${amt} Might this turn (min 1).`))
+        }
       }
       return ok(s)
     }
@@ -2792,6 +2933,25 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         u.exhausted = true
         p.xp += 1
         return ok(log(s, action.player, `${getCard(u.cardId)?.name}: exhausted to gain 1 XP (now ${p.xp}).`))
+      }
+      // Lux - Crownguard: exhaust to add Energy to the pool (for playing spells).
+      // The "spells only" restriction isn't tracked on pooled Energy; logged as a
+      // reminder, consistent with how other resource-add effects are modeled.
+      if (ga.kind === 'addEnergySpells') {
+        const u = controlledInstance(s, action.player, action.iid)!
+        u.exhausted = true
+        p.pool = p.pool ?? { energy: 0, power: {} }
+        p.pool.energy += ga.amount
+        emit({ kind: 'buff', iid: u.iid, player: action.player })
+        return ok(log(s, action.player, `${getCard(u.cardId)?.name}: added ${ga.amount} Energy (use only to play spells).`))
+      }
+      // Orb of Regret: exhaust, then choose a unit to give -N Might this turn.
+      if (ga.kind === 'minusMightTarget') {
+        const u = controlledInstance(s, action.player, action.iid)!
+        u.exhausted = true
+        const opts = allUnitsInPlay(s).map((x) => unitOpt(x))
+        offerChoice(s, { player: action.player, kind: 'orbMinusMight', bfIndex: -1, prompt: `${getCard(u.cardId)?.name} — give a unit -${ga.amount} Might this turn (min 1).`, options: opts, payload: String(ga.amount) })
+        return ok(log(s, action.player, `${getCard(u.cardId)?.name}: exhausted — choose a unit to weaken.`))
       }
       // forgeAttach: exhaust the legend, then prompt to pick an Equipment.
       p.legend!.exhausted = true

@@ -16,14 +16,22 @@ export type TargetScope = 'enemy' | 'friendly' | 'any' | null
 export interface ParsedEffect {
   draw: number
   channel: number
+  /** The killed unit's CONTROLLER draws N ("kill a unit. Its controller draws 2"
+   *  — Hidden Blade). Distinct from drawOnKill, which the caster draws. */
+  controllerDrawOnKill: number
+  /** A floor a −Might debuff can't push a unit below ("to a minimum of 1 Might"). */
+  tempMightFloor: number
+  /** "Each player kills one of their units" (Cull the Weak) — symmetric sacrifice. */
+  cullEachPlayer: boolean
   /** Damage to each chosen target unit, if the text calls for it. */
   damage: number
   /** Number of Recruit unit tokens to create. */
   recruits: number
   /** Number of Gold gear tokens to create. */
   goldTokens: number
-  /** A named unit token to create (Sprite / Sand Soldier / Bird / Mech). */
-  namedToken: { name: string; count: number; exhausted: boolean; temporary: boolean } | null
+  /** A named unit token to create (Sprite / Sand Soldier / Bird / Mech).
+   *  `here` = play it at the source unit's battlefield ("… here"), not base. */
+  namedToken: { name: string; count: number; exhausted: boolean; temporary: boolean; here: boolean } | null
   /** Number of your units to ready (un-exhaust) — the player chooses which. */
   readyUnits: number
   /** +1 Might buff counters to apply (e.g. "gains +1 Might" / "buff a unit"). A
@@ -41,6 +49,11 @@ export interface ParsedEffect {
   kill: number
   /** Signed Might-this-turn applied to each chosen target (e.g. Stupefy −1). */
   tempMight: number
+  /** Return a chosen unit to its owner's hand ("Retreat"). Scope: whose unit. */
+  bounce: 'friendly' | 'enemy' | 'any' | null
+  /** Runes the affected unit's owner channels exhausted (Retreat: "channels 1
+   *  rune exhausted"). Distinct from `channel`, which gives the caster ready runes. */
+  channelExhausted: number
   /** Signed Might-this-turn applied to the SOURCE (e.g. "give me +1 this turn"). */
   tempMightSelf: number
   /** Signed Might-this-turn applied to ALL the controller's units ("give
@@ -69,6 +82,9 @@ export interface ParsedEffect {
 const EMPTY_EFFECT = (): ParsedEffect => ({
   draw: 0,
   channel: 0,
+  controllerDrawOnKill: 0,
+  tempMightFloor: 0,
+  cullEachPlayer: false,
   damage: 0,
   recruits: 0,
   goldTokens: 0,
@@ -80,6 +96,8 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   readySelf: false,
   kill: 0,
   tempMight: 0,
+  bounce: null,
+  channelExhausted: 0,
   tempMightSelf: 0,
   tempMightAll: 0,
   drawOnKill: 0,
@@ -92,11 +110,11 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.channel > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0
+  return e.draw > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -143,8 +161,23 @@ function parse(text: string): ParsedEffect {
   const drawM = tNoCond.match(new RegExp(`draw ${NUM}`))
   if (drawM) { eff.draw += num(drawM[1]); hit = true }
 
+  // Channel ready runes — but NOT the "channel N rune exhausted" variant (Soaring
+  // Scout), which the channelExhausted parse below handles as exhausted instead.
   const chM = t.match(new RegExp(`channel ${NUM}`))
-  if (chM) { eff.channel += num(chM[1]); hit = true }
+  if (chM && !/channel[^.]*?exhausted/.test(t)) {
+    eff.channel += num(chM[1]); hit = true
+  }
+
+  // "Its controller draws N" (Hidden Blade) — the KILLED unit's owner draws.
+  const ctrlDrawM = t.match(new RegExp(`controller draws? ${NUM}`))
+  if (ctrlDrawM) { eff.controllerDrawOnKill += num(ctrlDrawM[1]); hit = true }
+
+  // "to a minimum of N Might" — a floor a −Might debuff can't push below.
+  const floorM = t.match(new RegExp(`to a minimum of (\\d+)\\s*${MIGHT}`))
+  if (floorM) eff.tempMightFloor = parseInt(floorM[1], 10)
+
+  // "Each player kills one of their units" (Cull the Weak) — symmetric sacrifice.
+  if (/each player kills? (?:one|1|a)\b[^.]*?units?/.test(t)) { eff.cullEachPlayer = true; hit = true }
 
   const recM = t.match(new RegExp(`play ${NUM}[^.]*?recruit unit tokens?`))
   if (recM) { eff.recruits += num(recM[1]); hit = true }
@@ -162,14 +195,20 @@ function parse(text: string): ParsedEffect {
       count: namedM[1] ? num(namedM[1]) : 1,
       exhausted: !/\bready\b/.test(namedM[0]),
       temporary: /\[temporary\]/.test(namedM[0]),
+      // "play a … token here" → at the source's battlefield. \bhere\b excludes
+      // "there" (whose origin-placement stays at base, correct for base→bf moves).
+      here: /\bhere\b/.test(t),
     }
     hit = true
   }
 
   // Ready your unit(s): "ready a friendly unit", "ready up to 2 units" — the
   // player chooses which to un-exhaust. ("enters ready" is a different effect.)
+  // Guard against "ready" as a TOKEN adjective ("play a ready 3 :rb_might: Sprite
+  // unit token" — Trevor Snoozebottom): that's part of the token, not a
+  // ready-units action, and always reads "a/an ready …".
   const readyM = t.match(/\bready (?:up to )?(a|an|another|target|one|two|three|\d+)\b[^.]*?\bunits?\b/i)
-  if (readyM) {
+  if (readyM && !/\b(?:a|an) ready\b/.test(t)) {
     const w = readyM[1].toLowerCase()
     eff.readyUnits += /^(a|an|another|target|one)$/.test(w) ? 1 : num(w)
     hit = true
@@ -182,6 +221,17 @@ function parse(text: string): ParsedEffect {
   // Outright kill: "kill a unit".
   const killM = t.match(/\bkill (?:a |an |target |another )?unit/)
   if (killM) { eff.kill += 1; hit = true }
+
+  // Bounce: "return a friendly unit to its owner's hand" (Retreat). Scope from
+  // the determiner — friendly / enemy / any.
+  const bounceM = t.match(/return (?:a|an|target|another) (friendly |enemy )?unit to (?:its owner'?s?|your|their) hand/)
+  if (bounceM) {
+    eff.bounce = bounceM[1]?.trim() === 'friendly' ? 'friendly' : bounceM[1]?.trim() === 'enemy' ? 'enemy' : 'any'
+    hit = true
+  }
+  // "its owner channels N rune(s) exhausted" — tied to the bounced unit's owner.
+  const chExM = t.match(new RegExp(`channels? ${NUM} runes? exhausted`))
+  if (chExM) { eff.channelExhausted += num(chExM[1]); hit = true }
 
   // Signed Might-this-turn to a target unit: "give a unit -1 Might this turn".
   const tmTargetM = t.match(new RegExp(`give (?:a|an|target|another) (?:friendly |enemy )?unit (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
@@ -245,13 +295,18 @@ function parse(text: string): ParsedEffect {
   if (hasTargetedPart(eff)) {
     eff.targetCount = multiM ? num(multiM[1]) : 1
     eff.battlefieldOnly = /at a battlefield/.test(t)
-    eff.targetScope = /friendly|your unit/.test(t)
-      ? 'friendly'
-      : /enemy|opposing/.test(t)
-        ? 'enemy'
-        : eff.tempMight > 0 || eff.buff > 0
+    eff.targetScope =
+      eff.bounce && eff.bounce !== 'any'
+        ? eff.bounce // an explicit "return a friendly/enemy unit"
+        : /friendly|your unit/.test(t)
           ? 'friendly'
-          : 'enemy' // damage / kill / debuff default to enemies
+          : /enemy|opposing/.test(t)
+            ? 'enemy'
+            : eff.tempMight > 0 || eff.buff > 0
+              ? 'friendly'
+              : eff.bounce
+                ? 'any' // a generic "return a unit" can hit either side
+                : 'enemy' // damage / kill / debuff default to enemies
   }
 
   // [Level N][>] activated gate (Wuju Apprentice — "[Level 6][>] … draw 1"): a

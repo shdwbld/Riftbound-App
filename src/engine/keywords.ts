@@ -129,6 +129,15 @@ export function parseKeywords(card: Card | undefined): Keywords {
     const num = m[2] === 'X' ? 1 : m[2] ? parseInt(m[2], 10) : 0
     applyKeywordToken(kw, m[1].toLowerCase(), num)
   }
+  // [Temporary] that's GRANTED to a token this card creates ("… token with
+  // [Temporary]") or to another unit ("give it [Temporary]" / "units … have
+  // [Temporary]") is not a keyword on THIS card. Without this, every Sprite-maker
+  // (Sprite Queen, Trevor, Lillia - Fae Fawn) would flag itself Temporary and
+  // self-destruct at its controller's next Beginning Phase.
+  if (kw.temporary && !/(?:^|[.)]\s*)\[temporary\]/i.test(text)) {
+    const ungranted = text.replace(/\b(?:with|give (?:it|them)|have)\s+\[temporary\]/gi, '')
+    if (!/\[temporary\]/i.test(ungranted)) kw.temporary = false
+  }
   cache.set(card.id, kw)
   return kw
 }

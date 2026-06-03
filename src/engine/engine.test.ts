@@ -563,11 +563,11 @@ describe('tokens (Recruit)', () => {
     const mkCard = (text: string) =>
       ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
     const sand = spellEffect(mkCard('Play a 2 :rb_might: Sand Soldier unit token.')).namedToken
-    expect(sand).toEqual({ name: 'sand soldier', count: 1, exhausted: true, temporary: false })
+    expect(sand).toEqual({ name: 'sand soldier', count: 1, exhausted: true, temporary: false, here: false })
     const bird = spellEffect(mkCard('Play three Bird unit tokens.')).namedToken
-    expect(bird).toEqual({ name: 'bird', count: 3, exhausted: true, temporary: false })
+    expect(bird).toEqual({ name: 'bird', count: 3, exhausted: true, temporary: false, here: false })
     const mech = spellEffect(mkCard('Play a ready 3 :rb_might: Mech unit token.')).namedToken
-    expect(mech).toEqual({ name: 'mech', count: 1, exhausted: false, temporary: false })
+    expect(mech).toEqual({ name: 'mech', count: 1, exhausted: false, temporary: false, here: false })
   })
 
   it('spawns a named token onto the base when an on-play effect resolves', () => {
@@ -1438,6 +1438,67 @@ describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
     expect(r.state.phase).toBe('action')
     expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(true) // alive
     expect(r.state.players[0].zones.hand.length).toBe(1) // only the regular draw
+  })
+})
+
+describe('Viktor deck — minor faithfulness', () => {
+  function resolveChainSpell(s: MatchState, spIid: string, targets?: string[]) {
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spIid, targets, payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    return r
+  }
+
+  it('Soaring Scout: channels a rune EXHAUSTED', () => {
+    const id = injectCard('sc-test', 'When you play me, channel 1 rune exhausted.', { energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.runeDeck = [mk(furyRune.id, 0)]
+    const u = mk(id, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: emptyPayment() })
+    expect(r.state.players[0].zones.runePool.find((x) => x.cardId === furyRune.id)?.exhausted).toBe(true)
+  })
+
+  it('Hidden Blade: the killed unit\'s controller draws 2', () => {
+    const spellId = injectCard('hb-test', 'Kill a unit at a battlefield. Its controller draws 2.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const victim = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [victim], controller: 1 }
+    for (let i = 0; i < 5; i++) s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    const before = s.players[1].zones.hand.length
+    const r = resolveChainSpell(s, sp.iid, [victim.iid])
+    expect(r.state.battlefields[0].units.some((u) => u.iid === victim.iid)).toBe(false) // killed
+    expect(r.state.players[1].zones.hand.length - before).toBe(2) // controller drew 2
+  })
+
+  it('a -Might debuff respects "to a minimum of 1 Might"', () => {
+    const targetId = injectCard('floor-target', 'A unit.', { might: 3 })
+    const spellId = injectCard('floor-spell', 'Give a unit -4 :rb_might: this turn, to a minimum of 1 :rb_might:.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const target = mk(targetId, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [target], controller: 1 }
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    const r = resolveChainSpell(s, sp.iid, [target.iid])
+    expect(r.state.battlefields[0].units.some((u) => u.iid === target.iid)).toBe(true) // survived (floored at 1, not -1)
+  })
+
+  it('Cull the Weak: each player kills their lowest-Might unit', () => {
+    const spellId = injectCard('cull-test', 'Each player kills one of their units.', { type: 'spell', energy: 0, power: {} })
+    const low = mk(injectCard('cull-low', 'A unit.', { might: 1 }), 0)
+    const high = mk(injectCard('cull-high', 'A unit.', { might: 9 }), 0)
+    const enemy = mk(furyUnit.id, 1)
+    const s = baseState()
+    s.players[0].zones.base.push(low, high)
+    s.players[1].zones.base.push(enemy)
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    const r = resolveChainSpell(s, sp.iid)
+    expect(r.state.players[0].zones.base.some((u) => u.iid === low.iid)).toBe(false) // lowest died
+    expect(r.state.players[0].zones.base.some((u) => u.iid === high.iid)).toBe(true) // kept
+    expect(r.state.players[1].zones.base.some((u) => u.iid === enemy.iid)).toBe(false) // each player loses one
   })
 })
 
