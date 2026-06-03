@@ -289,12 +289,13 @@ export default function MatchBoard({
       // Reveal your own facedown unit at a battlefield.
       if (zone === 'battlefield' && ci.facedown)
         items.push({ label: '👁 Reveal', action: { type: 'REVEAL', player: perspective, iid: ci.iid } })
-      // Hide a [Hidden] unit from your Base at a battlefield you control.
-      if (zone === 'base' && card && parseKeywords(card).hidden) {
-        const bfIdx = match.battlefields.findIndex((b) => b.controller === perspective)
+      // Hide a [Hidden] card from your HAND facedown at a battlefield you control
+      // (empty slot), paying 1 Wild Power (recycle a ready rune).
+      if (zone === 'hand' && card && parseKeywords(card).hidden) {
+        const bfIdx = match.battlefields.findIndex((b) => b.controller === perspective && !b.facedown)
         const rune = me.zones.runePool.find((r) => !r.exhausted)
         if (bfIdx >= 0 && rune)
-          items.push({ label: '🙈 Hide', action: { type: 'HIDE', player: perspective, iid: ci.iid, toBattlefield: bfIdx, runeIid: rune.iid } })
+          items.push({ label: '🙈 Hide (facedown)', action: { type: 'HIDE', player: perspective, iid: ci.iid, toBattlefield: bfIdx, runeIid: rune.iid } })
       }
       items.push({ label: '🗑 Trash', action: { type: 'TRASH_CARD', player: perspective, iid: ci.iid } })
     }
@@ -983,6 +984,22 @@ function BattlefieldZone({
               </p>
             )}
             <div className="relative mt-1.5 flex min-h-[92px] flex-wrap content-start gap-1">
+              {bf.facedown && (() => {
+                const fd = bf.facedown
+                const mine = fd.owner === perspective
+                return (
+                  <button
+                    key={fd.iid}
+                    title={mine ? `Your Hidden card (${getCard(fd.cardId)?.name}) — right-click to Reveal (play for 0)` : 'A Hidden card (facedown)'}
+                    onClick={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => { e.stopPropagation(); if (mine) openMenu(e, fd, 'battlefield') }}
+                    className="relative"
+                  >
+                    <CardBack size="sm" />
+                    <span className="absolute -right-1 -top-1 z-10 rounded-full bg-amber-500/90 px-1 text-[8px] font-bold text-black shadow" title="Hidden (facedown)">H</span>
+                  </button>
+                )
+              })()}
               {bf.units.map((u) => {
                 const cf = cardFx(fx, u)
                 if (u.facedown && u.owner !== perspective) {
