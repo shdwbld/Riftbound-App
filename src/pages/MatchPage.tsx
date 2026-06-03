@@ -9,7 +9,7 @@ import { createMatch } from '../engine/setup'
 import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
-import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { accelerateCost, repeatCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
@@ -50,18 +50,18 @@ export default function MatchPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
   const [showHelp, setShowHelp] = useState(false)
-  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear'; count: number; picked: string[] } | null>(null)
+  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear'; count: number; picked: string[]; repeat?: boolean } | null>(null)
   const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
   // Rune picker is ON by default — every rune-spending play opens the overlay.
   // Toggle off to auto-pay silently.
   const [manualPay, setManualPay] = useState(true)
-  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string } | null>(null)
+  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean } | null>(null)
   // Animated battle summary after a combat / chain resolution.
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
   // Pending Ambush battlefield choice.
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending Deflect surcharge payment (after a spell's targets are chosen).
-  const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number } | null>(null)
+  const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
 
   // Stable refs so the keyboard handler always sees current state.
   const matchRef = useRef<MatchState | null>(match)
@@ -216,6 +216,7 @@ export default function MatchPage() {
     // Accelerate is an OPTIONAL extra cost on units — confirm to pay it so the
     // unit enters READY (can act the turn it arrives).
     let accelerate = false
+    let repeat = false
     let cost = effectiveCostOf(match, controlling, card)
     if (type === 'PLAY_UNIT') {
       const ac = accelerateCost(card)
@@ -226,30 +227,41 @@ export default function MatchPage() {
         if (accelerate) cost = addCost(cost, ac)
       }
     }
+    // Repeat is an OPTIONAL extra cost on spells — confirm to pay it so the
+    // spell's effect resolves a second time.
+    if (type === 'PLAY_SPELL') {
+      const rc = repeatCost(card)
+      if (rc) {
+        repeat = window.confirm(
+          `${card.name} has Repeat. Pay ${costLabel(rc)} extra to resolve its effect again?\n\nOK = pay & repeat · Cancel = resolve once.`,
+        )
+        if (repeat) cost = addCost(cost, rc)
+      }
+    }
 
     // Manual rune selection: open the payment modal instead of auto-paying.
     if (manualPay && !costIsFree(cost)) {
       if (!autoPay(match.players[controlling], cost)) return flash('Not enough resources.')
-      setPaying({ c, card, type, cost, accelerate })
+      setPaying({ c, card, type, cost, accelerate, repeat })
       return
     }
     const payment = autoPay(match.players[controlling], cost)
     if (!payment) return flash('Not enough resources.')
-    proceedPlay(c, card, type, payment, accelerate)
+    proceedPlay(c, card, type, payment, accelerate, repeat)
   }
 
   /** Finish a play once payment is settled (auto or manual): targeting for
    *  spells/gear, or an immediate dispatch for units. */
-  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean) => {
+  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean, repeat = false) => {
     if (type === 'PLAY_SPELL' && needsTarget(card)) {
       const legal = getLegalTargets(match, card, controlling)
       if (legal.length === 0) {
         if (confirm('No legal targets. Play it anyway for its other effect?'))
-          act({ type: 'PLAY_SPELL', player: controlling, iid: c.iid, payment })
+          act({ type: 'PLAY_SPELL', player: controlling, iid: c.iid, payment, repeat })
         return
       }
       const count = spellEffect(card).targetCount || 1
-      setTargeting({ iid: c.iid, cardId: card.id, payment, player: controlling, kind: 'spell', count, picked: [] })
+      setTargeting({ iid: c.iid, cardId: card.id, payment, player: controlling, kind: 'spell', count, picked: [], repeat })
       flash(count > 1 ? `Pick up to ${count} targets.` : 'Pick a target unit.')
       return
     }
@@ -280,7 +292,8 @@ export default function MatchPage() {
         return
       }
       act({ type, player: controlling, iid: c.iid, payment, accelerate })
-    } else act({ type, player: controlling, iid: c.iid, payment })
+    } else if (type === 'PLAY_SPELL') act({ type, player: controlling, iid: c.iid, payment, repeat })
+    else act({ type, player: controlling, iid: c.iid, payment })
   }
 
   // Cast a spell at the chosen targets — charging the Deflect surcharge first
@@ -290,10 +303,10 @@ export default function MatchPage() {
     const card = getCard(t.cardId)
     const surcharge = deflectSurcharge(match, targets, t.player)
     if (surcharge > 0 && card) {
-      setDeflectPay({ iid: t.iid, card, base: t.payment, targets, surcharge })
+      setDeflectPay({ iid: t.iid, card, base: t.payment, targets, surcharge, repeat: t.repeat })
       return
     }
-    act({ type: 'PLAY_SPELL', player: t.player, iid: t.iid, payment: t.payment, targets })
+    act({ type: 'PLAY_SPELL', player: t.player, iid: t.iid, payment: t.payment, targets, repeat: t.repeat })
   }
 
   const onTarget = (targetIid: string) => {
@@ -370,7 +383,7 @@ export default function MatchPage() {
             setPaying(null)
             if (p.counterChainId)
               act({ type: 'COUNTER', player: controlling, iid: p.c.iid, targetChainId: p.counterChainId, payment })
-            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate)
+            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate, p.repeat)
           }}
         />
       )}
@@ -435,7 +448,7 @@ export default function MatchPage() {
               recycle: [...d.base.recycle, ...sur.recycle],
               poolEnergy: (d.base.poolEnergy ?? 0) + (sur.poolEnergy ?? 0) || undefined,
             }
-            act({ type: 'PLAY_SPELL', player: controlling, iid: d.iid, payment: merged, targets: d.targets })
+            act({ type: 'PLAY_SPELL', player: controlling, iid: d.iid, payment: merged, targets: d.targets, repeat: d.repeat })
           }}
         />
       )}

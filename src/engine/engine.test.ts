@@ -1273,3 +1273,52 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
     expect(effectiveCostOf(s, 0, CARD_INDEX[gearId]).energy).toBe(1)
   })
 })
+
+describe('Predict / Repeat keywords', () => {
+  it('parses [Predict] and [Repeat] keywords', async () => {
+    const { parseKeywords, repeatCost } = await import('./keywords')
+    const predictId = injectCard('kw-predict', '[Predict] Draw 1.', { type: 'spell', energy: 0, power: {} })
+    expect(parseKeywords(CARD_INDEX[predictId]).predict).toBe(true)
+    const repeatId = injectCard('kw-repeat', 'Draw 1. [Repeat] :rb_energy_2::rb_rune_fury: (You may pay the additional cost to repeat this spell’s effect.)', { type: 'spell', energy: 1, power: {} })
+    const kw = parseKeywords(CARD_INDEX[repeatId])
+    expect(kw.repeat).toBe(true)
+    expect(repeatCost(CARD_INDEX[repeatId])).toEqual({ energy: 2, power: { fury: 1 } })
+  })
+
+  it('a [Predict] unit surfaces a look-at-top decision on play', () => {
+    const id = injectCard('pred-unit', '[Predict] When you play me, look at the top of your deck.', { energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const card = mk(id, 0)
+    s.players[0].zones.hand.push(card)
+    const r = reduce(s, {
+      type: 'PLAY_UNIT', player: 0, iid: card.iid,
+      payment: { exhaust: [], recycle: [], poolEnergy: 0, poolPower: {} },
+    })
+    expect(r.error).toBeUndefined()
+    expect(r.state.vision?.player).toBe(0)
+  })
+
+  it('a [Repeat] spell resolves its effect twice when the cost is paid', () => {
+    // 0-cost draw spell with a 1-Energy Repeat; pay the Repeat with one rune.
+    const id = injectCard('rep-draw', 'Draw 1. [Repeat] :rb_energy_1: (You may pay the additional cost to repeat this spell’s effect.)', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const rune = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(rune)
+    const sp = mk(id, 0)
+    s.players[0].zones.hand.push(sp)
+    const before = s.players[0].zones.hand.length
+    let r = reduce(s, {
+      type: 'PLAY_SPELL', player: 0, iid: sp.iid, repeat: true,
+      payment: { exhaust: [rune.iid], recycle: [], poolEnergy: 0, poolPower: {} },
+    })
+    expect(r.error).toBeUndefined()
+    expect(r.state.chain.length).toBe(1)
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.chain.length).toBe(0)
+    // -1 spell leaves hand, +2 drawn from the repeated effect → net +1.
+    expect(r.state.players[0].zones.hand.length).toBe(before - 1 + 2)
+  })
+})

@@ -1,8 +1,9 @@
 import { getCard } from '../data/cards'
 import CardText from './CardText'
 
-// Vision (Core Rules §743): on play, look at the top card of your Main Deck and
-// choose to recycle it (to the bottom) or keep it on top.
+// Vision / Predict (Core Rules §743): look at the top card of your Main Deck and
+// choose to recycle it (to the bottom) or keep it on top. Both keywords surface
+// the same decision; Predict is reached from different triggers.
 export default function VisionPrompt({
   cardId,
   onKeep,
@@ -16,7 +17,7 @@ export default function VisionPrompt({
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
       <div className="w-full max-w-sm rounded-2xl border border-sky-400/40 bg-[#0d1320] p-5 text-center shadow-2xl">
-        <h3 className="text-xl font-bold text-sky-100">👁 Vision</h3>
+        <h3 className="text-xl font-bold text-sky-100">👁 Vision / Predict</h3>
         <p className="mb-3 text-sm text-white/55">Top of your Main Deck — recycle it to the bottom, or keep it.</p>
         <div className="mx-auto mb-3 w-40">
           {card?.imageUrl ? (

@@ -16,7 +16,7 @@ import {
   fail,
 } from './types'
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
-import { parseKeywords, accelerateCost, levelBonus } from './keywords'
+import { parseKeywords, accelerateCost, repeatCost, levelBonus } from './keywords'
 import { addCost, effectiveCostOf, autoPayEff } from './autopay'
 import { bfScript, bfScriptAt, type BfApi } from './battlefieldScripts'
 
@@ -549,15 +549,30 @@ function makeBfApi(s: MatchState): BfApi {
       emit({ kind: 'score', player, amount: n })
       note(player, `Scored ${n} point(s).`)
     },
+    predict(player) {
+      const top = s.players[player].zones.mainDeck[0]
+      if (!top) return
+      s.vision = { player, cardId: top.cardId }
+      note(player, `Predict — look at the top of your deck; you may recycle it.`)
+    },
+    readyGear(player) {
+      const p = s.players[player]
+      const gear = p.zones.base.find((c) => c.exhausted && getCard(c.cardId)?.type === 'gear')
+      if (!gear) return false
+      gear.exhausted = false
+      note(player, `Readied ${getCard(gear.cardId)?.name ?? 'a gear'}.`)
+      return true
+    },
     log: (text) => note(null, text),
   }
 }
 
-/** Fire battlefield "when a player plays a spell" scripts (Abandoned Hall). */
-function bfSpellPlayed(s: MatchState, player: PlayerId): MatchState {
+/** Fire battlefield "when a player plays a spell" scripts (Abandoned Hall,
+ *  Forgotten Library). `spentEnergy` is the Energy paid for the spell. */
+function bfSpellPlayed(s: MatchState, player: PlayerId, spentEnergy = 0): MatchState {
   for (let i = 0; i < s.battlefields.length; i++) {
     const script = bfScriptAt(s, i)
-    if (script?.onSpellPlayed) script.onSpellPlayed(makeBfApi(s), player, i)
+    if (script?.onSpellPlayed) script.onSpellPlayed(makeBfApi(s), player, i, spentEnergy)
   }
   return s
 }
@@ -1444,6 +1459,14 @@ function resolveSpellEffects(
     }
   }
 
+  // Vision / Predict spells: peek the top of your Main Deck; the controller may
+  // recycle it. Surfaced as a pending decision (same look as the keyword).
+  const kw = parseKeywords(card)
+  if ((kw.vision || kw.predict) && p.zones.mainDeck.length > 0) {
+    s = { ...s, vision: { player: controller, cardId: p.zones.mainDeck[0].cardId } }
+    s = log(s, controller, `${kw.predict ? 'Predict' : 'Vision'} — look at the top of your deck; you may recycle it.`)
+  }
+
   if (e.manual && !hasTargetedPart(e) && !hasUntargetedPart(e))
     s = log(s, controller, `Cast ${card.name} — resolve its effect manually.`)
   return s
@@ -1525,7 +1548,14 @@ function resolveTopOfChain(state: MatchState): MatchState {
     return s
   }
   const card = getCard(item.cardId)
-  if (card) s = resolveSpellEffects(s, item.controller, card, item.targets)
+  if (card) {
+    s = resolveSpellEffects(s, item.controller, card, item.targets)
+    // [Repeat]: resolve the effect an extra time per paid repeat.
+    for (let r = 0; r < (item.repeat ?? 0); r++) {
+      s = log(s, item.controller, `${card.name}: Repeat — resolving its effect again.`)
+      s = resolveSpellEffects(s, item.controller, card, item.targets)
+    }
+  }
   sendToTrash(p, item.instance)
   return s
 }
@@ -1788,6 +1818,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const surcharge = deflectSurcharge(state, action.targets, action.player)
         if (surcharge > 0) effCost = addCost(effCost, { energy: surcharge, power: {} })
       }
+      // Repeat: an OPTIONAL additional cost on a spell to resolve its effect
+      // again. When the player opts in, fold it into the cost to be paid.
+      const repeatChosen =
+        action.type === 'PLAY_SPELL' && !!action.repeat && !!repeatCost(card)
+      if (repeatChosen) effCost = addCost(effCost, repeatCost(card)!)
       const err = applyPayment(p, effCost, action.payment)
       if (err) return fail(state, err)
 
@@ -1824,11 +1859,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         } else {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
         }
-        // Vision: peek the top of your Main Deck; a decision (keep / recycle)
-        // is surfaced to the controller.
-        if (kw.vision && p.zones.mainDeck.length > 0) {
+        // Vision / Predict: peek the top of your Main Deck; a decision (keep /
+        // recycle) is surfaced to the controller (same look, both keywords).
+        if ((kw.vision || kw.predict) && p.zones.mainDeck.length > 0) {
           s1 = { ...s1, vision: { player: action.player, cardId: p.zones.mainDeck[0].cardId } }
-          s1 = log(s1, action.player, `Vision — look at the top of your deck; you may recycle it.`)
+          s1 = log(s1, action.player, `${kw.predict ? 'Predict' : 'Vision'} — look at the top of your deck; you may recycle it.`)
         }
         if (e.manual && !e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
@@ -1870,8 +1905,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         // "When you play a spell" triggers fire as it's played, before it resolves.
         let s1 = firePlayTriggers(s, action.player, ci.iid)
-        s1 = bfSpellPlayed(s1, action.player)
+        s1 = bfSpellPlayed(s1, action.player, effCost.energy)
         s1 = resolveSpellEffects(s1, action.player, card, action.targets)
+        if (repeatChosen) {
+          s1 = log(s1, action.player, `${card.name}: Repeat — resolving its effect again.`)
+          s1 = resolveSpellEffects(s1, action.player, card, action.targets)
+        }
         sendToTrash(s1.players[action.player], ci)
         return ok(s1)
       }
@@ -1884,13 +1923,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         instance: ci,
         payment: action.payment,
         targets: action.targets,
+        repeat: repeatChosen ? 1 : undefined,
       })
       s.passes = 0
       s.priority = nextPlayer(s, action.player)
       // Play-triggers fire now (before the chain resolves), so they still happen
       // even if this spell is later Countered.
       let sPlayed = firePlayTriggers(s, action.player, ci.iid)
-      sPlayed = bfSpellPlayed(sPlayed, action.player)
+      sPlayed = bfSpellPlayed(sPlayed, action.player, effCost.energy)
       return ok(
         log(sPlayed, action.player, `Played ${card.name} — it's on the Chain (opponents may respond).`),
       )

@@ -46,6 +46,9 @@ export interface Keywords {
   action: boolean
   /** Look at / filter the top of your deck when played. */
   vision: boolean
+  /** Predict: look at the top of your Main Deck; you may recycle it (same look
+   *  as Vision, reached from different triggers). */
+  predict: boolean
   /** Auto-attach an equipment on entry. */
   weaponmaster: boolean
   /** Doesn't participate as a normal frontline combatant. */
@@ -54,6 +57,8 @@ export interface Keywords {
   temporary: boolean
   /** Gear with an attach activation. */
   equip: boolean
+  /** Spell with an optional additional cost to resolve its effect again. */
+  repeat: boolean
 }
 
 const EMPTY: Keywords = {
@@ -73,10 +78,12 @@ const EMPTY: Keywords = {
   reaction: false,
   action: false,
   vision: false,
+  predict: false,
   weaponmaster: false,
   backline: false,
   temporary: false,
   equip: false,
+  repeat: false,
 }
 
 const cache = new Map<string, Keywords>()
@@ -142,6 +149,9 @@ export function parseKeywords(card: Card | undefined): Keywords {
       case 'vision':
         kw.vision = true
         break
+      case 'predict':
+        kw.predict = true
+        break
       case 'weaponmaster':
         kw.weaponmaster = true
         break
@@ -153,6 +163,9 @@ export function parseKeywords(card: Card | undefined): Keywords {
         break
       case 'equip':
         kw.equip = true
+        break
+      case 'repeat':
+        kw.repeat = true
         break
     }
   }
@@ -205,6 +218,27 @@ export function accelerateCost(card: Card | undefined): KeywordCost | null {
   return { energy, power }
 }
 
+/** The optional [Repeat] cost (paid to resolve a spell's effect again), parsed
+ *  from the cost tokens between the tag and its reminder text, e.g.
+ *  "[Repeat] :rb_energy_2::rb_rune_fury: (You may pay…)". Null if no Repeat. */
+export function repeatCost(card: Card | undefined): KeywordCost | null {
+  if (!card || !parseKeywords(card).repeat) return null
+  const text = card.text ?? ''
+  // Read the cost glyphs that sit between [Repeat] and the opening parenthesis.
+  const m = text.match(/\[repeat\]([^(]*)/i)
+  const seg = m ? m[1] : ''
+  let energy = 0
+  const power: Partial<Record<Domain, number>> = {}
+  const eM = seg.match(/:rb_energy_(\d+):/)
+  if (eM) energy = parseInt(eM[1], 10)
+  for (const rm of seg.matchAll(/:rb_rune_([a-z]+):/gi)) {
+    const d = rm[1].toLowerCase() as Domain
+    power[d] = (power[d] ?? 0) + 1
+  }
+  if (energy === 0 && Object.keys(power).length === 0) return null
+  return { energy, power }
+}
+
 /** One-line rules definitions for keyword tooltips. Keyed by the bare keyword
  *  name (lowercased, no number) so a label like "Shield 2" still resolves. */
 export const KEYWORD_DEFS: Record<string, string> = {
@@ -224,10 +258,12 @@ export const KEYWORD_DEFS: Record<string, string> = {
   reaction: 'May be played during a Closed State (in response, on the chain).',
   action: 'May be played during an Open State, such as a showdown.',
   vision: 'Look at / filter the top of your deck when it is played.',
+  predict: 'Look at the top card of your Main Deck; you may recycle it.',
   weaponmaster: 'Automatically attaches an equipment when it enters play.',
   backline: 'Does not fight on the frontline (deals/takes no showdown damage).',
   temporary: 'Is defeated at the start of your next turn.',
   equip: 'Gear that attaches to a unit, granting its bonuses.',
+  repeat: 'You may pay an additional cost to resolve this spell\'s effect again.',
 }
 
 /** Resolve a definition for a keyword chip label (e.g. "Shield 2" → shield). */
@@ -255,9 +291,11 @@ export function keywordLabels(card: Card | undefined): string[] {
   if (k.reaction) out.push('Reaction')
   if (k.action) out.push('Action')
   if (k.vision) out.push('Vision')
+  if (k.predict) out.push('Predict')
   if (k.weaponmaster) out.push('Weaponmaster')
   if (k.backline) out.push('Backline')
   if (k.temporary) out.push('Temporary')
   if (k.equip) out.push('Equip')
+  if (k.repeat) out.push('Repeat')
   return out
 }

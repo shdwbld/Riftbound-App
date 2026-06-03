@@ -41,6 +41,10 @@ export interface BfApi {
   hasMightyHere(player: number, bfIndex: number): boolean
   /** Add N points to the player. */
   score(player: number, n: number): void
+  /** Predict: let the player look at their top Main Deck card and may recycle it. */
+  predict(player: number): void
+  /** Ready (un-exhaust) one of the player's exhausted gear. Returns success. */
+  readyGear(player: number): boolean
   log(text: string): void
 }
 
@@ -72,8 +76,9 @@ export interface BattlefieldScript {
   onHold?: (api: BfApi, player: number, bfIndex: number) => void
   /** Resolved when you defend here in a showdown (Ravenbloom Conservatory). */
   onDefend?: (api: BfApi, player: number, bfIndex: number) => void
-  /** Resolved when the controller plays a spell (Abandoned Hall). */
-  onSpellPlayed?: (api: BfApi, player: number, bfIndex: number) => void
+  /** Resolved when the controller plays a spell (Abandoned Hall). `spentEnergy`
+   *  is the Energy the controller paid for the spell (Forgotten Library). */
+  onSpellPlayed?: (api: BfApi, player: number, bfIndex: number, spentEnergy: number) => void
   /** Mutate a unit as it moves away from here (Back-Alley Bar +1 Might this turn). */
   onMoveFrom?: (unit: EngineCard) => void
 }
@@ -109,6 +114,13 @@ const SCRIPTS: Record<string, BattlefieldScript> = {
   'Sunken Temple': { onConquer: (api, p, i) => { if (api.hasMightyHere(p, i) && api.payEnergy(p, 1)) api.draw(p, 1) } },
   'Monastery of Hirana': { onConquer: (api, p, i) => { if (api.spendBuffHere(p, i)) api.draw(p, 1) } },
   'Power Nexus': { onHold: (api, p) => { if (api.payPowerAny(p, 4)) api.score(p, 1) } },
+
+  // --- Batch 3b: keyword + targeted/optional events -----------------------
+  // Forgotten Library: playing a spell for 4+ Energy lets you Predict.
+  'Forgotten Library': { onSpellPlayed: (api, p, _i, spent) => { if (spent >= 4) api.predict(p) } },
+  // Veiled Temple: conquering readies a friendly gear (the optional Equipment
+  // detach is a player choice and left manual).
+  'Veiled Temple': { onConquer: (api, p) => { api.readyGear(p) } },
 }
 
 export function bfScript(cardId: string | undefined): BattlefieldScript | undefined {

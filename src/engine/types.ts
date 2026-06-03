@@ -138,6 +138,8 @@ export interface ChainItem {
   targets?: string[]
   /** For counters: the ChainItem id this counters. */
   countersId?: string
+  /** [Repeat]: extra times to resolve this spell's effect (paid for on play). */
+  repeat?: number
 }
 
 export interface MatchState {
@@ -243,6 +245,8 @@ export type Action =
       iid: string
       payment: Payment
       targets?: string[]
+      /** [Repeat]: opt in to pay the additional cost to resolve the effect again. */
+      repeat?: boolean
     }
   | {
       type: 'PLAY_GEAR'
