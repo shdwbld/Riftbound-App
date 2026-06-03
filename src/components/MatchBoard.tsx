@@ -98,6 +98,33 @@ function playerDomains(p: PlayerState): Domain[] {
   return l && l.type === 'legend' ? l.identity : []
 }
 
+// --- Sandbox drag-and-drop -------------------------------------------------
+// In Override mode any card can be dragged to any zone/battlefield. These build
+// the native HTML5 drag source / drop target props, spread onto card buttons
+// and zone containers. The drop dispatches an OVERRIDE 'move'.
+type MoveDest = { toZone?: OverrideZone; toBattlefield?: number }
+function dragSrc(enabled: boolean, iid: string) {
+  if (!enabled) return {}
+  return {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.setData('text/iid', iid)
+      e.dataTransfer.effectAllowed = 'move'
+    },
+  }
+}
+function dropTgt(enabled: boolean, dest: MoveDest, onMove?: (iid: string, d: MoveDest) => void) {
+  if (!enabled || !onMove) return {}
+  return {
+    onDragOver: (e: React.DragEvent) => e.preventDefault(),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault()
+      const iid = e.dataTransfer.getData('text/iid')
+      if (iid) onMove(iid, dest)
+    },
+  }
+}
+
 export default function MatchBoard({
   match,
   perspective,
@@ -350,6 +377,13 @@ export default function MatchBoard({
     }
   }
 
+  // Sandbox drag-and-drop: dispatch an OVERRIDE 'move' to relocate a card.
+  const onMoveOverride =
+    onCardAction && match.sandbox
+      ? (iid: string, dest: MoveDest) =>
+          onCardAction({ type: 'OVERRIDE', player: perspective, op: 'move', iid, ...dest })
+      : undefined
+
   // --- turn / priority banner ---------------------------------------------
   const priorityName = match.priority != null ? match.players[match.priority].name : '…'
   const showdownName = match.showdown ? match.players[match.showdown.priority].name : '…'
@@ -434,6 +468,7 @@ export default function MatchBoard({
           openMenu={openMenu}
           onInspect={onInspect}
           targetingActive={targetingActive}
+          onMoveOverride={onMoveOverride}
         />
       </div>
 
@@ -608,6 +643,8 @@ export default function MatchBoard({
         canPlayIid={(iid) => canPlay(match, perspective, iid)}
         fx={fx}
         usesXp={usesXp}
+        sandbox={!!match.sandbox}
+        onMoveOverride={onMoveOverride}
         activateLegendLabel={me.legend ? grantedAbilityFor(match, perspective, me.legend.iid)?.label : undefined}
         onActivateLegend={
           onCardAction && me.legend && grantedAbilityFor(match, perspective, me.legend.iid)
@@ -793,6 +830,7 @@ function BattlefieldZone({
   openMenu,
   onInspect,
   targetingActive,
+  onMoveOverride,
 }: {
   match: MatchState
   perspective: PlayerId
@@ -804,7 +842,9 @@ function BattlefieldZone({
   openMenu: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield') => void
   onInspect?: (card: Card) => void
   targetingActive?: boolean
+  onMoveOverride?: (iid: string, dest: MoveDest) => void
 }) {
+  const dndOn = !!match.sandbox && !!onMoveOverride
   return (
     <div className="grid h-full gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(match.battlefields.length, 4)}, minmax(0,1fr))` }}>
       {match.battlefields.map((bf, i) => {
@@ -820,6 +860,7 @@ function BattlefieldZone({
           <div
             key={i}
             onClick={() => targetable && onMoveTo(i)}
+            {...dropTgt(dndOn, { toBattlefield: i }, onMoveOverride)}
             className={`relative rounded-xl border-2 p-1.5 transition ${
               ctrl === perspective
                 ? 'border-emerald-400/60'
@@ -919,6 +960,7 @@ function BattlefieldZone({
                         e.stopPropagation()
                         openMenu(e, u, 'battlefield')
                       }}
+                      {...dragSrc(dndOn, u.iid)}
                       title={canGank ? 'Ganking — can move directly to another battlefield' : u.facedown ? 'Your Hidden unit — right-click to Reveal' : undefined}
                       className={`relative ${u.owner === perspective ? '' : 'opacity-90'} ${u.facedown ? 'rounded ring-2 ring-amber-300/60' : ''} ${canGank ? 'fx-gank rounded' : ''}`}
                     >
@@ -959,6 +1001,8 @@ function PlayerMat({
   canPlayIid,
   fx,
   usesXp,
+  sandbox,
+  onMoveOverride,
   onActivateLegend,
   activateLegendLabel,
 }: {
@@ -979,10 +1023,13 @@ function PlayerMat({
   canPlayIid: (iid: string) => { valid: boolean; reason?: string }
   fx: Fx
   usesXp: boolean
+  sandbox?: boolean
+  onMoveOverride?: (iid: string, dest: MoveDest) => void
   /** Forge of the Fluft: activate the legend's granted ability (or undefined). */
   onActivateLegend?: () => void
   activateLegendLabel?: string
 }) {
+  const dndOn = !!sandbox && !!onMoveOverride
   const domains = playerDomains(me)
   const readyRunes = me.zones.runePool.filter((r) => !r.exhausted).length
   const championCheck = me.champion ? canPlayIid(me.champion.iid) : null
@@ -1150,7 +1197,7 @@ function PlayerMat({
         {/* Base: Units + Gears */}
         <div className="pm-zone pm-baseunits">
           <div className="pm-zone-label mb-1">Base: Units + Gears ({me.zones.base.length})</div>
-          <div className="flex min-h-[80px] flex-wrap gap-1.5">
+          <div className="flex min-h-[80px] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'base' }, onMoveOverride)}>
         {me.zones.base.map((u) => {
           const isUnit = getCard(u.cardId)?.type === 'unit'
           const movable = myActionTurn && isUnit && !u.exhausted
@@ -1163,6 +1210,7 @@ function PlayerMat({
                 <button
                   onClick={() => onInspect(u)}
                   onContextMenu={(e) => onContext?.(e, u, 'base')}
+                  {...dragSrc(dndOn, u.iid)}
                   className={selectedUnits.includes(u.iid) ? 'rounded ring-2 ring-indigo-400' : ''}
                 >
                   <BoardCard
@@ -1200,7 +1248,7 @@ function PlayerMat({
         </div>
 
         {/* Main Deck */}
-        <div className="pm-zone pm-maindeck flex flex-col items-center justify-center gap-1">
+        <div className="pm-zone pm-maindeck flex flex-col items-center justify-center gap-1" {...dropTgt(dndOn, { toZone: 'mainDeck' }, onMoveOverride)}>
           <div className="pm-zone-label self-start">Main Deck</div>
           <button onClick={onRevealTop} title="Reveal top card" className="rounded transition hover:ring-2 hover:ring-indigo-400/50">
             <CardBack size="sm" count={me.zones.mainDeck.length} />
@@ -1226,7 +1274,7 @@ function PlayerMat({
         {/* Base: Runes */}
         <div className="pm-zone pm-baserunes">
           <div className="pm-zone-label mb-1">Base: Runes ({readyRunes}/{me.zones.runePool.length} ready)</div>
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1" {...dropTgt(dndOn, { toZone: 'runePool' }, onMoveOverride)}>
         {me.zones.runePool.map((r) => {
           const d = getCard(r.cardId)
           const dom = d?.type === 'rune' ? d.produces[0] : undefined
@@ -1237,6 +1285,7 @@ function PlayerMat({
                 title={`${d?.name ?? 'Rune'}${r.exhausted ? ' (exhausted)' : ''}`}
                 onClick={() => onInspect(r)}
                 onContextMenu={(e) => onContext?.(e, r, 'runePool')}
+                {...dragSrc(dndOn, r.iid)}
                 className={`relative w-9 shrink-0 overflow-hidden rounded border transition hover:border-white/50 ${
                   r.exhausted ? 'opacity-40 saturate-50' : ''
                 }`}
@@ -1266,7 +1315,10 @@ function PlayerMat({
         <div className="pm-zone pm-trash flex flex-col items-center justify-center gap-1">
           <div className="pm-zone-label self-start">Trash</div>
           <div className="flex items-end gap-2">
-            <div className="flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-white/15 text-sm text-white/40">
+            <div
+              className="flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-white/15 text-sm text-white/40"
+              {...dropTgt(dndOn, { toZone: 'trash' }, onMoveOverride)}
+            >
               🗑 {me.zones.trash.length}
             </div>
             {me.banished.length > 0 && (
@@ -1284,7 +1336,7 @@ function PlayerMat({
       {/* Hand strip (below the mat) */}
       <div className="rounded-xl border border-amber-600/25 bg-[#0c1322]/70 p-2">
         <div className="pm-zone-label mb-1">Hand ({me.zones.hand.length})</div>
-        <div className="flex min-h-[80px] flex-wrap gap-1.5">
+        <div className="flex min-h-[80px] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'hand' }, onMoveOverride)}>
         {me.zones.hand.map((c) => {
           const check = canPlayIid(c.iid)
           // Greyable only when it's a context where playing is conceivable
@@ -1294,7 +1346,7 @@ function PlayerMat({
           return (
             <div key={cf.key} className="flex flex-col items-center gap-0.5">
               <CardPreview cardId={c.cardId}>
-                <button className="card-lift" onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')}>
+                <button className="card-lift" onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')} {...dragSrc(dndOn, c.iid)}>
                   <BoardCard
                     ci={c}
                     flash={cf.flash}
