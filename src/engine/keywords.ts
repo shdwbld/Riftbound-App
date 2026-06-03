@@ -89,6 +89,34 @@ const EMPTY: Keywords = {
 const cache = new Map<string, Keywords>()
 const TOKEN = /\[([A-Za-z][A-Za-z'-]*)\s*(\d+|X)?\]/g
 
+/** Apply a single keyword token to a Keywords accumulator. */
+function applyKeywordToken(kw: Keywords, name: string, num: number): void {
+  switch (name) {
+    case 'tank': kw.tank = true; break
+    case 'shield': kw.shield = Math.max(kw.shield, num || 1); break
+    case 'assault': kw.assault = Math.max(kw.assault, num || 1); break
+    case 'deathknell': kw.deathknell = true; break
+    case 'accelerate': kw.accelerate = true; break
+    case 'ambush': kw.ambush = true; break
+    case 'deflect': kw.deflect = Math.max(kw.deflect, num || 1); break
+    case 'ganking': kw.ganking = true; break
+    case 'hidden': kw.hidden = true; break
+    case 'hunt': kw.hunt = Math.max(kw.hunt, num || 1); break
+    case 'legion': kw.legion = true; break
+    case 'level': kw.level = Math.max(kw.level, num || 1); break
+    case 'quick-draw': kw.quickDraw = true; break
+    case 'reaction': kw.reaction = true; break
+    case 'action': kw.action = true; break
+    case 'vision': kw.vision = true; break
+    case 'predict': kw.predict = true; break
+    case 'weaponmaster': kw.weaponmaster = true; break
+    case 'backline': kw.backline = true; break
+    case 'temporary': kw.temporary = true; break
+    case 'equip': kw.equip = true; break
+    case 'repeat': kw.repeat = true; break
+  }
+}
+
 export function parseKeywords(card: Card | undefined): Keywords {
   if (!card) return EMPTY
   const hit = cache.get(card.id)
@@ -98,78 +126,37 @@ export function parseKeywords(card: Card | undefined): Keywords {
   const text = card.text ?? ''
   let m: RegExpExecArray | null
   while ((m = TOKEN.exec(text))) {
-    const name = m[1].toLowerCase()
     const num = m[2] === 'X' ? 1 : m[2] ? parseInt(m[2], 10) : 0
-    switch (name) {
-      case 'tank':
-        kw.tank = true
-        break
-      case 'shield':
-        kw.shield = Math.max(kw.shield, num || 1)
-        break
-      case 'assault':
-        kw.assault = Math.max(kw.assault, num || 1)
-        break
-      case 'deathknell':
-        kw.deathknell = true
-        break
-      case 'accelerate':
-        kw.accelerate = true
-        break
-      case 'ambush':
-        kw.ambush = true
-        break
-      case 'deflect':
-        kw.deflect = Math.max(kw.deflect, num || 1)
-        break
-      case 'ganking':
-        kw.ganking = true
-        break
-      case 'hidden':
-        kw.hidden = true
-        break
-      case 'hunt':
-        kw.hunt = Math.max(kw.hunt, num || 1)
-        break
-      case 'legion':
-        kw.legion = true
-        break
-      case 'level':
-        kw.level = Math.max(kw.level, num || 1)
-        break
-      case 'quick-draw':
-        kw.quickDraw = true
-        break
-      case 'reaction':
-        kw.reaction = true
-        break
-      case 'action':
-        kw.action = true
-        break
-      case 'vision':
-        kw.vision = true
-        break
-      case 'predict':
-        kw.predict = true
-        break
-      case 'weaponmaster':
-        kw.weaponmaster = true
-        break
-      case 'backline':
-        kw.backline = true
-        break
-      case 'temporary':
-        kw.temporary = true
-        break
-      case 'equip':
-        kw.equip = true
-        break
-      case 'repeat':
-        kw.repeat = true
-        break
-    }
+    applyKeywordToken(kw, m[1].toLowerCase(), num)
   }
   cache.set(card.id, kw)
+  return kw
+}
+
+/** Keywords active for a card given its controller's XP. A keyword token that
+ *  appears AFTER a [Level N] marker is gated — it only applies while xp >= N
+ *  (e.g. Master Yi - Tempered: "[Level 6] I have [Deflect] and [Ganking]"). The
+ *  [Level N] markers themselves and any keywords before the first one always
+ *  apply. */
+export function keywordsAt(card: Card | undefined, xp: number): Keywords {
+  if (!card) return EMPTY
+  const text = card.text ?? ''
+  if (!/\[level\s*\d+\]/i.test(text)) return parseKeywords(card) // no level gating
+  const kw: Keywords = { ...EMPTY }
+  let gate = 0
+  const re = /\[([A-Za-z][A-Za-z'-]*)\s*(\d+|X)?\]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    const name = m[1].toLowerCase()
+    const num = m[2] === 'X' ? 1 : m[2] ? parseInt(m[2], 10) : 0
+    if (name === 'level') {
+      gate = num || 1 // subsequent keywords (until the next [Level]) need this XP
+      applyKeywordToken(kw, name, num) // record the Level keyword itself
+      continue
+    }
+    if (gate > xp) continue // gated keyword not yet active
+    applyKeywordToken(kw, name, num)
+  }
   return kw
 }
 

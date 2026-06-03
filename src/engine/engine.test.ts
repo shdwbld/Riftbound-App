@@ -1490,6 +1490,29 @@ describe('Phase A — cost increases + Repeat grant/discount', () => {
   })
 })
 
+describe('Master Yi — quick wins', () => {
+  it('Honed: a base "I enter ready" unit enters ready', () => {
+    const id = injectCard('honed-test', '[Ganking] (I can move from battlefield to battlefield.) I enter ready.', { energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(id, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.exhausted).toBe(false)
+  })
+
+  it('Tempered: [Level 6] grants Deflect/Ganking only at 6+ XP', async () => {
+    const { keywordsAt } = await import('./keywords')
+    const tempered = CARDS.find((c) => c.type === 'unit' && c.name.startsWith('Master Yi - Tempered'))
+    if (!tempered) return
+    expect(keywordsAt(tempered, 0).ganking).toBe(false) // below level 6
+    expect(keywordsAt(tempered, 0).deflect).toBe(0)
+    expect(keywordsAt(tempered, 0).hunt).toBe(2) // Hunt 2 is before the [Level 6] gate → ungated
+    expect(keywordsAt(tempered, 6).ganking).toBe(true) // at level 6
+    expect(keywordsAt(tempered, 6).deflect).toBe(1)
+  })
+})
+
 describe('Lillia / Plundering Poro', () => {
   it('Plundering Poro: conquering plays an exhausted Gold token', () => {
     const poro = CARDS.find((c) => c.type === 'unit' && c.name === 'Plundering Poro')

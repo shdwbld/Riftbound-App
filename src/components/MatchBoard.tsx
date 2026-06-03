@@ -9,7 +9,7 @@ import {
   type GameEvent,
 } from '../engine/types'
 import { canPlay, combatMight, matchUsesXp, grantedAbilityFor } from '../engine/engine'
-import { parseKeywords } from '../engine/keywords'
+import { parseKeywords, keywordsAt } from '../engine/keywords'
 import { RULES } from '../engine/setup'
 import MechanicTooltip from './MechanicTooltip'
 import CombatBanner, { type BannerData } from './CombatBanner'
@@ -470,21 +470,62 @@ export default function MatchBoard({
             : dfd > atk
               ? 'defenders would hold'
               : 'both sides would trade'
+        // Who's taking part vs. who could still be invited (3-4 player tables).
+        const involved = new Set<PlayerId>([...bf.units.map((u) => u.owner), ...(sd.helpers ?? [])])
+        const invitable = match.players.filter((p) => !p.out && !involved.has(p.id))
+        const inviteToMe = sd.invite?.to === perspective ? sd.invite : undefined
+        const iAmCombatant = bf.units.some((u) => u.owner === perspective) || (sd.helpers ?? []).includes(perspective)
         return (
           <div className="rounded-xl border border-amber-400/50 bg-amber-500/10 p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-semibold text-amber-200">
                 ⚔ Showdown at {getCard(bf.cardId)?.name ?? 'battlefield'}
               </span>
-              {myShowdown && (
+              {inviteToMe ? (
+                <span className="flex items-center gap-2 text-sm text-amber-100">
+                  {match.players[inviteToMe.from].name} invites you to help
+                  <button
+                    onClick={() => onCardAction?.({ type: 'INVITE_RESPOND', player: perspective, accept: true })}
+                    className="rounded bg-emerald-500/30 px-2.5 py-1 font-semibold text-emerald-100 hover:bg-emerald-500/50"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    onClick={() => onCardAction?.({ type: 'INVITE_RESPOND', player: perspective, accept: false })}
+                    className="rounded bg-rose-500/30 px-2.5 py-1 font-semibold text-rose-100 hover:bg-rose-500/50"
+                  >
+                    Decline
+                  </button>
+                </span>
+              ) : myShowdown && !sd.invite ? (
                 <button
                   onClick={onPass}
                   className="rounded bg-amber-500/30 px-3 py-1 text-sm font-semibold text-amber-100 hover:bg-amber-500/50"
                 >
                   Pass (Space)
                 </button>
-              )}
+              ) : null}
             </div>
+            {/* Invite another player to help (attacker or a defender may invite). */}
+            {myShowdown && !sd.invite && iAmCombatant && invitable.length > 0 && onCardAction && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-100/80">
+                <span>Invite to help:</span>
+                {invitable.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => onCardAction({ type: 'INVITE', player: perspective, invitee: p.id })}
+                    className="rounded border border-amber-400/40 px-2 py-0.5 font-semibold text-amber-100 hover:bg-amber-500/20"
+                  >
+                    + {p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {sd.invite && sd.invite.from === perspective && (
+              <p className="mt-2 text-xs text-amber-100/70">
+                Waiting for {match.players[sd.invite.to].name} to respond to your invitation…
+              </p>
+            )}
             <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
               <div className="rounded-lg bg-rose-500/15 p-2">
                 <div className="mb-1 flex items-center justify-between">
@@ -826,7 +867,7 @@ function BattlefieldZone({
                 }
                 // Ganking: your unit here may move directly to another
                 // battlefield — pulse it to advertise the gank.
-                const canGank = u.owner === perspective && myActionTurn && !u.exhausted && parseKeywords(getCard(u.cardId)).ganking
+                const canGank = u.owner === perspective && myActionTurn && !u.exhausted && keywordsAt(getCard(u.cardId), match.players[u.owner].xp).ganking
                 return (
                   <CardPreview key={cf.key} cardId={u.cardId}>
                     <button

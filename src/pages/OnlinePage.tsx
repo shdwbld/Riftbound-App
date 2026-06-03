@@ -452,7 +452,8 @@ export default function OnlinePage() {
     )
   }
 
-  const myTurn = controlling === seat
+  const amOut = match.players[seat]?.out === true
+  const myTurn = controlling === seat && !amOut
   const play = (c: EngineCard) => {
     const card = getCard(c.cardId)
     if (!card) return
@@ -573,6 +574,11 @@ export default function OnlinePage() {
           </span>
         }
       />
+      {amOut && (
+        <div className="rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/60">
+          👁 You're out of the match — spectating the remaining players.
+        </div>
+      )}
       {disconnected && (
         <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 text-sm text-amber-100">
           <span className="fx-ready">⚠ Opponent disconnected — waiting for them to reconnect…</span>

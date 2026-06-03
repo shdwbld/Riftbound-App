@@ -76,6 +76,10 @@ export interface PlayerState {
   zones: Record<ZoneId, EngineCard[]>
   /** Set true once the player has taken their mulligan decision. */
   mulliganed: boolean
+  /** Out of the match: conceded or eliminated (e.g. burned out with no Trash in
+   *  a 3-4 player game). Skipped in turn/priority rotation; their board presence
+   *  is cleared. The match continues until one player remains. */
+  out?: boolean
 }
 
 export interface BattlefieldState {
@@ -123,12 +127,19 @@ export interface ShowdownState {
   battlefield: number
   /** Player who must act next in the showdown (priority). */
   priority: PlayerId
-  /** Players who have consecutively passed; 2 passes resolves combat. */
+  /** Participants who have consecutively passed; combat resolves once every
+   *  participant (combatants + accepted helpers) has passed in a row. */
   passes: number
   /** The unit whose move opened this showdown. */
   movedUnit: string
   /** Pending manual damage assignment — combat is paused until filled. */
   assign?: { steps: DamageAssignStep[]; current: number }
+  /** A pending invitation: a combatant has asked `to` to join and help, awaiting
+   *  their accept/decline. */
+  invite?: { from: PlayerId; to: PlayerId }
+  /** Non-combatants who accepted an invitation and may now play a helping spell;
+   *  they join the priority rotation for the rest of this showdown. */
+  helpers?: PlayerId[]
 }
 
 export interface LogEntry {
@@ -314,6 +325,11 @@ export type Action =
   | { type: 'COUNTER'; player: PlayerId; iid: string; payment: Payment; targetChainId: string }
   | { type: 'END_TURN'; player: PlayerId }
   | { type: 'CONCEDE'; player: PlayerId }
+  /** During a showdown, a combatant invites a non-combatant to join and help.
+   *  Either the attacker or a defender may invite. */
+  | { type: 'INVITE'; player: PlayerId; invitee: PlayerId }
+  /** The invited player accepts (joins as a helper) or declines. */
+  | { type: 'INVITE_RESPOND'; player: PlayerId; accept: boolean }
 
 // --- Feedback events -------------------------------------------------------
 

@@ -16,7 +16,7 @@ import {
   fail,
 } from './types'
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
-import { parseKeywords, accelerateCost, repeatCost, levelBonus } from './keywords'
+import { parseKeywords, keywordsAt, accelerateCost, repeatCost, levelBonus } from './keywords'
 import { addCost, costOf, effectiveCostOf, autoPayEff } from './autopay'
 import { bfScript, bfScriptAt, type BfApi } from './battlefieldScripts'
 
@@ -90,9 +90,37 @@ function log(s: MatchState, player: PlayerId | null, text: string): MatchState {
   return { ...s, log: [...s.log, { turn: s.turn, player, text }] }
 }
 
-/** Next seat in turn order (wraps around the table). */
-const nextPlayer = (s: MatchState, p: PlayerId): PlayerId =>
-  (p + 1) % s.players.length
+/** Next seat in turn order (wraps around the table), skipping players who are
+ *  out of the match (conceded / eliminated). */
+const nextPlayer = (s: MatchState, p: PlayerId): PlayerId => {
+  const n = s.players.length
+  let q = (p + 1) % n
+  for (let i = 0; i < n && s.players[q].out; i++) q = (q + 1) % n
+  return q
+}
+
+/** Number of players still in the match (a chain resolves once all of them pass). */
+const aliveCount = (s: MatchState): number =>
+  s.players.reduce((n, p) => n + (p.out ? 0 : 1), 0)
+
+/** Seats taking part in a showdown: the combatants (owners of units at the
+ *  battlefield) plus any invited helpers who accepted. Unlike a chain — where
+ *  ANY player may react — a showdown is private to its combatants, so only
+ *  these players get a priority window. */
+function showdownParticipants(s: MatchState): PlayerId[] {
+  const sd = s.showdown
+  if (!sd) return []
+  const combatants = s.battlefields[sd.battlefield].units.map((u) => u.owner)
+  return [...new Set([...combatants, ...(sd.helpers ?? [])])].filter((p) => !s.players[p].out)
+}
+
+/** Next showdown participant in seat order after `p` (wraps the table). */
+function nextShowdownPriority(s: MatchState, p: PlayerId): PlayerId {
+  const parts = showdownParticipants(s)
+  if (parts.length === 0) return p
+  const sorted = [...parts].sort((a, b) => a - b)
+  return sorted.find((x) => x > p) ?? sorted[0]
+}
 const def = (ci: EngineCard): Card | undefined => getCard(ci.cardId)
 
 function findInZone(
@@ -927,9 +955,11 @@ function moveUnits(
           (u) => u.iid === iid && u.owner === player,
         )
         if (idx >= 0) {
-          // Ganking from the keyword OR granted by the source battlefield
-          // (Windswept Hillock). The destination must also allow it.
-          const hasGank = parseKeywords(def(s.battlefields[i].units[idx])).ganking || !!bfScriptAt(s, i)?.grantsGanking
+          // Ganking from the keyword (possibly [Level N]-gated, e.g. Master Yi
+          // - Tempered) OR granted by the source battlefield (Windswept
+          // Hillock). The destination must also allow it.
+          const gankU = s.battlefields[i].units[idx]
+          const hasGank = keywordsAt(def(gankU), s.players[gankU.owner]?.xp ?? 0).ganking || !!bfScriptAt(s, i)?.grantsGanking
           if (!hasGank)
             return fail(state, 'Only units with Ganking can move between battlefields.')
           unit = s.battlefields[i].units.splice(idx, 1)[0]
@@ -956,10 +986,13 @@ function moveUnits(
     s2.phase = 'showdown'
     s2.showdown = {
       battlefield: toBattlefield,
-      priority: nextPlayer(s2, player),
+      priority: player, // fixed up to the first defending participant below
       passes: 0,
       movedUnit: moved[0].iid,
     }
+    // Priority opens on the first combatant after the mover (skips uninvolved
+    // seats in a 3-4 player game — they only join if invited).
+    s2.showdown.priority = nextShowdownPriority(s2, player)
     s2 = log(s2, player, 'Showdown opened â€” opponents may respond.')
   } else if (
     s2.battlefields[toBattlefield].controller === player &&
@@ -1259,8 +1292,9 @@ function burnOut(state: MatchState, player: PlayerId): MatchState {
   const beneficiary = nextPlayer(state, player)
   const p = state.players[player]
   if (p.zones.trash.length === 0) {
-    const s = log(state, player, `${p.name} burned out with no Trash â€” ${state.players[beneficiary].name} wins!`)
-    return endGame(s, beneficiary)
+    // No Trash to recycle: the burned-out player drops. In 1v1 the lone opponent
+    // wins; in a 3-4 player game the match continues among the survivors.
+    return eliminate(state, player, 'burned out with no Trash')
   }
   p.zones.mainDeck = shuffle([...p.zones.mainDeck, ...p.zones.trash])
   p.zones.trash = []
@@ -1273,6 +1307,36 @@ function endGame(state: MatchState, winner: PlayerId): MatchState {
   s.winner = winner
   s.phase = 'gameover'
   s = log(s, winner, `${s.players[winner].name} wins!`)
+  return s
+}
+
+/** Drop a player from the match (concede / elimination). Their units leave every
+ *  battlefield (to their Trash) and their board zones are cleared, so they no
+ *  longer contest control or score. With one player left, that player wins;
+ *  otherwise play continues. Does NOT fix turn/priority pointers — the caller is
+ *  responsible for advancing past the departed seat. */
+function eliminate(state: MatchState, player: PlayerId, reason: string): MatchState {
+  let s = clone(state)
+  const p = s.players[player]
+  if (p.out) return s
+  p.out = true
+  // Pull their units off every battlefield into their Trash.
+  for (const bf of s.battlefields) {
+    const leaving = bf.units.filter((u) => u.owner === player)
+    bf.units = bf.units.filter((u) => u.owner !== player)
+    for (const u of leaving) sendToTrash(p, u)
+  }
+  // Clear their board presence so nothing they own keeps affecting the game.
+  for (const u of [...p.zones.base]) sendToTrash(p, u)
+  p.zones.base = []
+  p.pool = { energy: 0, power: {} }
+  if (p.legend) p.legend.exhausted = true
+  s = log(s, player, `${p.name} is out of the match (${reason}).`)
+  recomputeControllers(s)
+  // Anyone holding an accepted invite from / to the departed player is moot —
+  // a stale showdown invite is dropped by the caller's pointer repair.
+  const alive = s.players.filter((pl) => !pl.out)
+  if (alive.length === 1) return endGame(s, alive[0].id)
   return s
 }
 
@@ -1549,7 +1613,9 @@ export function deflectSurcharge(
   let total = 0
   for (const iid of targets) {
     const u = find(iid)
-    if (u && u.owner !== caster) total += parseKeywords(def(u)).deflect
+    // Deflect may be granted by a [Level N] clause (Master Yi - Tempered), so
+    // resolve keywords against the unit owner's XP.
+    if (u && u.owner !== caster) total += keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect
   }
   return total
 }
@@ -1579,6 +1645,24 @@ export function autoAllocate(step: DamageAssignStep): Record<string, number> {
   return out
 }
 
+/** Who assigns the defending side's pooled counter-damage. Prefers the
+ *  battlefield's defending controller; otherwise the defender owner with the most
+ *  units present. Always a defender (never the attacker). */
+function pickDefenseAssigner(
+  s: MatchState,
+  bfIndex: number,
+  defenders: EngineCard[],
+  defOwners: PlayerId[],
+  moverOwner: PlayerId,
+): PlayerId {
+  if (defOwners.length === 0) return moverOwner
+  if (defOwners.length === 1) return defOwners[0]
+  const controller = s.battlefields[bfIndex].controller
+  if (controller != null && defOwners.includes(controller)) return controller
+  const count = (owner: PlayerId) => defenders.filter((u) => u.owner === owner).length
+  return [...defOwners].sort((a, b) => count(b) - count(a) || a - b)[0]
+}
+
 /** Compute the two damage-assignment steps for a showdown (no mutation). */
 function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; steps: DamageAssignStep[] } {
   const bf = s.battlefields[bfIndex]
@@ -1593,12 +1677,16 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
   const defendMight = defenders.reduce((a, u) => a + dealt(u, 'defender'), 0)
   // Mover's damage hits the defenders; the defending side's damage hits attackers.
+  // The defending side pools its Might (total-might model); one defender assigns
+  // the combined counter-damage on the side's behalf. When two opponents defend
+  // the same battlefield, the assigner is the defending controller (else the
+  // owner fielding the most units) — so a defender, never the attacker, chooses.
   const defOwners = [...new Set(defenders.map((u) => u.owner))]
-  const atkDealer = defOwners.length === 1 ? defOwners[0] : moverOwner
+  const atkDealer = pickDefenseAssigner(s, bfIndex, defenders, defOwners, moverOwner)
   const isTank = (u: EngineCard) => hasTank(s, u)
   const steps = [
     buildAssignStep(moverOwner, 'defenders', defenders, attackMight, true, xpOf, bonusOf, isTank),
-    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, defOwners.length === 1, xpOf, bonusOf, isTank),
+    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, true, xpOf, bonusOf, isTank),
   ]
   return { moverOwner, steps }
 }
@@ -2170,10 +2258,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (card.type === 'spell') p.grantRepeatNextSpell = false
 
       if (action.type === 'PLAY_UNIT') {
-        // Units enter exhausted unless the player paid Accelerate, or an active
-        // [Level N] grants "enters ready".
+        // Units enter exhausted unless the player paid Accelerate, an active
+        // [Level N] grants "enters ready", a base "I enter ready" ability (Master
+        // Yi - Honed), or the controller's legend grants it (Wuju Master L11).
         const levelReady = levelBonus(card, p.xp).ready
-        const entersReady = accelChosen || levelReady
+        const baseReady = /\bi enters? ready\b/i.test(card.text ?? '')
+        const entersReady = accelChosen || levelReady || baseReady
         // Ambush: a Reaction unit enters directly at a contested battlefield.
         const ambushBf = kw.ambush && action.toBattlefield != null ? action.toBattlefield : null
         if (ambushBf != null) {
@@ -2576,11 +2666,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (state.showdown.priority !== action.player)
         return fail(state, 'Not your priority.')
       if (state.showdown.assign) return fail(state, 'Assign combat damage first.')
+      if (state.showdown.invite) return fail(state, 'An invitation is awaiting a response.')
       const s = clone(state)
       s.showdown!.passes += 1
-      s.showdown!.priority = nextPlayer(s, action.player)
-      // Resolve once everyone (attacker + all defenders) has passed.
-      if (s.showdown!.passes >= s.players.length) {
+      s.showdown!.priority = nextShowdownPriority(s, action.player)
+      // Resolve once every participant (combatants + accepted helpers) has passed.
+      if (s.showdown!.passes >= showdownParticipants(s).length) {
         return ok(resolveShowdown(s, s.showdown!.battlefield))
       }
       return ok(s)
@@ -2592,8 +2683,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       let s = clone(state)
       s.passes += 1
       s.priority = nextPlayer(s, action.player)
-      // All players passed in a row â†’ resolve the top of the chain.
-      if (s.passes >= s.players.length) {
+      // All players still in the match passed in a row â†’ resolve the top of the chain.
+      if (s.passes >= aliveCount(s)) {
         s = resolveTopOfChain(s)
         s.passes = 0
         s.priority = s.chain.length > 0 ? s.activePlayer : null
@@ -2740,11 +2831,75 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     }
 
     case 'CONCEDE': {
-      // The conceding player drops; if one player remains they win, otherwise
-      // the current points leader among the rest is declared the winner.
-      const remaining = state.players.filter((p) => p.id !== action.player)
-      const winner = remaining.reduce((a, b) => (b.points > a.points ? b : a))
-      return ok(endGame(state, winner.id))
+      if (state.players[action.player]?.out) return fail(state, 'You are already out of the match.')
+      const wasActive = state.activePlayer === action.player
+      let s = eliminate(state, action.player, 'conceded')
+      // One survivor → eliminate() already declared them the winner.
+      if (s.winner !== null) return ok(s)
+      s = clone(s)
+      // Repair any priority/turn pointers that referenced the departed seat.
+      if (s.showdown) {
+        if (s.showdown.invite && (s.showdown.invite.from === action.player || s.showdown.invite.to === action.player))
+          s.showdown.invite = undefined
+        // Their units left the battlefield; if a side is now empty the combat fizzles.
+        const parts = showdownParticipants(s)
+        if (parts.length < 2) {
+          s.showdown = null
+          s.phase = 'action'
+        } else if (s.showdown && s.showdown.priority === action.player) {
+          s.showdown.priority = nextShowdownPriority(s, action.player)
+        }
+      }
+      if (s.chain.length > 0 && s.priority === action.player)
+        s.priority = nextPlayer(s, action.player)
+      // If it was the conceder's turn (and no combat/chain is mid-resolution),
+      // hand the turn to the next surviving player.
+      if (wasActive && s.phase !== 'showdown' && s.chain.length === 0) {
+        s.activePlayer = nextPlayer(s, action.player)
+        s.turn += 1
+        return ok(beginTurn(s))
+      }
+      // Otherwise keep the active pointer valid for when combat/chain resolves.
+      if (wasActive) s.activePlayer = nextPlayer(s, action.player)
+      return ok(s)
+    }
+
+    case 'INVITE': {
+      if (state.phase !== 'showdown' || !state.showdown)
+        return fail(state, 'You can only invite during a showdown.')
+      if (state.showdown.assign) return fail(state, 'Combat damage is being assigned.')
+      if (state.showdown.invite) return fail(state, 'An invitation is already pending.')
+      const parts = showdownParticipants(state)
+      if (!parts.includes(action.player))
+        return fail(state, 'Only a combatant may invite a helper.')
+      const invitee = action.invitee
+      if (state.players[invitee]?.out) return fail(state, 'That player is out of the match.')
+      if (parts.includes(invitee)) return fail(state, 'That player is already in the showdown.')
+      const s = clone(state)
+      // The invitee responds next.
+      s.showdown!.invite = { from: action.player, to: invitee }
+      s.showdown!.priority = invitee
+      return ok(log(s, action.player, `${s.players[action.player].name} invited ${s.players[invitee].name} to join the showdown.`))
+    }
+
+    case 'INVITE_RESPOND': {
+      if (state.phase !== 'showdown' || !state.showdown?.invite)
+        return fail(state, 'No invitation to respond to.')
+      if (state.showdown.invite.to !== action.player)
+        return fail(state, 'This invitation is not for you.')
+      const s = clone(state)
+      const inv = s.showdown!.invite!
+      s.showdown!.invite = undefined
+      if (action.accept) {
+        s.showdown!.helpers = [...(s.showdown!.helpers ?? []), action.player]
+        // The new helper acts now; everyone re-passes before combat resolves.
+        s.showdown!.priority = action.player
+        s.showdown!.passes = 0
+        return ok(log(s, action.player, `${s.players[action.player].name} joined the showdown to help ${s.players[inv.from].name}.`))
+      }
+      // Declined — priority returns to the inviter.
+      s.showdown!.priority = inv.from
+      return ok(log(s, action.player, `${s.players[action.player].name} declined the invitation.`))
     }
 
     default:
