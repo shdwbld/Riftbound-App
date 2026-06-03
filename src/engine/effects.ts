@@ -79,6 +79,9 @@ export interface ParsedEffect {
    *  The Harrowing, Spectral Matron, Glasc Mixologist. Optional cost cap
    *  (≤maxEnergy Energy / ≤maxPower Power). Resolves to the highest-cost qualifier. */
   playUnitFromTrash: { maxEnergy: number | null; maxPower: number | null } | null
+  /** Reveal from the top of your Main Deck until a unit, play that unit ignoring
+   *  its cost, and recycle the rest to the bottom (Dazzling Aurora). */
+  revealPlayFromDeck: boolean
   /** Runes the affected unit's owner channels exhausted (Retreat: "channels 1
    *  rune exhausted"). Distinct from `channel`, which gives the caster ready runes. */
   channelExhausted: number
@@ -134,6 +137,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   bounce: null,
   returnFromTrash: null,
   playUnitFromTrash: null,
+  revealPlayFromDeck: false,
   channelExhausted: 0,
   tempMightSelf: 0,
   tempMightAll: 0,
@@ -151,7 +155,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -328,6 +332,12 @@ function parse(text: string): ParsedEffect {
     eff.playUnitFromTrash = { maxEnergy: me ? parseInt(me[1], 10) : null, maxPower: mp || null }
     hit = true
   }
+  // "reveal cards from the top of your Main Deck until you reveal a unit … play
+  // it, ignoring its cost, and recycle the rest" (Dazzling Aurora).
+  if (/reveal cards from (?:the )?top of your main deck until you reveal a unit/.test(t)) {
+    eff.revealPlayFromDeck = true
+    hit = true
+  }
   // "its owner channels N rune(s) exhausted" — tied to the bounced unit's owner.
   const chExM = t.match(new RegExp(`channels? ${NUM} runes? exhausted`))
   if (chExM) { eff.channelExhausted += num(chExM[1]); hit = true }
@@ -462,5 +472,12 @@ export function needsTarget(card: Card): boolean {
 export function onPlayEffect(card: Card): ParsedEffect {
   const t = (card.text ?? '').toLowerCase()
   if (!ON_PLAY.test(t)) return EMPTY_EFFECT()
+  return parse(card.text ?? '')
+}
+
+/** A permanent's "At the end of your turn, …" effect (Dazzling Aurora), or empty. */
+export function endOfTurnEffect(card: Card): ParsedEffect {
+  const t = (card.text ?? '').toLowerCase()
+  if (!/at the end of (?:your|each) turn/.test(t)) return EMPTY_EFFECT()
   return parse(card.text ?? '')
 }

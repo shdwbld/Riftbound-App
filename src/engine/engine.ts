@@ -25,7 +25,7 @@ function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
   const rank = (player - s.firstPlayer + s.players.length) % s.players.length
   return Math.floor((s.turn - 1 - rank) / s.players.length) + 1
 }
-import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, parseEffectText, type ParsedEffect } from './effects'
+import { spellEffect, onPlayEffect, endOfTurnEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, parseEffectText, type ParsedEffect } from './effects'
 import { triggersFor, parseTriggers, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
 import { battlefieldPassive } from './battlefields'
 
@@ -512,6 +512,23 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       const [card] = p.zones.trash.splice(i, 1)
       p.zones.base.push({ ...card, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
       lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (ignoring cost).`)
+    }
+  }
+  if (e.revealPlayFromDeck) {
+    // Reveal from the top until a unit; play it free (base, exhausted); recycle
+    // the non-units passed over to the bottom of the deck (Dazzling Aurora).
+    const deck = p.zones.mainDeck
+    const passed: EngineCard[] = []
+    let unit: EngineCard | undefined
+    while (deck.length) {
+      const top = deck.shift()!
+      if (getCard(top.cardId)?.type === 'unit') { unit = top; break }
+      passed.push(top)
+    }
+    for (const c of passed) deck.push(c) // recycle the rest to the bottom
+    if (unit) {
+      p.zones.base.push({ ...unit, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+      lines.push(`Revealed & played ${getCard(unit.cardId)?.name ?? 'a unit'} from deck (free); recycled ${passed.length}.`)
     }
   }
   if (e.tempMightAll) {
@@ -3560,6 +3577,17 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       }
       for (const bf of s.battlefields)
         bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false }))
+      // "At the end of your turn, …" effects for the ending player's permanents
+      // (Dazzling Aurora's free-unit engine). Base gear + units + battlefield units.
+      const ender = state.activePlayer
+      const perms = [...s.players[ender].zones.base, ...s.battlefields.flatMap((b) => b.units.filter((u) => u.owner === ender))]
+      for (const perm of perms) {
+        const def = getCard(perm.cardId)
+        if (!def) continue
+        const eot = endOfTurnEffect(def)
+        if (hasUntargetedPart(eot))
+          for (const line of applyParsed(s, s.players[ender], eot, undefined, perm.iid)) s = log(s, ender, `${def.name}: ${line}`)
+      }
       // Empty the ending player's resource pool.
       s.players[state.activePlayer].pool = { energy: 0, power: {} }
       s.activePlayer = nextPlayer(s, state.activePlayer)

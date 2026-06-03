@@ -605,6 +605,21 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.base.some((x) => x.iid === dead.iid && x.exhausted)).toBe(true)
   })
 
+  it('Dazzling Aurora: at end of turn, reveal-until-unit → play it free, recycle the rest', () => {
+    const aurora = injectCard('aurora-gear', 'At the end of your turn, reveal cards from the top of your Main Deck until you reveal a unit and banish it. Play it, ignoring its cost, and recycle the rest.', { type: 'gear' })
+    const spellId = injectCard('aurora-spell', 'Deal 1.', { type: 'spell', energy: 1, power: {} })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(aurora, 0)) // Aurora in base
+    // Deck: a non-unit on top, then a unit.
+    s.players[0].zones.mainDeck = [mk(spellId, 0), mk(furyUnit.id, 0), mk(spellId, 0)]
+    const unitInDeck = s.players[0].zones.mainDeck[1]
+    const r = reduce(s, { type: 'END_TURN', player: 0 })
+    expect(r.error).toBeFalsy()
+    // The unit was pulled into base (free, exhausted); the passed spell recycled.
+    expect(r.state.players[0].zones.base.some((x) => x.iid === unitInDeck.iid && x.exhausted)).toBe(true)
+    expect(r.state.players[0].zones.mainDeck.some((x) => x.iid === unitInDeck.iid)).toBe(false)
+  })
+
   it('auto-parses named token creation (Sand Soldier / Bird / Mech)', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) =>
