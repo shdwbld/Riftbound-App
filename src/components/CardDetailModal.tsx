@@ -5,9 +5,10 @@ import {
   isSpell,
   isGear,
   totalPower,
+  cardCode,
 } from '../types/cards'
-import { keywordLabels } from '../engine/keywords'
-import CardText from './CardText'
+import { keywordLabels, keywordDef } from '../engine/keywords'
+import CardText, { DomainIcon } from './CardText'
 
 export default function CardDetailModal({
   card,
@@ -49,7 +50,7 @@ export default function CardDetailModal({
             <div>
               <h3 className="text-xl font-bold">{card.name}</h3>
               <p className="text-xs uppercase tracking-wide text-white/40">
-                {card.type} · {card.set}-{card.number} · {card.rarity}
+                {card.type} · {cardCode(card)} · {card.rarity}
               </p>
             </div>
             <button
@@ -75,7 +76,7 @@ export default function CardDetailModal({
                   color: DOMAIN_META[d].color,
                 }}
               >
-                {DOMAIN_META[d].glyph} {DOMAIN_META[d].label}
+                <DomainIcon domain={d} /> {DOMAIN_META[d].label}
               </span>
             ))}
           </div>
@@ -96,7 +97,8 @@ export default function CardDetailModal({
                         color: DOMAIN_META[d as keyof typeof DOMAIN_META]?.color ?? '#aaa',
                       }}
                     >
-                      {n} {DOMAIN_META[d as keyof typeof DOMAIN_META]?.label ?? 'Power'}
+                      {n} <DomainIcon domain={d} />{' '}
+                      {DOMAIN_META[d as keyof typeof DOMAIN_META]?.label ?? 'Power'}
                     </span>
                   ) : null,
                 )}
@@ -110,14 +112,20 @@ export default function CardDetailModal({
 
           {keywordLabels(card).length > 0 && (
             <div className="flex flex-wrap gap-1">
-              {keywordLabels(card).map((k) => (
-                <span
-                  key={k}
-                  className="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-200"
-                >
-                  {k}
-                </span>
-              ))}
+              {keywordLabels(card).map((k) => {
+                const d = keywordDef(k)
+                return (
+                  <span
+                    key={k}
+                    title={d}
+                    className={`rounded bg-sky-600/90 px-2 py-0.5 text-xs font-semibold text-white shadow-sm ${
+                      d ? 'cursor-help' : ''
+                    }`}
+                  >
+                    {k}
+                  </span>
+                )
+              })}
             </div>
           )}
           {card.text && (

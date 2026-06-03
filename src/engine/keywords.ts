@@ -1,5 +1,10 @@
-import type { Card } from '../types/cards'
+import type { Card, Domain } from '../types/cards'
 import { getCard } from '../data/cards'
+
+export interface KeywordCost {
+  energy: number
+  power: Partial<Record<Domain, number>>
+}
 
 // ---------------------------------------------------------------------------
 // Keyword parsing. Riftbound prints keywords in the card text as [Keyword] or
@@ -157,6 +162,77 @@ export function parseKeywords(card: Card | undefined): Keywords {
 
 export function keywordsOf(cardId: string): Keywords {
   return parseKeywords(getCard(cardId))
+}
+
+/** The continuous bonus a unit's [Level N] grants while its controller has
+ *  enough XP. We model the common passive forms: "+X Might" and "enter ready".
+ *  (Effect-upgrade Levels on spells — "do Z instead" — are not auto-parsed.) */
+export function levelBonus(card: Card | undefined, xp: number): { might: number; ready: boolean; active: boolean; threshold: number } {
+  const k = parseKeywords(card)
+  if (!card || k.level <= 0) return { might: 0, ready: false, active: false, threshold: 0 }
+  const active = xp >= k.level
+  if (!active) return { might: 0, ready: false, active: false, threshold: k.level }
+  const text = card.text ?? ''
+  // Isolate the [Level N] … clause so we don't read the base text's Might.
+  const seg = text.slice(text.search(/\[level\s*\d+\]/i))
+  const mM = seg.match(/\+(\d+)\s*(?::rb_might:|might)/i)
+  return {
+    might: mM ? parseInt(mM[1], 10) : 0,
+    ready: /enter(?:s)? ready/i.test(seg),
+    active: true,
+    threshold: k.level,
+  }
+}
+
+/** The optional Accelerate cost (paid to have a unit enter READY), parsed from
+ *  the reminder text, e.g. "[Accelerate] (You may pay :rb_energy_1::rb_rune_fury:
+ *  …)". Returns null if the card has no Accelerate keyword / parseable cost. */
+export function accelerateCost(card: Card | undefined): KeywordCost | null {
+  if (!card || !parseKeywords(card).accelerate) return null
+  const text = card.text ?? ''
+  // The parenthetical right after the [Accelerate] tag holds the extra cost.
+  const m = text.match(/\[accelerate\][^()]*\(([^)]*)\)/i)
+  const seg = m ? m[1] : text
+  let energy = 0
+  const power: Partial<Record<Domain, number>> = {}
+  const eM = seg.match(/:rb_energy_(\d+):/)
+  if (eM) energy = parseInt(eM[1], 10)
+  for (const rm of seg.matchAll(/:rb_rune_([a-z]+):/gi)) {
+    const d = rm[1].toLowerCase() as Domain
+    power[d] = (power[d] ?? 0) + 1
+  }
+  if (energy === 0 && Object.keys(power).length === 0) return null
+  return { energy, power }
+}
+
+/** One-line rules definitions for keyword tooltips. Keyed by the bare keyword
+ *  name (lowercased, no number) so a label like "Shield 2" still resolves. */
+export const KEYWORD_DEFS: Record<string, string> = {
+  tank: 'Must be assigned lethal damage before other (non-Tank) defenders.',
+  shield: 'Has +X Might while defending in a showdown.',
+  assault: 'Has +X Might while attacking in a showdown.',
+  deathknell: 'Triggers an effect when it is defeated.',
+  accelerate: 'Enters play ready (not exhausted) — can act the turn it arrives.',
+  ambush: 'May be played at Reaction speed to a battlefield you contest.',
+  deflect: 'Costs enemies X more to target it with spells or abilities.',
+  ganking: 'May move directly from one battlefield to another.',
+  hidden: 'May be placed facedown at a battlefield you control.',
+  hunt: 'Grants X XP when it conquers or holds.',
+  legion: 'Gains a bonus if you have already played another card this turn.',
+  level: 'Gains a buff while you have at least X XP.',
+  'quick-draw': 'Reaction-speed gear that attaches the moment it is played.',
+  reaction: 'May be played during a Closed State (in response, on the chain).',
+  action: 'May be played during an Open State, such as a showdown.',
+  vision: 'Look at / filter the top of your deck when it is played.',
+  weaponmaster: 'Automatically attaches an equipment when it enters play.',
+  backline: 'Does not fight on the frontline (deals/takes no showdown damage).',
+  temporary: 'Is defeated at the start of your next turn.',
+  equip: 'Gear that attaches to a unit, granting its bonuses.',
+}
+
+/** Resolve a definition for a keyword chip label (e.g. "Shield 2" → shield). */
+export function keywordDef(label: string): string | undefined {
+  return KEYWORD_DEFS[label.toLowerCase().replace(/\s*\d+$/, '')]
 }
 
 /** Human-readable keyword chips for UI display. */

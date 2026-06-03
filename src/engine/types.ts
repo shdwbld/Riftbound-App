@@ -54,6 +54,14 @@ export interface PlayerState {
   /** Main-deck cards this player has played this turn (drives LEGION). */
   cardsPlayedThisTurn?: number
   points: number
+  /** Experience earned (via Hunt on conquer/hold); fuels Level abilities. */
+  xp: number
+  /** Banishment zone: cards removed from the game (no Deathknell; not the Trash,
+   *  so they can't be recycled by Burn Out). Kept separate from `zones`. */
+  banished: EngineCard[]
+  /** Resource pool: bonus Energy + colored Power (e.g. from "Add" effects) that
+   *  sits on top of the runes and is spent first. Empties at end of turn. */
+  pool: { energy: number; power: Partial<Record<Domain, number>> }
   zones: Record<ZoneId, EngineCard[]>
   /** Set true once the player has taken their mulligan decision. */
   mulliganed: boolean
@@ -68,6 +76,7 @@ export interface BattlefieldState {
 }
 
 export type Phase =
+  | 'setup' // pre-game: roll for turn order, choose first, champion + battlefield
   | 'mulligan' // both players decide opening hands
   | 'awaken' // transient: ready all
   | 'score' // transient: score held battlefields
@@ -77,6 +86,28 @@ export type Phase =
   | 'showdown' // combat window open at a battlefield
   | 'gameover'
 
+/** One side's damage being assigned across the opposing units (Riftbound: the
+ *  dealing player assigns, Tank-first). Auto steps are pre-filled; manual steps
+ *  wait for an ASSIGN_DAMAGE action. */
+export interface DamageAssignStep {
+  /** The player who deals (and assigns) this damage. */
+  dealer: PlayerId
+  /** Which group RECEIVES the damage. */
+  side: 'attackers' | 'defenders'
+  /** Receiving unit iids, in Tank-first order. */
+  targets: string[]
+  /** Total combat damage to assign. */
+  amount: number
+  /** True when the dealer must choose the split; false = auto-resolved. */
+  manual: boolean
+  /** Defeated iids: precomputed (auto) or chosen (after ASSIGN_DAMAGE). */
+  defeated: string[]
+  /** Each receiving unit's effective Might (lethal threshold). */
+  hp: Record<string, number>
+  /** Tank iids that must be assigned lethal before non-Tanks. */
+  tanks: string[]
+}
+
 export interface ShowdownState {
   battlefield: number
   /** Player who must act next in the showdown (priority). */
@@ -85,6 +116,8 @@ export interface ShowdownState {
   passes: number
   /** The unit whose move opened this showdown. */
   movedUnit: string
+  /** Pending manual damage assignment — combat is paused until filled. */
+  assign?: { steps: DamageAssignStep[]; current: number }
 }
 
 export interface LogEntry {
@@ -128,6 +161,34 @@ export interface MatchState {
   log: LogEntry[]
   /** Monotonic action counter (for ordering / netcode). */
   seq: number
+  /** A pending Vision decision: the controller peeked their top Main Deck card
+   *  and may recycle it (to the bottom) or keep it. */
+  vision?: { player: PlayerId; cardId: string }
+  /** A pending "ready a unit" choice: the player picks which exhausted unit(s)
+   *  to ready, one at a time, until `count` reaches 0. */
+  readyChoice?: { player: PlayerId; count: number }
+  /** Pre-game setup state (turn-order roll, first-player choice, champion +
+   *  battlefield selection). Present only while phase === 'setup'. */
+  setup?: SetupState
+}
+
+/** Interactive pre-game setup (Core Rules §111–120): roll for turn order, the
+ *  winner chooses the First Player, then each player picks their Chosen Champion
+ *  (when a variant choice exists) and their Battlefield. */
+export interface SetupState {
+  step: 'roll' | 'first' | 'champion' | 'battlefield'
+  /** Per-player turn-order roll (highest chooses the First Player). */
+  rolls: number[] | null
+  /** The highest roller — the only player who may choose the First Player. */
+  winner: PlayerId | null
+  /** Per-player candidate champion cardIds (length ≤ 1 → no real choice). */
+  championOptions: string[][]
+  /** Per-player chosen champion (null = not yet chosen). */
+  championPick: (string | null)[]
+  /** Per-player candidate battlefield cardIds they may contribute. */
+  battlefieldOptions: string[][]
+  /** Per-player chosen battlefield (null = not yet chosen). */
+  battlefieldPick: (string | null)[]
 }
 
 // --- Actions ---------------------------------------------------------------
@@ -139,6 +200,10 @@ export interface Payment {
   exhaust: string[]
   /** rune iids to recycle for 1 power of their domain each */
   recycle: string[]
+  /** Energy paid from the player's resource pool (spent before runes). */
+  poolEnergy?: number
+  /** Colored power paid from the resource pool (spent before runes). */
+  poolPower?: Partial<Record<Domain, number>>
 }
 
 export const emptyPayment = (): Payment => ({ exhaust: [], recycle: [] })
@@ -146,17 +211,32 @@ export const emptyPayment = (): Payment => ({ exhaust: [], recycle: [] })
 export type Action =
   /** Set aside up to 2 cards (by iid) to the bottom of the deck, redraw that
    *  many. Empty array = keep. */
+  /** Pre-game: record each player's turn-order roll (UI supplies fair d20s). */
+  | { type: 'ROLL_TURN_ORDER'; player: PlayerId; rolls: number[] }
+  /** The roll winner chooses who takes the first turn. */
+  | { type: 'CHOOSE_FIRST'; player: PlayerId; firstPlayer: PlayerId }
+  /** A player picks their Chosen Champion variant during setup. */
+  | { type: 'CHOOSE_CHAMPION'; player: PlayerId; cardId: string }
+  /** A player picks the Battlefield they contribute during setup. */
+  | { type: 'CHOOSE_BATTLEFIELD'; player: PlayerId; cardId: string }
   | { type: 'MULLIGAN'; player: PlayerId; toBottom: string[] }
   | { type: 'ACTIVATE_LEGEND'; player: PlayerId }
   /** Generate a token (e.g. Recruit) from the token pile onto your Base. */
   | { type: 'CREATE_TOKEN'; player: PlayerId; cardId: string }
   // --- Limited / utility actions (hotkeys & right-click menu) ---
   | { type: 'DRAW'; player: PlayerId }
+  /** Add Energy/Power to your pool. Resolves instantly — it cannot be reacted
+   *  to (no chain / priority window). */
+  | { type: 'ADD'; player: PlayerId; energy?: number; power?: Partial<Record<Domain, number>> }
   | { type: 'BUFF_UNIT'; player: PlayerId; iid: string }
   | { type: 'RECYCLE_RUNE'; player: PlayerId; iid: string }
   | { type: 'TRASH_CARD'; player: PlayerId; iid: string }
   | { type: 'REVEAL_TOP'; player: PlayerId }
-  | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment }
+  /** Resolve a pending Vision: recycle the peeked top card to the bottom, or keep it. */
+  | { type: 'VISION_DECIDE'; player: PlayerId; recycle: boolean }
+  /** Ready (un-exhaust) a chosen unit toward a pending "ready a unit" effect. */
+  | { type: 'READY_UNIT'; player: PlayerId; iid: string }
+  | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number }
   | {
       type: 'PLAY_SPELL'
       player: PlayerId
@@ -179,7 +259,21 @@ export type Action =
     }
   /** Move several units together (one showdown) — group standard move. */
   | { type: 'MOVE_UNITS'; player: PlayerId; iids: string[]; toBattlefield: number }
+  /** Assign a paused showdown's combat damage across the opposing units
+   *  (Tank-first). `allocations` maps receiving unit iid → damage placed on it. */
+  | { type: 'ASSIGN_DAMAGE'; player: PlayerId; allocations: Record<string, number> }
   | { type: 'STUN_UNIT'; player: PlayerId; iid: string }
+  /** Detach a piece of gear from a unit (the gear returns to your Base). */
+  | { type: 'DETACH'; player: PlayerId; unitIid: string; gearIid: string }
+  /** Cash in a Gold gear token: kill it and add 1 Power of the chosen domain. */
+  | { type: 'USE_GOLD'; player: PlayerId; iid: string; domain: Domain }
+  /** Remove a unit from play to the Banishment zone (no Deathknell). */
+  | { type: 'BANISH'; player: PlayerId; iid: string }
+  /** Place a Hidden unit from your Base facedown at a battlefield you control
+   *  (cost: recycle 1 rune of any domain). */
+  | { type: 'HIDE'; player: PlayerId; iid: string; toBattlefield: number; runeIid: string }
+  /** Flip one of your facedown units faceup (Reaction speed, free). */
+  | { type: 'REVEAL'; player: PlayerId; iid: string }
   | { type: 'RETREAT'; player: PlayerId; iid: string }
   | { type: 'PASS'; player: PlayerId }
   /** Pass priority on the chain; when all players pass, the top item resolves. */
@@ -189,10 +283,42 @@ export type Action =
   | { type: 'END_TURN'; player: PlayerId }
   | { type: 'CONCEDE'; player: PlayerId }
 
+// --- Feedback events -------------------------------------------------------
+
+/** Structured, render-agnostic signals the reducer emits at its mutation sites
+ *  so the UI can animate without parsing the log. One reduce() call may emit
+ *  several. */
+export type GameEventKind =
+  | 'damage'
+  | 'defeat'
+  | 'score'
+  | 'draw'
+  | 'play'
+  | 'move'
+  | 'buff'
+  | 'stun'
+  | 'conquer'
+  | 'counter'
+  | 'channel'
+
+export interface GameEvent {
+  kind: GameEventKind
+  /** Card instance this event is anchored to (damage/defeat/buff/stun/play/move). */
+  iid?: string
+  /** Player this event concerns (score/draw/conquer/counter). */
+  player?: PlayerId
+  /** Magnitude (damage dealt, points scored, cards drawn). */
+  amount?: number
+  /** Underlying card id, for display. */
+  cardId?: string
+}
+
 export interface EngineResult {
   state: MatchState
   /** Set when the action was rejected; state is returned unchanged. */
   error?: string
+  /** Feedback signals emitted while applying this action (for animations). */
+  events?: GameEvent[]
 }
 
 export const ok = (state: MatchState): EngineResult => ({ state })

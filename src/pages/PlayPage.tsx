@@ -25,6 +25,7 @@ import {
 import { DOMAIN_META } from '../types/cards'
 import type { Deck } from '../types/deck'
 import BoardCard from '../components/BoardCard'
+import { DomainIcon } from '../components/CardText'
 
 const HISTORY_CAP = 50
 
@@ -94,7 +95,7 @@ export default function PlayPage() {
             return (
               <span key={d} style={{ color: meta?.color }}>
                 {n}
-                {meta?.glyph ?? '◆'}
+                <DomainIcon domain={d} />
               </span>
             )
           })}

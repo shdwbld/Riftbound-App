@@ -10,11 +10,31 @@ import {
   type EngineCard,
   type Action,
   type Payment,
+  type ResolvedCost,
+  type GameEvent,
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce } from '../engine/engine'
-import { autoPayForCard, canAfford } from '../engine/autopay'
-import { needsTarget } from '../engine/effects'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge } from '../engine/engine'
+import { autoPay, canAfford, costOf, addCost, costIsFree } from '../engine/autopay'
+import { needsTarget, spellEffect } from '../engine/effects'
+import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { DOMAIN_META, type Domain } from '../types/cards'
+import PaymentModal from '../components/PaymentModal'
+import ChoiceModal from '../components/ChoiceModal'
+import VisionPrompt from '../components/VisionPrompt'
+import DamageAssignModal from '../components/DamageAssignModal'
+import BattleSummary, { worthSummarizing } from '../components/BattleSummary'
+
+type PlayType = 'PLAY_UNIT' | 'PLAY_GEAR' | 'PLAY_SPELL'
+
+/** Plain-text label for a cost (used in the Accelerate confirm dialog). */
+function costLabel(cost: KeywordCost | ResolvedCost): string {
+  const parts: string[] = []
+  if (cost.energy) parts.push(`${cost.energy} Energy`)
+  for (const [d, n] of Object.entries(cost.power) as [Domain, number][])
+    if (n) parts.push(`${n} ${DOMAIN_META[d].label}`)
+  return parts.join(' + ') || 'nothing'
+}
 import {
   type Transport,
   type NetMessage,
@@ -25,9 +45,20 @@ import {
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
 import { MulliganView } from './MatchPage'
+import SetupScreen from '../components/SetupScreen'
 
 type Role = 'host' | 'guest'
 type Status = 'lobby' | 'waiting' | 'connected'
+
+/** Unit iids the given player controls (base + battlefields) — gear targets. */
+function friendlyUnitIids(m: MatchState, p: PlayerId): string[] {
+  const ids = m.players[p].zones.base
+    .filter((u) => getCard(u.cardId)?.type === 'unit')
+    .map((u) => u.iid)
+  for (const bf of m.battlefields)
+    for (const u of bf.units) if (u.owner === p) ids.push(u.iid)
+  return ids
+}
 
 interface JoinRecord {
   clientId: string
@@ -43,7 +74,13 @@ export default function OnlinePage() {
   const [match, setMatch] = useState<MatchState | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
-  const [targeting, setTargeting] = useState<{ iid: string; payment: Payment } | null>(null)
+  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; kind: 'spell' | 'gear'; count: number; picked: string[] } | null>(null)
+  const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
+  // The pending play awaiting a chosen rune payment (the overlay).
+  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string } | null>(null)
+  const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
+  const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; options: { label: string; value: number }[] } | null>(null)
+  const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
   const [seat, setSeat] = useState<PlayerId>(0)
   const [lobbyInfo, setLobbyInfo] = useState<{ joined: number; needed: number }>({
@@ -67,6 +104,10 @@ export default function OnlinePage() {
   }
 
   useEffect(() => () => transportRef.current?.close(), [])
+  // Replay combat/chain resolutions (host, guest, or local all flow through lastEvents).
+  useEffect(() => {
+    if (worthSummarizing(lastEvents)) setSummary({ events: lastEvents!, token: matchRef.current?.seq ?? 0 })
+  }, [lastEvents])
 
   function startMatchAsHost(t: Transport) {
     const myDeck = myDeckRef.current
@@ -74,7 +115,7 @@ export default function OnlinePage() {
     const guests = joinsRef.current.slice(0, countRef.current - 1)
     const ds = [myDeck, ...guests.map((g) => g.deck)]
     const names = [myDeck.name, ...guests.map((g) => g.name)]
-    const m = createMatch(ds, { names })
+    const m = createMatch(ds, { names, interactiveSetup: true })
     const seats: Record<string, number> = {}
     guests.forEach((g, i) => (seats[g.clientId] = i + 1))
     startedRef.current = true
@@ -102,11 +143,12 @@ export default function OnlinePage() {
         } else if (msg.kind === 'action') {
           const cur = matchRef.current
           if (!cur) return
-          const { state, error } = reduce(cur, msg.action)
+          const { state, error, events } = reduce(cur, msg.action)
           if (error) return
           matchRef.current = state
+          setLastEvents(events)
           setMatch(state)
-          t.send({ kind: 'state', state })
+          t.send({ kind: 'state', state, events })
         } else if (msg.kind === 'leave') {
           flash('A player left the room.')
         }
@@ -127,6 +169,7 @@ export default function OnlinePage() {
           setStatus('connected')
         } else if (msg.kind === 'state') {
           matchRef.current = msg.state
+          setLastEvents(msg.events)
           setMatch(msg.state)
         } else if (msg.kind === 'leave') {
           flash('The host left the room.')
@@ -184,11 +227,12 @@ export default function OnlinePage() {
     if (roleRef.current === 'host') {
       const cur = matchRef.current
       if (!cur) return
-      const { state, error } = reduce(cur, action)
+      const { state, error, events } = reduce(cur, action)
       if (error) return flash(error)
       matchRef.current = state
+      setLastEvents(events)
       setMatch(state)
-      transportRef.current?.send({ kind: 'state', state })
+      transportRef.current?.send({ kind: 'state', state, events })
     } else {
       transportRef.current?.send({ kind: 'action', action })
     }
@@ -246,9 +290,24 @@ export default function OnlinePage() {
     })
     if (!reaction) return flash('No affordable Reaction spell to counter with.')
     const card = getCard(reaction.cardId)!
-    const payment = autoPayForCard(me, card)
-    if (!payment) return flash('Cannot pay for the counter.')
-    dispatch({ type: 'COUNTER', player: seat, iid: reaction.iid, targetChainId, payment })
+    const cost = costOf(card)
+    // Route the Counter's rune payment through the picker overlay too.
+    if (!costIsFree(cost)) {
+      if (!autoPay(me, cost)) return flash('Cannot pay for the counter.')
+      setPaying({ c: reaction, card, type: 'PLAY_SPELL', cost, accelerate: false, counterChainId: targetChainId })
+      return
+    }
+    dispatch({ type: 'COUNTER', player: seat, iid: reaction.iid, targetChainId, payment: { exhaust: [], recycle: [] } })
+  }
+
+  if (match.phase === 'setup') {
+    return (
+      <div className="space-y-4">
+        <RoomBar roomCode={roomCode} onLeave={leave} />
+        <SetupScreen match={match} onAct={(a) => dispatch(a as Action)} seat={seat} />
+        {toast && <Toast text={toast} />}
+      </div>
+    )
   }
 
   if (match.phase === 'mulligan') {
@@ -270,22 +329,98 @@ export default function OnlinePage() {
   const play = (c: EngineCard) => {
     const card = getCard(c.cardId)
     if (!card) return
-    const payment = autoPayForCard(match.players[seat], card)
-    if (!payment) return flash('Not enough resources.')
-    const type =
+    const type: PlayType | null =
       card.type === 'unit' ? 'PLAY_UNIT' : card.type === 'gear' ? 'PLAY_GEAR' : card.type === 'spell' ? 'PLAY_SPELL' : null
     if (!type) return
-    if (type === 'PLAY_SPELL' && needsTarget(card)) {
-      setTargeting({ iid: c.iid, payment })
-      flash('Pick a target unit.')
+
+    // Accelerate is an OPTIONAL extra cost on units — confirm to pay it so the
+    // unit enters READY (can act the turn it arrives).
+    let accelerate = false
+    let cost = costOf(card)
+    if (type === 'PLAY_UNIT') {
+      const ac = accelerateCost(card)
+      if (ac) {
+        accelerate = window.confirm(
+          `${card.name} has Accelerate. Pay ${costLabel(ac)} extra so it enters READY (can act now)?\n\nOK = pay & enter ready · Cancel = enter exhausted.`,
+        )
+        if (accelerate) cost = addCost(cost, ac)
+      }
+    }
+
+    // Every rune-spending play opens the rune picker overlay.
+    if (!costIsFree(cost)) {
+      if (!autoPay(match.players[seat], cost)) return flash('Not enough resources.')
+      setPaying({ c, card, type, cost, accelerate })
       return
     }
-    dispatch({ type, player: seat, iid: c.iid, payment })
+    proceedPlay(c, card, type, { exhaust: [], recycle: [] }, accelerate)
   }
+
+  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean) => {
+    if (type === 'PLAY_SPELL' && needsTarget(card)) {
+      const legal = getLegalTargets(match, card, seat)
+      if (legal.length === 0) {
+        if (confirm('No legal targets. Play it anyway for its other effect?'))
+          dispatch({ type: 'PLAY_SPELL', player: seat, iid: c.iid, payment })
+        return
+      }
+      const count = spellEffect(card).targetCount || 1
+      setTargeting({ iid: c.iid, cardId: card.id, payment, kind: 'spell', count, picked: [] })
+      flash(count > 1 ? `Pick up to ${count} targets.` : 'Pick a target unit.')
+      return
+    }
+    if (type === 'PLAY_GEAR' && friendlyUnitIids(match, seat).length > 0) {
+      setTargeting({ iid: c.iid, cardId: card.id, payment, kind: 'gear', count: 1, picked: [] })
+      flash('Choose a unit to equip.')
+      return
+    }
+    if (type === 'PLAY_UNIT') {
+      const reactionWindow = match.chain.length > 0 || match.phase === 'showdown'
+      if (parseKeywords(card).ambush && reactionWindow) {
+        const legal = match.battlefields
+          .map((bf, i) => ({ bf, i }))
+          .filter((x) => x.bf.units.some((u) => u.owner === seat))
+        if (legal.length === 0) return flash('No battlefield with your units for Ambush.')
+        if (legal.length === 1) {
+          dispatch({ type, player: seat, iid: c.iid, payment, accelerate, toBattlefield: legal[0].i })
+          return
+        }
+        setAmbushPick({
+          iid: c.iid,
+          payment,
+          accelerate,
+          options: legal.map((x) => ({ label: getCard(x.bf.cardId)?.name ?? `Battlefield ${x.i + 1}`, value: x.i })),
+        })
+        return
+      }
+      dispatch({ type, player: seat, iid: c.iid, payment, accelerate })
+    } else dispatch({ type, player: seat, iid: c.iid, payment })
+  }
+  const castSpell = (t: NonNullable<typeof targeting>, targets: string[]) => {
+    setTargeting(null)
+    const card = getCard(t.cardId)
+    const surcharge = deflectSurcharge(match, targets, seat)
+    if (surcharge > 0 && card) {
+      setDeflectPay({ iid: t.iid, card, base: t.payment, targets, surcharge })
+      return
+    }
+    dispatch({ type: 'PLAY_SPELL', player: seat, iid: t.iid, payment: t.payment, targets })
+  }
+
   const onTarget = (targetIid: string) => {
     if (!targeting) return
-    dispatch({ type: 'PLAY_SPELL', player: seat, iid: targeting.iid, payment: targeting.payment, targets: [targetIid] })
-    setTargeting(null)
+    if (targeting.kind === 'gear') {
+      dispatch({ type: 'PLAY_GEAR', player: seat, iid: targeting.iid, payment: targeting.payment, targetIid })
+      setTargeting(null)
+      return
+    }
+    const picked = [...targeting.picked, targetIid]
+    if (picked.length >= targeting.count) castSpell(targeting, picked)
+    else setTargeting({ ...targeting, picked })
+  }
+  const confirmTargets = () => {
+    if (!targeting || targeting.picked.length === 0) return
+    castSpell(targeting, targeting.picked)
   }
 
   return (
@@ -309,16 +444,105 @@ export default function OnlinePage() {
         onPassPriority={() => dispatch({ type: 'PASS_PRIORITY', player: seat })}
         onCounter={counterWith}
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
-        onActivateLegend={() => dispatch({ type: 'ACTIVATE_LEGEND', player: seat })}
         onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}
-        onCreateToken={(cardId) => dispatch({ type: 'CREATE_TOKEN', player: seat, cardId })}
         onCardAction={(a) => dispatch(a)}
         targetingActive={!!targeting}
+        legalTargets={
+          targeting
+            ? (targeting.kind === 'gear'
+                ? friendlyUnitIids(match, seat)
+                : getLegalTargets(match, getCard(targeting.cardId)!, seat)
+              ).filter((id) => !targeting.picked.includes(id))
+            : undefined
+        }
+        targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}
         onTarget={onTarget}
+        onConfirmTargets={confirmTargets}
         onCancelTarget={() => setTargeting(null)}
         onInspect={setInspect}
+        events={lastEvents}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
+      {paying && (
+        <PaymentModal
+          player={match.players[seat]}
+          card={paying.card}
+          cost={paying.cost}
+          onCancel={() => setPaying(null)}
+          onConfirm={(payment) => {
+            const p = paying
+            setPaying(null)
+            if (p.counterChainId)
+              dispatch({ type: 'COUNTER', player: seat, iid: p.c.iid, targetChainId: p.counterChainId, payment })
+            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate)
+          }}
+        />
+      )}
+      {(() => {
+        const step = pendingAssignment(match, seat)
+        return step ? (
+          <DamageAssignModal
+            match={match}
+            step={step}
+            onConfirm={(allocations) => dispatch({ type: 'ASSIGN_DAMAGE', player: seat, allocations })}
+          />
+        ) : null
+      })()}
+      {summary && (
+        <BattleSummary match={match} events={summary.events} token={summary.token} onClose={() => setSummary(null)} />
+      )}
+      {match.vision && match.vision.player === seat && (
+        <VisionPrompt
+          cardId={match.vision.cardId}
+          onKeep={() => dispatch({ type: 'VISION_DECIDE', player: seat, recycle: false })}
+          onRecycle={() => dispatch({ type: 'VISION_DECIDE', player: seat, recycle: true })}
+        />
+      )}
+      {match.readyChoice && match.readyChoice.player === seat && (() => {
+        const units = [...match.players[seat].zones.base, ...match.battlefields.flatMap((b) => b.units)].filter(
+          (u) => u.owner === seat && u.exhausted && getCard(u.cardId)?.type === 'unit',
+        )
+        return units.length ? (
+          <ChoiceModal
+            title="↻ Ready a unit"
+            subtitle={`Choose an exhausted unit to ready (${match.readyChoice!.count} to ready).`}
+            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            onPick={(iid) => dispatch({ type: 'READY_UNIT', player: seat, iid: String(iid) })}
+          />
+        ) : null
+      })()}
+      {ambushPick && (
+        <ChoiceModal
+          title="⚡ Ambush"
+          subtitle="Choose a battlefield where you have units to play this unit into combat."
+          options={ambushPick.options}
+          onPick={(bf) => {
+            const a = ambushPick
+            setAmbushPick(null)
+            dispatch({ type: 'PLAY_UNIT', player: seat, iid: a.iid, payment: a.payment, accelerate: a.accelerate, toBattlefield: bf })
+          }}
+          onCancel={() => setAmbushPick(null)}
+        />
+      )}
+      {deflectPay && (
+        <PaymentModal
+          player={match.players[seat]}
+          card={deflectPay.card}
+          cost={{ energy: deflectPay.surcharge, power: {} }}
+          reserved={[...deflectPay.base.exhaust, ...deflectPay.base.recycle]}
+          onCancel={() => setDeflectPay(null)}
+          onConfirm={(sur) => {
+            const d = deflectPay
+            setDeflectPay(null)
+            const merged: Payment = {
+              exhaust: [...d.base.exhaust, ...sur.exhaust],
+              recycle: [...d.base.recycle, ...sur.recycle],
+              poolEnergy: (d.base.poolEnergy ?? 0) + (sur.poolEnergy ?? 0) || undefined,
+            }
+            dispatch({ type: 'PLAY_SPELL', player: seat, iid: d.iid, payment: merged, targets: d.targets })
+          }}
+        />
+      )}
       {toast && <Toast text={toast} />}
     </div>
   )

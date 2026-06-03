@@ -3,7 +3,27 @@ import { reduce } from './engine'
 import { parseKeywords } from './keywords'
 import { autoPayForCard } from './autopay'
 import { needsTarget } from './effects'
-import { CARDS } from '../data/cards'
+import { CARDS, CARD_INDEX } from '../data/cards'
+
+// Inject deterministic synthetic cards (zero-cost so payment is trivial) for the
+// triggered-ability scenarios, where relying on the live dataset would be flaky.
+function inject(id: string, text: string, extra: Record<string, unknown> = {}) {
+  CARD_INDEX[id] = {
+    id,
+    name: id,
+    type: 'unit',
+    domains: ['fury'],
+    rarity: 'common',
+    set: 'X',
+    number: 1,
+    text,
+    energy: 0,
+    power: {},
+    might: 3,
+    ...extra,
+  } as never
+  return id
+}
 import {
   type MatchState,
   type PlayerState,
@@ -44,6 +64,9 @@ const player = (id: PlayerId): PlayerState => ({
   champion: null,
   tokenPile: [],
   points: 0,
+  xp: 0,
+  banished: [],
+  pool: { energy: 0, power: {} },
   zones: emptyZones(),
   mulliganed: true,
 })
@@ -285,12 +308,109 @@ describe('targeting (Batch B)', () => {
   })
 })
 
+describe('triggered abilities (Batch C)', () => {
+  it('T2 — a spell countered on the chain still fires "when you play a spell" triggers', () => {
+    const watcher = inject('t2-watcher', 'When you play a spell, draw a card.')
+    const drawSp = inject('t2-draw', 'Draw a card.', { type: 'spell', might: undefined })
+    const counter = inject('t2-counter', '[Reaction] Counter target spell.', { type: 'spell', might: undefined })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(watcher, 0)) // the global play-trigger source
+    s.players[0].zones.mainDeck = [mk(vanilla.id, 0), mk(vanilla.id, 0)] // 2 cards to draw from
+    const sp = mk(drawSp, 0)
+    s.players[0].zones.hand.push(sp)
+    // P0 plays the draw spell → it goes on the chain; the watcher's play-trigger
+    // fires immediately (draw 1) → deck 2 → 1.
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.chain.length).toBe(1)
+    expect(r.state.players[0].zones.mainDeck.length).toBe(1)
+    // P1 counters it.
+    const cs = mk(counter, 1)
+    r.state.players[1].zones.hand.push(cs)
+    r = reduce(r.state, { type: 'COUNTER', player: 1, iid: cs.iid, targetChainId: r.state.chain[0].id, payment: { exhaust: [], recycle: [] } })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    expect(r.state.chain.length).toBe(0)
+    // The spell was countered → its OWN draw never happened, so the deck is still
+    // 1 (only the play-trigger drew). T2: play-trigger fired despite the counter.
+    expect(r.state.players[0].zones.mainDeck.length).toBe(1)
+    expect(r.state.players[0].zones.trash.some((c) => c.cardId === drawSp)).toBe(true)
+  })
+
+  it('T10 — simultaneous death triggers resolve turn-player first', () => {
+    const a = inject('t10-a', "When I'm defeated, draw a card.", { might: 2 })
+    const b = inject('t10-b', "When I'm defeated, draw a card.", { might: 2 })
+    const s = baseState() // activePlayer = 0 = turn player
+    s.players[0].zones.mainDeck = [mk(vanilla.id, 0)]
+    s.players[1].zones.mainDeck = [mk(vanilla.id, 1)]
+    s.battlefields[0].units.push(mk(b, 1, { exhausted: true }))
+    const attacker = mk(a, 0)
+    s.players[0].zones.base.push(attacker)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 }) // mutual kill (2 vs 2)
+    const deaths = r.state.log
+      .map((l, i) => ({ l, i }))
+      .filter(({ l }) => /deathknell/i.test(l.text) && l.player != null)
+    const p0 = deaths.find((d) => d.l.player === 0)
+    const p1 = deaths.find((d) => d.l.player === 1)
+    expect(p0 && p1).toBeTruthy()
+    expect(p0!.i).toBeLessThan(p1!.i) // turn player's trigger logged first
+  })
+
+  it('T11 — an Attack trigger fires exactly once per combat', () => {
+    const atk = inject('t11-atk', 'When I attack, draw a card.', { might: 9 }) // survives
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(vanilla.id, 0), mk(vanilla.id, 0), mk(vanilla.id, 0)]
+    s.battlefields[0].units.push(mk(vanilla.id, 1, { exhausted: true })) // weak defender
+    const u = mk(atk, 0)
+    s.players[0].zones.base.push(u)
+    const before = s.players[0].zones.mainDeck.length
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    // Exactly one card drawn from the single attack trigger.
+    expect(before - r.state.players[0].zones.mainDeck.length).toBe(1)
+  })
+
+  it('T13 — a damage spell whose target left play fizzles cleanly', async () => {
+    const { spellEffect, hasUntargetedPart } = await import('./effects')
+    // Pure-damage spell so leaving play truly fizzles (no draw part to resolve).
+    const dmg = CARDS.find(
+      (c) => c.type === 'spell' && !c.alternateArt && needsTarget(c) && !hasUntargetedPart(spellEffect(c)),
+    )
+    if (!dmg) return
+    const s = baseState()
+    const target = mk(vanilla.id, 1, { exhausted: true })
+    s.battlefields[0].units.push(target)
+    const sp = mk(dmg.id, 0)
+    s.players[0].zones.hand.push(sp)
+    giveRunes(s.players[0], dmg)
+    const pay = autoPayForCard(s.players[0], dmg)
+    if (!pay) return
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, payment: pay, targets: [target.iid] })
+    // Remove the target from play while the spell is still on the chain.
+    r.state.battlefields[0].units = []
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.chain.length).toBe(0)
+    expect(r.state.log.some((l) => /fizzled/i.test(l.text))).toBe(true)
+  })
+})
+
+describe('resource pool (Batch E)', () => {
+  it('T14 — Add resolves instantly and cannot be reacted to', () => {
+    const s = baseState()
+    const r = reduce(s, { type: 'ADD', player: 0, energy: 2, power: { fury: 1 } })
+    expect(r.error).toBeUndefined()
+    // No chain item is created → there is no priority window to react in.
+    expect(r.state.chain.length).toBe(0)
+    expect(r.state.priority).toBeNull()
+    expect(r.state.players[0].pool.energy).toBe(2)
+    expect(r.state.players[0].pool.power.fury).toBe(1)
+  })
+})
+
 describe('timing: not yet implemented (documented gaps)', () => {
-  it.todo('T2 — played-but-countered still fires global triggers (needs trigger system)')
-  it.todo('T4 — cost checks read base cost despite reductions')
-  it.todo('T10 — simultaneous triggers: turn player orders first')
-  it.todo('T11 — Attack/Defend triggers fire once per combat')
-  it.todo('T12 — "Nth time" trigger fires once on a simultaneous spike')
-  it.todo('T13 — null target makes a dependent effect fizzle cleanly')
-  it.todo('T14 — Add resolves instantly and cannot be reacted to')
+  it.todo('T4 — cost checks read base cost despite reductions (needs cost-reduction effects)')
+  it.todo('T12 — "Nth time" trigger fires once on a simultaneous spike (needs per-turn counters)')
 })

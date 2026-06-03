@@ -206,23 +206,47 @@ channel phrasing (we do P2-channels-3, correct).
 
 Grouping the ◑/❌ rules into coherent, dependency-ordered batches.
 
-- **Batch A — Chain / Priority / Focus engine.** 1.20, 3.8, 4.8–4.22, 4.27, 9.8,
-  9.16, 9.18–9.20, 9.23, 10.1. *The keystone; most other batches need it.*
-- **Batch B — Targeting.** 4.1, 4.23–4.26, 5.4 (designations). *Needs A.*
-- **Batch C — General triggered-ability & effect scripting.** 1.11, 4.6, 4.7,
-  5.4 triggers, 6.5, 8.9 Mighty-triggers, 10.2 "while" re-eval, 10.5. *Needs A+B.*
-- **Batch D — Zones: Banish + Hidden/Facedown.** 2.3, 2.10, 8.7 Hidden, 9.11,
-  9.22 Hide. *Needs A (Hidden reveal is a reaction).*
-- **Batch E — Resource pool model.** 1.16, 1.23, 3.4, 3.8 Add, 3.9 base-vs-modified.
-- **Batch F — Spiritforged attach system.** 8.15–8.24 (Attach/Detach/Equip/
-  Quick-Draw/Weaponmaster/Repeat/Gold/Top-most/Inactive-text).
+- **Batch A — Chain / Priority / Focus engine.** ✅ DONE. 1.20, 3.8, 4.8–4.22,
+  4.27, 9.8, 9.16, 9.18–9.20, 9.23, 10.1. *The keystone; most other batches need it.*
+- **Batch B — Targeting.** ✅ DONE (+ UX rework). 4.1, 4.23–4.26, 5.4 (designations).
+- **Batch C — General triggered-ability & effect scripting.** ✅ DONE (core).
+  Trigger registry in `src/engine/triggers.ts` (Play/Conquer/Hold/Death/
+  StartOfTurn/Attack/Defend), fired turn-player-first; effect-DSL adds +Might
+  buffs; XP/Hunt + Mighty badges. Flipped T2/T10/T11/T13. *Deferred within C:*
+  Level continuous buff, Nth-time counters (T12), full on-chain trigger ordering
+  UI, base-vs-modified cost (T4 → Batch E). 1.11, 4.6, 4.7, 5.4 triggers, 6.5, 8.9.
+- **Batch D — Zones: Banish + Hidden/Facedown.** ✅ DONE. `PlayerState.banished`
+  + `banishCard` (Kill vs Banish: Banish fires no Deathknell; tokens cease);
+  `BANISH`/`HIDE`/`REVEAL` actions; facedown units render as card backs to
+  opponents; begin-turn cleanup removes unsupported Hidden cards. 2.3, 2.10,
+  8.7 Hidden, 9.11, 9.22 Hide.
+- **Batch E — Resource pool model.** ✅ DONE (core). `PlayerState.pool`
+  {energy, power}; `Payment.poolEnergy/poolPower` (pool spent before runes);
+  `ADD` action resolves instantly (no chain → T14 flipped); pool empties at
+  begin-turn & END_TURN; auto-pay prefers the pool; pool meter in the UI.
+  *Deferred:* manual rune-tap UI (auto-pay stays the default), base-vs-modified
+  cost reducers (T4). 1.16, 1.23, 3.4, 3.8 Add, 3.9.
+- **Batch F — Spiritforged attach system.** ✅ DONE (core). Equip picker (gear
+  targeting → `PLAY_GEAR` targetIid); `DETACH` + `ADD_GOLD` actions; Quick-Draw
+  gear playable at Reaction speed; Weaponmaster auto-attaches a gear from hand on
+  entry; gear count + Gold badges on units. *Deferred:* Repeat keyword, strict
+  top-most/inactive-text (all attached +Might still apply). 8.15–8.24.
 - **Batch G — Standalone fixes (cheap, no A).** 1.3 battlefield draft, 1.14
   Obelisk, 1.22 damage-clear-at-EOT, 5.6/10.3 cumulative damage, 9.10 discard
   cost, 9.14 Stun action, 9.21 move-once-per-turn, 7.5/7.6 deckbuilding refines.
-- **Batch H — Conflict resolutions / verification.** Countered-as-played; verify
-  rule numbers vs Riot rulebook; Accelerate extra-cost enforcement.
+- **Batch H — Conflict resolutions / verification.** ✅ DONE. Verified all
+  numbers vs Core Rules v1.2 §458–466. **Fixes:** FFA3/FFA4 Victory Score
+  8 (was 11 — 11 is 2v2-only); FFA4 Battlefield Count 3 (first player removes
+  theirs); FFA first-turn process (first player skips their first Draw, last
+  player channels +1) generalized in `beginTurn`. **Confirmed correct:** opening
+  hand 4, channel 2/turn, draw 1/turn, 1v1 second-player +1 channel, Conquer/Hold
+  +1, Mighty ≥5, Buff cap 1, token-cease, 1v1 = 2 battlefields. *Still deferred:*
+  2v2 team mode (Victory 11), Accelerate extra-cost enforcement.
 
 Recommended order: **G → A → B → C → D → E → F** (G is quick wins; A unblocks the rest).
+Progress: **G ✅, A ✅, B ✅, C ✅ (core), D ✅, E ✅ (core), F ✅ (core), H ✅** —
+ALL audit batches landed. Remaining: noted per-batch deferrals + the T4/T12
+test todos + 2v2 team mode.
 
 ---
 

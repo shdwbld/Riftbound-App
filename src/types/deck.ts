@@ -21,6 +21,8 @@ export interface Deck {
   runes: Record<string, number>
   /** Battlefield cardIds chosen for this deck. */
   battlefields: string[]
+  /** Sideboard: cardId -> copies (not part of the 40; for swaps between games). */
+  sideboard: Record<string, number>
   updatedAt: number
 }
 
@@ -45,6 +47,7 @@ export function emptyDeck(id: string, name: string): Deck {
     main: {},
     runes: {},
     battlefields: [],
+    sideboard: {},
     updatedAt: 0,
   }
 }

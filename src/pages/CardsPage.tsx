@@ -10,6 +10,7 @@ import {
   totalCost,
 } from '../types/cards'
 import CardTile from '../components/CardTile'
+import { DomainIcon } from '../components/CardText'
 import CardDetailModal from '../components/CardDetailModal'
 
 const TYPES: CardType[] = ['unit', 'spell', 'gear', 'battlefield', 'legend', 'rune']
@@ -127,7 +128,7 @@ export default function CardsPage() {
         {DOMAINS.map((d) => (
           <FilterChip key={d} active={domain === d} onClick={() => setDomain(d)}>
             <span style={{ color: DOMAIN_META[d].color }}>
-              {DOMAIN_META[d].glyph} {DOMAIN_META[d].label}
+              <DomainIcon domain={d} /> {DOMAIN_META[d].label}
             </span>
           </FilterChip>
         ))}

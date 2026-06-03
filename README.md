@@ -40,6 +40,24 @@ Copy `.env.example` to `.env` and set your Supabase project's URL + anon key.
 Without it, online play falls back to same-device (two-tab) mode. No database
 tables are needed — it uses ephemeral Realtime broadcast channels.
 
+## Deploy (Vercel)
+
+The app is a static SPA. Import the repo into Vercel — it auto-detects Vite
+(`vercel.json` pins the build to `npm run build` → `dist` and rewrites all
+routes to `index.html` for client-side routing).
+
+For cross-device online play, add the two env vars in **Vercel → Project →
+Settings → Environment Variables**:
+
+```
+VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon / publishable key>
+```
+
+Use only the **anon (publishable)** key — it is safe to ship to the browser.
+Never add the `service_role` / secret key. The app builds and runs without
+these (online play just falls back to same-device).
+
 ## Project layout
 
 ```

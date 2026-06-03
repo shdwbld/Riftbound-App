@@ -1,4 +1,5 @@
 import { type Deck, emptyDeck } from '../types/deck'
+import { getCard, resolveCardRef } from '../data/cards'
 
 // ---------------------------------------------------------------------------
 // Local deck storage (localStorage). Phase 5 swaps/augments this with Supabase
@@ -9,7 +10,10 @@ const KEY = 'riftbound.decks.v1'
 
 function readAll(): Record<string, Deck> {
   try {
-    return JSON.parse(localStorage.getItem(KEY) ?? '{}')
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, Deck>
+    // Back-fill fields added after a deck was first saved.
+    for (const d of Object.values(raw)) if (!d.sideboard) d.sideboard = {}
+    return raw
   } catch {
     return {}
   }
@@ -61,15 +65,33 @@ export function deleteDeck(id: string) {
 export function cloneIntoLibrary(template: {
   name: string
   legendId: string | null
+  championId?: string | null
   main: Record<string, number>
   runes: Record<string, number>
   battlefields: string[]
+  sideboard?: Record<string, number>
 }): Deck {
   const deck = emptyDeck(newId(), template.name)
   deck.legendId = template.legendId
+  deck.championId = template.championId ?? null
   deck.main = { ...template.main }
   deck.runes = { ...template.runes }
   deck.battlefields = [...template.battlefields]
+  deck.sideboard = { ...(template.sideboard ?? {}) }
+  return saveDeck(deck)
+}
+
+/** Duplicate an existing library deck into a fresh, independent copy. */
+export function duplicateDeck(id: string): Deck | undefined {
+  const src = getDeck(id)
+  if (!src) return undefined
+  const deck = emptyDeck(newId(), `${src.name} (copy)`)
+  deck.legendId = src.legendId
+  deck.championId = src.championId ?? null
+  deck.main = { ...src.main }
+  deck.runes = { ...src.runes }
+  deck.battlefields = [...src.battlefields]
+  deck.sideboard = { ...src.sideboard }
   return saveDeck(deck)
 }
 
@@ -97,41 +119,109 @@ export function exportDeck(deck: Deck): string {
   for (const [id, n] of Object.entries(deck.runes)) lines.push(`${n} ${id}`)
   lines.push('# Battlefields')
   for (const id of deck.battlefields) lines.push(id)
+  if (Object.keys(deck.sideboard).length) {
+    lines.push('# Sideboard')
+    for (const [id, n] of Object.entries(deck.sideboard)) lines.push(`${n} ${id}`)
+  }
   return lines.join('\n')
 }
 
+type Section = 'main' | 'runes' | 'battlefields' | 'legend' | 'champion' | 'sideboard' | null
+
+/** Split a card line into count, name, and a code (from [..]/(..) or a trailing
+ *  bare id). */
+function parseCardLine(line: string): { count: number; name: string; code?: string } {
+  const cm = line.match(/^(\d+)\s+/)
+  const count = cm ? parseInt(cm[1], 10) : 1
+  let rest = (cm ? line.slice(cm[0].length) : line).trim()
+  // Code wrapped in [..] or (..) at the end: "Name [UNL-181]" / "Name (OGN-215)".
+  const wrapped = rest.match(/[([]\s*([A-Za-z]+-[0-9A-Za-z-]+)\s*[)\]]\s*$/)
+  if (wrapped) return { count, name: rest.slice(0, wrapped.index).trim(), code: wrapped[1] }
+  // Otherwise the remainder is either a bare id/code or a plain name.
+  return { count, name: rest, code: rest }
+}
+
+/**
+ * Import a decklist into a Deck. Robust across formats:
+ *  - our native:      "Name:", "Legend: <id>", "# Main/Runes/Battlefields", "3 <id>"
+ *  - flat (no header): "2 Petty Officer (OGN-215)"  → classified by card type
+ *  - sectioned:        "Legend:/Champion:/MainDeck:/Battlefields:/Runes:/Sideboard:"
+ *                      headers with "1 Jhin, Virtuoso [UNL-181]" lines
+ * Each line resolves by code first, then by name. Sideboard is ignored.
+ */
 export function parseDeck(text: string, id: string): Deck {
   const deck = emptyDeck(id, 'Imported Deck')
-  let section: 'main' | 'runes' | 'battlefields' | null = null
+  let section: Section = null
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (!line) continue
-    if (line.toLowerCase().startsWith('name:')) {
-      deck.name = line.slice(5).trim() || deck.name
+
+    // "Name:" — deck name.
+    const nameM = line.match(/^name\s*:\s*(.*)$/i)
+    if (nameM) {
+      deck.name = nameM[1].trim() || deck.name
       continue
     }
-    if (line.toLowerCase().startsWith('legend:')) {
-      deck.legendId = line.slice(7).trim() || null
+    // "Legend:"/"Champion:" — inline ref (native) OR a section header (sectioned).
+    const lc = line.match(/^(legend|champion)\s*:\s*(.*)$/i)
+    if (lc) {
+      const which = lc[1].toLowerCase() as 'legend' | 'champion'
+      const rest = lc[2].trim()
+      if (rest) {
+        const p = parseCardLine(rest)
+        const cid = resolveCardRef(p.code, p.name)
+        if (cid && which === 'legend') deck.legendId = cid
+        if (cid && which === 'champion') deck.championId = cid
+      } else {
+        section = which
+      }
       continue
     }
-    if (line.startsWith('#')) {
-      const s = line.slice(1).trim().toLowerCase()
+    // Section headers: "# Main", "MainDeck:", "Runes:", "Battlefields:", "Sideboard:".
+    const hdr = line.match(/^#?\s*(main(?:\s*deck)?|runes?|battlefields?|sideboard)\b\s*:?\s*$/i)
+    if (hdr) {
+      const s = hdr[1].toLowerCase()
       section = s.startsWith('main')
         ? 'main'
         : s.startsWith('rune')
           ? 'runes'
           : s.startsWith('battle')
             ? 'battlefields'
-            : null
+            : 'sideboard'
       continue
     }
-    const m = line.match(/^(\d+)\s+(.+)$/)
-    if (section === 'battlefields') {
-      deck.battlefields.push(m ? m[2].trim() : line)
-    } else if (section === 'main' || section === 'runes') {
-      const count = m ? parseInt(m[1], 10) : 1
-      const cardId = m ? m[2].trim() : line
-      deck[section][cardId] = (deck[section][cardId] ?? 0) + count
+
+    // A card line.
+    const { count, name, code } = parseCardLine(line)
+    const cid = resolveCardRef(code, name)
+    if (!cid) continue // unknown reference — skip rather than store junk
+
+    // Where it goes: explicit section, else by the card's own type.
+    let target: Section = section
+    if (target === null) {
+      const t = getCard(cid)?.type
+      target =
+        t === 'legend' ? 'legend' : t === 'rune' ? 'runes' : t === 'battlefield' ? 'battlefields' : 'main'
+    }
+    switch (target) {
+      case 'sideboard':
+        deck.sideboard[cid] = (deck.sideboard[cid] ?? 0) + count
+        break
+      case 'legend':
+        deck.legendId = cid
+        break
+      case 'champion':
+        // Set the Chosen Champion and keep it in the deck so setup can set it aside.
+        deck.championId = cid
+        deck.main[cid] = (deck.main[cid] ?? 0) + count
+        break
+      case 'battlefields':
+        if (!deck.battlefields.includes(cid)) deck.battlefields.push(cid)
+        break
+      case 'main':
+      case 'runes':
+        deck[target][cid] = (deck[target][cid] ?? 0) + count
+        break
     }
   }
   deck.updatedAt = Date.now()

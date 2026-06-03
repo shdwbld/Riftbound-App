@@ -1,5 +1,5 @@
 import type { Deck } from '../types/deck'
-import type { MatchState, Action } from '../engine/types'
+import type { MatchState, Action, GameEvent } from '../engine/types'
 
 // ---------------------------------------------------------------------------
 // Netcode transport. Host-authoritative: the host holds the canonical
@@ -13,7 +13,7 @@ export type NetMessage =
   | { kind: 'join'; name: string; deck: Deck; clientId: string }
   | { kind: 'lobby'; joined: number; needed: number }
   | { kind: 'start'; state: MatchState; seats: Record<string, number> }
-  | { kind: 'state'; state: MatchState }
+  | { kind: 'state'; state: MatchState; events?: GameEvent[] }
   | { kind: 'action'; action: Action }
   | { kind: 'leave' }
 

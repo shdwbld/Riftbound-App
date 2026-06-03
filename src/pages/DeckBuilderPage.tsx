@@ -12,10 +12,11 @@ import {
 } from '../types/cards'
 import { type Deck } from '../types/deck'
 import { DECK_RULES, pileSize } from '../types/deck'
-import { getDeck, saveDeck } from '../lib/deckStorage'
+import { getDeck, saveDeck, duplicateDeck } from '../lib/deckStorage'
 import { exportDeck } from '../lib/deckStorage'
 import { validateDeck, isOnIdentity } from '../lib/deckValidation'
 import { computeStats, sampleHand, CURVE_MAX } from '../lib/deckStats'
+import { DomainIcon } from '../components/CardText'
 
 const POOL_TYPES: (CardType | 'all')[] = [
   'all',
@@ -27,6 +28,12 @@ const POOL_TYPES: (CardType | 'all')[] = [
 ]
 const POOL_CAP = 80
 
+/** A basic rune that produces the given domain (prefer the 'basic' supertype). */
+function basicRuneId(domain: Domain): string | undefined {
+  const runes = CARDS.filter((c) => c.type === 'rune' && c.produces.includes(domain) && !c.alternateArt)
+  return (runes.find((c) => c.supertype === 'basic') ?? runes[0])?.id
+}
+
 export default function DeckBuilderPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
@@ -34,6 +41,8 @@ export default function DeckBuilderPage() {
   const [pickingLegend, setPickingLegend] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [sample, setSample] = useState<Card[] | null>(null)
+  // Pool clicks add units/spells/gear to this pile.
+  const [addTarget, setAddTarget] = useState<'main' | 'sideboard'>('main')
 
   // pool filters
   const [query, setQuery] = useState('')
@@ -44,6 +53,14 @@ export default function DeckBuilderPage() {
   // Persist on every change.
   useEffect(() => {
     if (deck) saveDeck(deck)
+  }, [deck])
+
+  // Clear a stale Chosen Champion if it's no longer a champion unit in the deck.
+  useEffect(() => {
+    if (!deck?.championId) return
+    const c = getCard(deck.championId)
+    if (!c || !deck.main[deck.championId] || c.supertype !== 'champion')
+      setDeck((d) => (d ? { ...d, championId: null } : d))
   }, [deck])
 
   if (!deck) {
@@ -67,10 +84,10 @@ export default function DeckBuilderPage() {
 
   const update = (patch: Partial<Deck>) => setDeck((d) => (d ? { ...d, ...patch } : d))
 
-  const setCount = (pile: 'main' | 'runes', cardId: string, next: number) => {
-    // Main deck: max 3 copies per card. Rune deck: basic runes aren't subject
-    // to the 3-copy limit, so cap only at the rune-deck size.
-    const cap = pile === 'main' ? DECK_RULES.maxCopiesPerCard : DECK_RULES.runeDeckSize
+  const setCount = (pile: 'main' | 'runes' | 'sideboard', cardId: string, next: number) => {
+    // Main/sideboard: max 3 copies per card. Rune deck: basic runes aren't
+    // subject to the 3-copy limit, so cap only at the rune-deck size.
+    const cap = pile === 'runes' ? DECK_RULES.runeDeckSize : DECK_RULES.maxCopiesPerCard
     setDeck((d) => {
       if (!d) return d
       const copy = { ...d[pile] }
@@ -92,8 +109,34 @@ export default function DeckBuilderPage() {
       update({ battlefields: [...deck.battlefields, card.id] })
       return
     }
-    const pile = card.type === 'rune' ? 'runes' : 'main'
+    const pile = card.type === 'rune' ? 'runes' : addTarget
     setCount(pile, card.id, (deck[pile][card.id] ?? 0) + 1)
+  }
+
+  const clone = () => {
+    const copy = duplicateDeck(deck.id)
+    if (copy) navigate(`/decks/${copy.id}/edit`)
+  }
+
+  // One-click: fill the 12-rune deck with basic runes for the legend's domains,
+  // split as evenly as possible (remainder to the first domain).
+  const fillRunes = () => {
+    const ids = v.identity
+    if (!ids.length) return
+    const per = Math.floor(DECK_RULES.runeDeckSize / ids.length)
+    const runes: Record<string, number> = {}
+    let total = 0
+    for (const d of ids) {
+      const rid = basicRuneId(d)
+      if (rid) {
+        runes[rid] = (runes[rid] ?? 0) + per
+        total += per
+      }
+    }
+    const firstRid = basicRuneId(ids[0])
+    if (total < DECK_RULES.runeDeckSize && firstRid)
+      runes[firstRid] = (runes[firstRid] ?? 0) + (DECK_RULES.runeDeckSize - total)
+    update({ runes })
   }
 
   return (
@@ -101,7 +144,7 @@ export default function DeckBuilderPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Link to="/decks" className="text-white/40 hover:text-white">
+          <Link to={`/decks/${deck.id}`} title="Deck overview" className="text-white/40 hover:text-white">
             ←
           </Link>
           <input
@@ -120,6 +163,12 @@ export default function DeckBuilderPage() {
           </span>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={clone}
+            className="rounded-lg border border-white/15 px-3 py-1.5 text-sm hover:bg-white/5"
+          >
+            Clone
+          </button>
           <button
             onClick={() => setExporting((x) => !x)}
             className="rounded-lg border border-white/15 px-3 py-1.5 text-sm hover:bg-white/5"
@@ -159,6 +208,20 @@ export default function DeckBuilderPage() {
               />
               On-identity only
             </label>
+            <div className="ml-auto flex items-center gap-1 text-xs text-white/60">
+              <span>Add to:</span>
+              {(['main', 'sideboard'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setAddTarget(t)}
+                  className={`rounded px-2 py-1 font-medium capitalize transition ${
+                    addTarget === t ? 'bg-indigo-500/30 text-white' : 'text-white/50 hover:bg-white/5'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {POOL_TYPES.map((t) => (
@@ -178,7 +241,7 @@ export default function DeckBuilderPage() {
                 onClick={() => setPoolDomain(d)}
               >
                 <span style={{ color: DOMAIN_META[d].color }}>
-                  {DOMAIN_META[d].glyph}
+                  <DomainIcon domain={d} />
                 </span>
               </Chip>
             ))}
@@ -299,17 +362,42 @@ export default function DeckBuilderPage() {
             </Section>
           )}
 
-          {/* Main deck */}
+          {/* Main deck — grouped by type */}
           <Section title={`Main Deck · ${pileSize(deck.main)}/40`}>
-            <PileList
-              pile={deck.main}
-              onInc={(id) => setCount('main', id, (deck.main[id] ?? 0) + 1)}
-              onDec={(id) => setCount('main', id, (deck.main[id] ?? 0) - 1)}
-            />
+            {pileSize(deck.main) === 0 ? (
+              <p className="text-xs text-white/40">Empty.</p>
+            ) : (
+              (['unit', 'spell', 'gear'] as const).map((t) => {
+                const sub = Object.fromEntries(
+                  Object.entries(deck.main).filter(([id]) => getCard(id)?.type === t),
+                )
+                if (Object.keys(sub).length === 0) return null
+                return (
+                  <div key={t} className="mb-2 last:mb-0">
+                    <div className="mb-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/35">
+                      {t}s · {pileSize(sub)}
+                    </div>
+                    <PileList
+                      pile={sub}
+                      onInc={(id) => setCount('main', id, (deck.main[id] ?? 0) + 1)}
+                      onDec={(id) => setCount('main', id, (deck.main[id] ?? 0) - 1)}
+                    />
+                  </div>
+                )
+              })
+            )}
           </Section>
 
           {/* Runes */}
           <Section title={`Rune Deck · ${pileSize(deck.runes)}/12`}>
+            {v.identity.length > 0 && (
+              <button
+                onClick={fillRunes}
+                className="mb-2 w-full rounded border border-white/15 py-1 text-xs font-medium text-white/80 hover:bg-white/5"
+              >
+                ⚡ Auto-fill 12 runes ({v.identity.map((d) => DOMAIN_META[d].label).join(' / ')})
+              </button>
+            )}
             <PileList
               pile={deck.runes}
               onInc={(id) => setCount('runes', id, (deck.runes[id] ?? 0) + 1)}
@@ -349,6 +437,21 @@ export default function DeckBuilderPage() {
                   )
                 })}
               </ul>
+            )}
+          </Section>
+
+          {/* Sideboard */}
+          <Section title={`Sideboard · ${pileSize(deck.sideboard)}`}>
+            {pileSize(deck.sideboard) === 0 ? (
+              <p className="text-xs text-white/40">
+                Toggle “Add to: Sideboard” above, then click cards to add them here.
+              </p>
+            ) : (
+              <PileList
+                pile={deck.sideboard}
+                onInc={(id) => setCount('sideboard', id, (deck.sideboard[id] ?? 0) + 1)}
+                onDec={(id) => setCount('sideboard', id, (deck.sideboard[id] ?? 0) - 1)}
+              />
             )}
           </Section>
 
@@ -663,7 +766,10 @@ function StatsPanel({ deck }: { deck: Deck }) {
     <div className="space-y-3">
       {/* Mana curve */}
       <div>
-        <div className="mb-1 text-[10px] text-white/40">Energy curve</div>
+        <div className="mb-1 flex items-center justify-between text-[10px] text-white/40">
+          <span>Energy curve</span>
+          <span>avg cost {stats.avgCost.toFixed(1)}</span>
+        </div>
         <div className="flex items-end gap-1" style={{ height: 56 }}>
           {stats.curve.map((n, cost) => (
             <div key={cost} className="flex flex-1 flex-col items-center gap-0.5">
@@ -689,7 +795,7 @@ function StatsPanel({ deck }: { deck: Deck }) {
                 style={{ background: `${DOMAIN_META[d].color}33`, color: DOMAIN_META[d].color }}
                 title={DOMAIN_META[d].label}
               >
-                {DOMAIN_META[d].glyph}
+                <DomainIcon domain={d} />
                 {n}
               </span>
             ) : null

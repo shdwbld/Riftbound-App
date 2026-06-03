@@ -9,9 +9,11 @@ export interface FeaturedDeck {
   id: string
   name: string
   champion: string
-  group: 'Champion Deck' | 'Proving Grounds'
+  group: 'Starter Deck' | 'Featured Deck'
   archetype: string
   legendId: string
+  /** The Chosen Champion unit (set aside in the Champion Zone at game start). */
+  championId?: string | null
   main: Record<string, number>
   runes: Record<string, number>
   battlefields: string[]

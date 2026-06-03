@@ -156,6 +156,16 @@ export const isRune = (c: Card): c is RuneCard => c.type === 'rune'
 /** Tokens (e.g. Recruit) are generated in play and can't be put in a deck. */
 export const isToken = (c: Card): boolean => c.supertype === 'token'
 
+/**
+ * The full official collector code, e.g. "OGN-210-298" (set · number · set
+ * total). Derived from `id`, which already encodes `set-number-total` with the
+ * correct zero-padding and any alt-art suffix (e.g. "OGN-007A-298") — composing
+ * it from `set`+`number` would drop the padding and the total.
+ */
+export function cardCode(card: Pick<Card, 'id'>): string {
+  return card.id.toUpperCase()
+}
+
 /** Total power pips across all domains (for sorting / curve display). */
 export function totalPower(power: PowerCost): number {
   return Object.values(power).reduce((sum, n) => sum + (n ?? 0), 0)

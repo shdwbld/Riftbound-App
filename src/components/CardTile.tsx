@@ -6,8 +6,9 @@ import {
   isSpell,
   isGear,
   totalPower,
+  cardCode,
 } from '../types/cards'
-import CardText from './CardText'
+import CardText, { DomainIcon } from './CardText'
 
 function DomainStripe({ card }: { card: Card }) {
   const colors =
@@ -46,7 +47,7 @@ function CostBadge({ card }: { card: Card }) {
             }}
           >
             {n}
-            {DOMAIN_META[d as keyof typeof DOMAIN_META]?.glyph ?? '◆'}
+            <DomainIcon domain={d} />
           </span>
         ) : null,
       )}
@@ -96,7 +97,7 @@ export default function CardTile({
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{card.name}</div>
             <div className="text-[11px] uppercase tracking-wide text-white/40">
-              {card.type} · {card.set}
+              {card.type} · {cardCode(card)}
             </div>
           </div>
           {!showImage && isUnit(card) && (

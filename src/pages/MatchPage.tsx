@@ -4,15 +4,44 @@ import { listDecks, getDeck } from '../lib/deckStorage'
 import { getCard } from '../data/cards'
 import type { Deck } from '../types/deck'
 import type { Card } from '../types/cards'
-import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment } from '../engine/types'
+import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce } from '../engine/engine'
-import { autoPayForCard, canAfford } from '../engine/autopay'
-import { needsTarget } from '../engine/effects'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge } from '../engine/engine'
+import { autoPay, canAfford, costOf, addCost, costIsFree } from '../engine/autopay'
+import { needsTarget, spellEffect } from '../engine/effects'
+import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { DOMAIN_META, type Domain } from '../types/cards'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
+import PaymentModal from '../components/PaymentModal'
+import ChoiceModal from '../components/ChoiceModal'
+import VisionPrompt from '../components/VisionPrompt'
+import SetupScreen from '../components/SetupScreen'
+import DamageAssignModal from '../components/DamageAssignModal'
+import BattleSummary, { worthSummarizing } from '../components/BattleSummary'
 import HotkeyHelp from '../components/HotkeyHelp'
+
+type PlayType = 'PLAY_UNIT' | 'PLAY_GEAR' | 'PLAY_SPELL'
+
+/** Plain-text label for a cost (used in the Accelerate confirm dialog). */
+function costLabel(cost: KeywordCost | ResolvedCost): string {
+  const parts: string[] = []
+  if (cost.energy) parts.push(`${cost.energy} Energy`)
+  for (const [d, n] of Object.entries(cost.power) as [Domain, number][])
+    if (n) parts.push(`${n} ${DOMAIN_META[d].label}`)
+  return parts.join(' + ') || 'nothing'
+}
+
+/** Unit iids the given player controls (base + battlefields) — gear targets. */
+function friendlyUnitIids(m: MatchState, p: PlayerId): string[] {
+  const ids = m.players[p].zones.base
+    .filter((u) => getCard(u.cardId)?.type === 'unit')
+    .map((u) => u.iid)
+  for (const bf of m.battlefields)
+    for (const u of bf.units) if (u.owner === p) ids.push(u.iid)
+  return ids
+}
 
 export default function MatchPage() {
   const location = useLocation()
@@ -21,7 +50,18 @@ export default function MatchPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
   const [showHelp, setShowHelp] = useState(false)
-  const [targeting, setTargeting] = useState<{ iid: string; payment: Payment; player: PlayerId } | null>(null)
+  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear'; count: number; picked: string[] } | null>(null)
+  const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
+  // Rune picker is ON by default — every rune-spending play opens the overlay.
+  // Toggle off to auto-pay silently.
+  const [manualPay, setManualPay] = useState(true)
+  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string } | null>(null)
+  // Animated battle summary after a combat / chain resolution.
+  const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
+  // Pending Ambush battlefield choice.
+  const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; options: { label: string; value: number }[] } | null>(null)
+  // Pending Deflect surcharge payment (after a spell's targets are chosen).
+  const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number } | null>(null)
 
   // Stable refs so the keyboard handler always sees current state.
   const matchRef = useRef<MatchState | null>(match)
@@ -37,10 +77,12 @@ export default function MatchPage() {
     (action: Action) => {
       const cur = matchRef.current
       if (!cur) return
-      const { state, error } = reduce(cur, action)
+      const { state, error, events } = reduce(cur, action)
       if (error) return flash(error)
       historyRef.current.push(cur)
       if (historyRef.current.length > 100) historyRef.current.shift()
+      setLastEvents(events)
+      if (worthSummarizing(events)) setSummary({ events: events!, token: state.seq })
       setMatch(state)
     },
     [flash],
@@ -126,6 +168,14 @@ export default function MatchPage() {
     )
   }
 
+  if (match.phase === 'setup')
+    return (
+      <div className="space-y-3">
+        <Toolbar match={match} controlling={0} onExit={() => setMatch(null)} manualPay={manualPay} onToggleManualPay={() => setManualPay((v) => !v)} />
+        <SetupScreen match={match} onAct={act} />
+      </div>
+    )
+
   if (match.phase === 'mulligan')
     return <MulliganPhase match={match} onAct={act} onExit={() => setMatch(null)} />
 
@@ -146,37 +196,132 @@ export default function MatchPage() {
     })
     if (!reaction) return flash('No affordable Reaction spell to counter with.')
     const card = getCard(reaction.cardId)!
-    const payment = autoPayForCard(me, card)
-    if (!payment) return flash('Cannot pay for the counter.')
-    act({ type: 'COUNTER', player: controlling, iid: reaction.iid, targetChainId, payment })
+    const cost = costOf(card)
+    // Route the Counter's rune payment through the picker overlay too.
+    if (!costIsFree(cost)) {
+      if (!autoPay(me, cost)) return flash('Cannot pay for the counter.')
+      setPaying({ c: reaction, card, type: 'PLAY_SPELL', cost, accelerate: false, counterChainId: targetChainId })
+      return
+    }
+    act({ type: 'COUNTER', player: controlling, iid: reaction.iid, targetChainId, payment: { exhaust: [], recycle: [] } })
   }
 
   const play = (c: EngineCard) => {
     const card = getCard(c.cardId)
     if (!card) return
-    const payment = autoPayForCard(match.players[controlling], card)
-    if (!payment) return flash('Not enough resources.')
-    const type =
+    const type: PlayType | null =
       card.type === 'unit' ? 'PLAY_UNIT' : card.type === 'gear' ? 'PLAY_GEAR' : card.type === 'spell' ? 'PLAY_SPELL' : null
     if (!type) return
-    // Damage spells need a target — enter targeting mode first.
-    if (type === 'PLAY_SPELL' && needsTarget(card)) {
-      setTargeting({ iid: c.iid, payment, player: controlling })
-      flash('Pick a target unit.')
+
+    // Accelerate is an OPTIONAL extra cost on units — confirm to pay it so the
+    // unit enters READY (can act the turn it arrives).
+    let accelerate = false
+    let cost = costOf(card)
+    if (type === 'PLAY_UNIT') {
+      const ac = accelerateCost(card)
+      if (ac) {
+        accelerate = window.confirm(
+          `${card.name} has Accelerate. Pay ${costLabel(ac)} extra so it enters READY (can act now)?\n\nOK = pay & enter ready · Cancel = enter exhausted.`,
+        )
+        if (accelerate) cost = addCost(cost, ac)
+      }
+    }
+
+    // Manual rune selection: open the payment modal instead of auto-paying.
+    if (manualPay && !costIsFree(cost)) {
+      if (!autoPay(match.players[controlling], cost)) return flash('Not enough resources.')
+      setPaying({ c, card, type, cost, accelerate })
       return
     }
-    act({ type, player: controlling, iid: c.iid, payment })
+    const payment = autoPay(match.players[controlling], cost)
+    if (!payment) return flash('Not enough resources.')
+    proceedPlay(c, card, type, payment, accelerate)
+  }
+
+  /** Finish a play once payment is settled (auto or manual): targeting for
+   *  spells/gear, or an immediate dispatch for units. */
+  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean) => {
+    if (type === 'PLAY_SPELL' && needsTarget(card)) {
+      const legal = getLegalTargets(match, card, controlling)
+      if (legal.length === 0) {
+        if (confirm('No legal targets. Play it anyway for its other effect?'))
+          act({ type: 'PLAY_SPELL', player: controlling, iid: c.iid, payment })
+        return
+      }
+      const count = spellEffect(card).targetCount || 1
+      setTargeting({ iid: c.iid, cardId: card.id, payment, player: controlling, kind: 'spell', count, picked: [] })
+      flash(count > 1 ? `Pick up to ${count} targets.` : 'Pick a target unit.')
+      return
+    }
+    if (type === 'PLAY_GEAR' && friendlyUnitIids(match, controlling).length > 0) {
+      setTargeting({ iid: c.iid, cardId: card.id, payment, player: controlling, kind: 'gear', count: 1, picked: [] })
+      flash('Choose a unit to equip.')
+      return
+    }
+    if (type === 'PLAY_UNIT') {
+      // Ambush: during a react window, play directly to a battlefield where you
+      // have units (joining the combat) instead of to Base.
+      const reactionWindow = match.chain.length > 0 || match.phase === 'showdown'
+      if (parseKeywords(card).ambush && reactionWindow) {
+        const legal = match.battlefields
+          .map((bf, i) => ({ bf, i }))
+          .filter((x) => x.bf.units.some((u) => u.owner === controlling))
+        if (legal.length === 0) return flash('No battlefield with your units for Ambush.')
+        if (legal.length === 1) {
+          act({ type, player: controlling, iid: c.iid, payment, accelerate, toBattlefield: legal[0].i })
+          return
+        }
+        setAmbushPick({
+          iid: c.iid,
+          payment,
+          accelerate,
+          options: legal.map((x) => ({ label: getCard(x.bf.cardId)?.name ?? `Battlefield ${x.i + 1}`, value: x.i })),
+        })
+        return
+      }
+      act({ type, player: controlling, iid: c.iid, payment, accelerate })
+    } else act({ type, player: controlling, iid: c.iid, payment })
+  }
+
+  // Cast a spell at the chosen targets — charging the Deflect surcharge first
+  // if any chosen enemy unit has Deflect.
+  const castSpell = (t: NonNullable<typeof targeting>, targets: string[]) => {
+    setTargeting(null)
+    const card = getCard(t.cardId)
+    const surcharge = deflectSurcharge(match, targets, t.player)
+    if (surcharge > 0 && card) {
+      setDeflectPay({ iid: t.iid, card, base: t.payment, targets, surcharge })
+      return
+    }
+    act({ type: 'PLAY_SPELL', player: t.player, iid: t.iid, payment: t.payment, targets })
   }
 
   const onTarget = (targetIid: string) => {
     if (!targeting) return
-    act({ type: 'PLAY_SPELL', player: targeting.player, iid: targeting.iid, payment: targeting.payment, targets: [targetIid] })
-    setTargeting(null)
+    if (targeting.kind === 'gear') {
+      act({ type: 'PLAY_GEAR', player: targeting.player, iid: targeting.iid, payment: targeting.payment, targetIid })
+      setTargeting(null)
+      return
+    }
+    const picked = [...targeting.picked, targetIid]
+    if (picked.length >= targeting.count) castSpell(targeting, picked)
+    else setTargeting({ ...targeting, picked }) // keep choosing
+  }
+  // Resolve a multi-target spell with the targets picked so far ("up to N").
+  const confirmTargets = () => {
+    if (!targeting || targeting.picked.length === 0) return
+    castSpell(targeting, targeting.picked)
   }
 
   return (
     <div className="space-y-3">
-      <Toolbar match={match} controlling={controlling} onExit={() => setMatch(null)} />
+      <Toolbar
+        match={match}
+        controlling={controlling}
+        onExit={() => setMatch(null)}
+        manualPay={manualPay}
+        onToggleManualPay={() => setManualPay((v) => !v)}
+      />
       <MatchBoard
         match={match}
         perspective={controlling}
@@ -187,14 +332,23 @@ export default function MatchPage() {
         onPassPriority={() => act({ type: 'PASS_PRIORITY', player: controlling })}
         onCounter={counterWith}
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
-        onActivateLegend={() => act({ type: 'ACTIVATE_LEGEND', player: controlling })}
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
-        onCreateToken={(cardId) => act({ type: 'CREATE_TOKEN', player: controlling, cardId })}
         onCardAction={(a) => act(a)}
         targetingActive={!!targeting}
+        legalTargets={
+          targeting
+            ? (targeting.kind === 'gear'
+                ? friendlyUnitIids(match, controlling)
+                : getLegalTargets(match, getCard(targeting.cardId)!, controlling)
+              ).filter((id) => !targeting.picked.includes(id))
+            : undefined
+        }
+        targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}
         onTarget={onTarget}
+        onConfirmTargets={confirmTargets}
         onCancelTarget={() => setTargeting(null)}
         onInspect={setInspect}
+        events={lastEvents}
       />
       <div className="flex justify-end">
         <button
@@ -205,6 +359,86 @@ export default function MatchPage() {
         </button>
       </div>
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
+      {paying && (
+        <PaymentModal
+          player={match.players[controlling]}
+          card={paying.card}
+          cost={paying.cost}
+          onCancel={() => setPaying(null)}
+          onConfirm={(payment) => {
+            const p = paying
+            setPaying(null)
+            if (p.counterChainId)
+              act({ type: 'COUNTER', player: controlling, iid: p.c.iid, targetChainId: p.counterChainId, payment })
+            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate)
+          }}
+        />
+      )}
+      {(() => {
+        const step = pendingAssignment(match, controlling)
+        return step ? (
+          <DamageAssignModal
+            match={match}
+            step={step}
+            onConfirm={(allocations) => act({ type: 'ASSIGN_DAMAGE', player: controlling, allocations })}
+          />
+        ) : null
+      })()}
+      {summary && (
+        <BattleSummary match={match} events={summary.events} token={summary.token} onClose={() => setSummary(null)} />
+      )}
+      {match.vision && match.vision.player === controlling && (
+        <VisionPrompt
+          cardId={match.vision.cardId}
+          onKeep={() => act({ type: 'VISION_DECIDE', player: controlling, recycle: false })}
+          onRecycle={() => act({ type: 'VISION_DECIDE', player: controlling, recycle: true })}
+        />
+      )}
+      {match.readyChoice && match.readyChoice.player === controlling && (() => {
+        const units = [...match.players[controlling].zones.base, ...match.battlefields.flatMap((b) => b.units)].filter(
+          (u) => u.owner === controlling && u.exhausted && getCard(u.cardId)?.type === 'unit',
+        )
+        return units.length ? (
+          <ChoiceModal
+            title="↻ Ready a unit"
+            subtitle={`Choose an exhausted unit to ready (${match.readyChoice!.count} to ready).`}
+            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            onPick={(iid) => act({ type: 'READY_UNIT', player: controlling, iid: String(iid) })}
+          />
+        ) : null
+      })()}
+      {ambushPick && (
+        <ChoiceModal
+          title="⚡ Ambush"
+          subtitle="Choose a battlefield where you have units to play this unit into combat."
+          options={ambushPick.options}
+          onPick={(bf) => {
+            const a = ambushPick
+            setAmbushPick(null)
+            act({ type: 'PLAY_UNIT', player: controlling, iid: a.iid, payment: a.payment, accelerate: a.accelerate, toBattlefield: bf })
+          }}
+          onCancel={() => setAmbushPick(null)}
+        />
+      )}
+      {deflectPay && (
+        <PaymentModal
+          player={match.players[controlling]}
+          card={deflectPay.card}
+          cost={{ energy: deflectPay.surcharge, power: {} }}
+          reserved={[...deflectPay.base.exhaust, ...deflectPay.base.recycle]}
+          onCancel={() => setDeflectPay(null)}
+          onConfirm={(sur) => {
+            const d = deflectPay
+            setDeflectPay(null)
+            const merged: Payment = {
+              exhaust: [...d.base.exhaust, ...sur.exhaust],
+              recycle: [...d.base.recycle, ...sur.recycle],
+              poolEnergy: (d.base.poolEnergy ?? 0) + (sur.poolEnergy ?? 0) || undefined,
+            }
+            act({ type: 'PLAY_SPELL', player: controlling, iid: d.iid, payment: merged, targets: d.targets })
+          }}
+        />
+      )}
       {showHelp && <HotkeyHelp onClose={() => setShowHelp(false)} />}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-rose-500/90 px-4 py-2 text-sm font-medium shadow-lg">
@@ -219,10 +453,14 @@ function Toolbar({
   match,
   controlling,
   onExit,
+  manualPay,
+  onToggleManualPay,
 }: {
   match: MatchState
   controlling: PlayerId
   onExit: () => void
+  manualPay: boolean
+  onToggleManualPay: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#15151f] p-2 text-sm">
@@ -241,7 +479,16 @@ function Toolbar({
           </span>
         ))}
       </div>
-      <span className="ml-auto rounded bg-indigo-500/20 px-2 py-1 text-xs text-indigo-200">
+      <button
+        onClick={onToggleManualPay}
+        title="ON: every rune-spending play opens the rune picker. OFF: auto-pay silently."
+        className={`ml-auto rounded px-2 py-1 text-xs font-semibold ${
+          manualPay ? 'bg-amber-500/30 text-amber-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
+        }`}
+      >
+        {manualPay ? '⚙ Rune picker: ON' : '⚙ Auto-pay'}
+      </button>
+      <span className="rounded bg-indigo-500/20 px-2 py-1 text-xs text-indigo-200">
         Acting: {match.players[controlling].name}
       </span>
       <button onClick={onExit} className="rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/30">
@@ -275,52 +522,77 @@ export function MulliganView({
 }) {
   const [aside, setAside] = useState<string[]>([])
   const [view, setView] = useState<Card | null>(null)
+  const [hover, setHover] = useState<string | null>(null)
   if (!pending) return null
   const toggle = (iid: string) =>
     setAside((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : s.length < 2 ? [...s, iid] : s))
+  const previewId = hover ?? pending.zones.hand[0]?.cardId
+  const preview = previewId ? getCard(previewId) : null
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">Opening hand — {pending.name}</h2>
+    <div className="mx-auto max-w-5xl space-y-6 py-8 text-center">
+      <div>
+        <h2 className="text-3xl font-bold tracking-wide">Choose your mulligan</h2>
+        <p className="mt-1 text-white/55">
+          {pending.name} — set aside up to 2 cards (sent to the bottom, then redraw that many).{' '}
+          <span className="text-white/80">{aside.length}/2 marked.</span>
+        </p>
+      </div>
+
+      <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start sm:justify-center">
+        {/* Hover preview area */}
+        <div className="hidden w-56 shrink-0 sm:block">
+          {preview?.imageUrl ? (
+            <img src={preview.imageUrl} alt={preview.name} className="w-full rounded-2xl shadow-2xl" style={{ aspectRatio: '744/1039', objectFit: 'cover' }} />
+          ) : (
+            <div className="flex w-full items-center justify-center rounded-2xl bg-[#1c1c28] p-4" style={{ aspectRatio: '744/1039' }}>
+              {preview?.name}
+            </div>
+          )}
+          <div className="mt-2 text-sm font-semibold">{preview?.name}</div>
+        </div>
+
+        {/* The opening hand — big cards */}
+        <div className="flex flex-wrap justify-center gap-4">
+          {pending.zones.hand.map((c) => (
+            <div
+              key={c.iid}
+              className="flex flex-col items-center gap-2"
+              onMouseEnter={() => setHover(c.cardId)}
+            >
+              <button
+                onClick={() => toggle(c.iid)}
+                onDoubleClick={() => setView(getCard(c.cardId) ?? null)}
+                className={`w-28 rounded-xl transition hover:-translate-y-1 ${
+                  aside.includes(c.iid) ? 'opacity-50 ring-2 ring-rose-400' : 'ring-1 ring-white/10 hover:ring-amber-300/60'
+                }`}
+                title="Click to set aside · double-click to inspect"
+              >
+                <BoardCard ci={c} />
+              </button>
+              <span
+                className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
+                  aside.includes(c.iid) ? 'bg-rose-500/30 text-rose-200' : 'bg-white/10 text-white/60'
+                }`}
+              >
+                {aside.includes(c.iid) ? '↩ set aside' : 'keep'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-center gap-3">
+        <button
+          onClick={() => onAct({ type: 'MULLIGAN', player: pending.id, toBottom: aside })}
+          className="rounded-xl bg-indigo-500 px-8 py-3 text-base font-bold hover:bg-indigo-400"
+        >
+          {aside.length ? `Mulligan ${aside.length} ▶` : 'Keep hand ▶'}
+        </button>
         {onExit && (
-          <button onClick={onExit} className="text-xs text-white/40 hover:text-white">
+          <button onClick={onExit} className="rounded-lg bg-white/5 px-4 py-3 text-sm text-white/50 hover:bg-white/10">
             Exit
           </button>
         )}
-      </div>
-      <p className="text-sm text-white/50">
-        Tap a card to view it. Mark up to 2 to set aside (sent to the bottom of
-        your deck, then redraw that many). {aside.length}/2 marked.
-      </p>
-      <div className="flex flex-wrap gap-3">
-        {pending.zones.hand.map((c) => (
-          <div key={c.iid} className="flex flex-col items-center gap-1">
-            <button
-              onClick={() => setView(getCard(c.cardId) ?? null)}
-              className={`rounded ${aside.includes(c.iid) ? 'opacity-40 ring-2 ring-rose-400' : ''}`}
-            >
-              <BoardCard ci={c} />
-            </button>
-            <button
-              onClick={() => toggle(c.iid)}
-              className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
-                aside.includes(c.iid)
-                  ? 'bg-rose-500/30 text-rose-200'
-                  : 'bg-white/10 text-white/70 hover:bg-white/20'
-              }`}
-            >
-              {aside.includes(c.iid) ? '↩ Set aside' : 'Set aside'}
-            </button>
-          </div>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={() => onAct({ type: 'MULLIGAN', player: pending.id, toBottom: aside })}
-          className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400"
-        >
-          {aside.length ? `Mulligan ${aside.length}` : 'Keep hand'}
-        </button>
       </div>
       {view && <CardDetailModal card={view} onClose={() => setView(null)} />}
     </div>
@@ -342,7 +614,7 @@ function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: M
     const chosen = seats.slice(0, count).map(getDeck)
     if (chosen.some((d) => !d)) return
     const ds = chosen as Deck[]
-    onStart(createMatch(ds, { names: ds.map((d, i) => `${d.name}`.slice(0, 16) || `P${i + 1}`) }))
+    onStart(createMatch(ds, { names: ds.map((d, i) => `${d.name}`.slice(0, 16) || `P${i + 1}`), interactiveSetup: true }))
   }
 
   if (decks.length === 0)
@@ -364,8 +636,8 @@ function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: M
         </Link>
       </div>
       <p className="text-sm text-white/50">
-        2-4 players on one screen with full rules enforced. 1v1 plays to 8 points;
-        3-4 player free-for-all plays to 11. Card-specific ability text is resolved manually.
+        2-4 players on one screen with full rules enforced. Every free-for-all
+        (1v1 or 3-4 players) plays to 8 points. Card-specific ability text is resolved manually.
       </p>
 
       <div className="flex items-center gap-2">

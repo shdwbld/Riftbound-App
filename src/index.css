@@ -2,6 +2,73 @@
 
 :root {
   color-scheme: dark;
+  /* Playmat design tokens */
+  --mat-edge: #0b1626;
+  --mat-bg: #17283f;
+  --zone-line: #c8a24c;
+  --zone-fill: rgba(255, 255, 255, 0.02);
+  --mat-label: #f3efe4;
+}
+
+/* ---- Playmat: irregular grid-template-areas (Riftbound 1v1 layout) -------- */
+.playmat {
+  display: grid;
+  gap: clamp(6px, 1vw, 13px);
+  grid-template-columns: clamp(26px, 3.2vw, 44px) 1fr 2.3fr 1.1fr 1.15fr;
+  grid-template-rows: minmax(108px, auto) minmax(96px, auto) auto;
+  grid-template-areas:
+    'score battlefield battlefield legend    champion'
+    'score baseunits   baseunits   baseunits maindeck'
+    'score runedeck    baserunes   baserunes trash';
+  border: 10px solid var(--mat-edge);
+  border-radius: 22px;
+  background: radial-gradient(140% 120% at 50% 0%, rgba(255, 255, 255, 0.045), transparent 60%),
+    var(--mat-bg);
+  padding: clamp(8px, 1.3vw, 15px);
+  box-shadow: 0 24px 60px -30px #000, inset 0 0 50px -22px #000;
+}
+.pm-score {
+  grid-area: score;
+}
+.pm-bf {
+  grid-area: battlefield;
+}
+.pm-legend {
+  grid-area: legend;
+}
+.pm-champion {
+  grid-area: champion;
+}
+.pm-baseunits {
+  grid-area: baseunits;
+}
+.pm-maindeck {
+  grid-area: maindeck;
+}
+.pm-runedeck {
+  grid-area: runedeck;
+}
+.pm-baserunes {
+  grid-area: baserunes;
+}
+.pm-trash {
+  grid-area: trash;
+}
+/* gold-outlined labeled zone box */
+.pm-zone {
+  position: relative;
+  border: 1.5px solid var(--zone-line);
+  border-radius: 11px;
+  background: var(--zone-fill);
+  padding: 6px;
+  min-width: 0;
+}
+.pm-zone-label {
+  font-size: clamp(8px, 0.9vw, 10px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(243, 239, 228, 0.55);
 }
 
 html,
@@ -113,6 +180,362 @@ body {
   animation: lightSweep 6s linear infinite;
 }
 
+/* ---- Battlefield-in-play: cropped art band ------------------------------- */
+/* Battlefield cards are landscape; we show ONLY the title-art band (the name +
+   BATTLEFIELD tag are baked into the image) and crop out both rules-text bands.
+   Crop window = 95.5% wide × 59.0% tall of the full card → ~2.26:1. The slot
+   clips the oversized image so it can never escape its border. */
+.bf-slot {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2.26 / 1;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0a0f1c;
+}
+.bf-slot .bf-art {
+  position: absolute;
+  top: -32.37%; /* crop top 19.1% of card height */
+  left: -2.41%; /* crop left 2.3% of card width */
+  width: 104.71%; /* card width = slot / 0.955 */
+  height: auto;
+  max-width: none;
+  pointer-events: none;
+}
+
+/* ---- Per-battlefield ambient effects (over the art band only) ------------- */
+@keyframes bfSand {
+  from {
+    background-position: 0 0, 0 0;
+  }
+  to {
+    background-position: -160px 160px, -90px 90px;
+  }
+}
+.bf-fx-sand {
+  background-image: radial-gradient(rgba(232, 206, 150, 0.95) 1px, transparent 1.8px),
+    radial-gradient(rgba(210, 180, 120, 0.85) 0.8px, transparent 1.6px);
+  background-size: 24px 24px, 15px 15px;
+  opacity: 1;
+  animation: bfSand 3.2s linear infinite;
+}
+
+@keyframes bfClouds {
+  from {
+    background-position: 135% 40%, 165% 62%;
+  }
+  to {
+    background-position: -60% 40%, -35% 62%;
+  }
+}
+.bf-fx-clouds {
+  background-image: radial-gradient(40% 60% at 50% 50%, rgba(255, 255, 255, 0.6), transparent 72%),
+    radial-gradient(35% 55% at 50% 50%, rgba(220, 230, 255, 0.5), transparent 72%);
+  background-repeat: no-repeat;
+  background-size: 55% 90%, 45% 70%;
+  opacity: 1;
+  animation: bfClouds 16s linear infinite;
+}
+
+@keyframes bfLeaves {
+  from {
+    background-position: 0 -40px, 30px -60px, 60px -20px;
+  }
+  to {
+    background-position: -30px 130px, 10px 150px, 40px 140px;
+  }
+}
+.bf-fx-leaves {
+  background-image: radial-gradient(circle, rgba(214, 72, 46, 1) 2.2px, transparent 3.2px),
+    radial-gradient(circle, rgba(184, 46, 31, 0.95) 1.8px, transparent 2.8px),
+    radial-gradient(circle, rgba(234, 112, 62, 0.95) 1.8px, transparent 2.8px);
+  background-size: 70px 90px, 95px 110px, 55px 80px;
+  opacity: 1;
+  animation: bfLeaves 5.5s linear infinite;
+}
+
+@keyframes bfLightning {
+  0%,
+  88%,
+  100% {
+    opacity: 0;
+  }
+  90% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 0.25;
+  }
+  94% {
+    opacity: 0.9;
+  }
+  96% {
+    opacity: 0;
+  }
+}
+.bf-fx-lightning {
+  background: linear-gradient(180deg, rgba(205, 222, 255, 0.9), rgba(150, 180, 255, 0.15) 55%, transparent 78%),
+    radial-gradient(60% 45% at 60% 0%, rgba(255, 255, 255, 0.95), transparent 70%);
+  animation: bfLightning 5s linear infinite;
+}
+
+@keyframes bfFire {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  30% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.6;
+  }
+  80% {
+    opacity: 0.95;
+  }
+}
+.bf-fx-fire {
+  background: radial-gradient(ellipse at 50% 115%, rgba(232, 72, 60, 0.85), rgba(228, 142, 58, 0.4) 45%, transparent 72%);
+  animation: bfFire 2.6s ease-in-out infinite;
+}
+
+/* Ganking: a fuchsia pulse on a unit that may move battlefield-to-battlefield. */
+@keyframes gankPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 121, 249, 0);
+  }
+  50% {
+    box-shadow: 0 0 8px 2px rgba(232, 121, 249, 0.75);
+  }
+}
+.fx-gank {
+  animation: gankPulse 1.6s ease-in-out infinite;
+}
+
+/* Turn-order roll: a quick jitter while the dice cycle. */
+@keyframes rollJitter {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-4px) rotate(1deg);
+  }
+}
+.fx-roll {
+  animation: rollJitter 0.16s ease-in-out infinite;
+}
+
+/* Combat banner: pop in, hold, fade. */
+@keyframes bannerPop {
+  0% {
+    transform: translateY(-8px) scale(0.96);
+    opacity: 0;
+  }
+  12%,
+  80% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-4px) scale(0.99);
+    opacity: 0;
+  }
+}
+.fx-banner {
+  animation: bannerPop 1.5s ease-in-out both;
+}
+
+/* Battle-summary row: slide + fade in as each beat is revealed. */
+@keyframes summaryRow {
+  from {
+    transform: translateX(-10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.fx-summary-row {
+  animation: summaryRow 0.35s ease-out both;
+}
+
+/* ---- Interaction feedback (driven by engine GameEvents) ------------------ */
+
+/* Damage: a red flash + quick shake on the struck card. */
+@keyframes flashDamage {
+  0% {
+    box-shadow: inset 0 0 0 9999px rgba(244, 63, 94, 0);
+  }
+  25% {
+    box-shadow: inset 0 0 0 9999px rgba(244, 63, 94, 0.55);
+  }
+  100% {
+    box-shadow: inset 0 0 0 9999px rgba(244, 63, 94, 0);
+  }
+}
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+.fx-damage {
+  animation: flashDamage 0.5s ease-out, shake 0.4s ease-in-out;
+}
+
+/* Defeat: fade + shrink out (card removed by the engine right after). */
+@keyframes defeatOut {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.7) rotate(-6deg);
+  }
+}
+.fx-defeat {
+  animation: defeatOut 0.45s ease-in forwards;
+}
+
+/* Play: a freshly played card scales/fades in. */
+@keyframes playIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.6) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.fx-play {
+  animation: playIn 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Buff / Stun: a quick pop. */
+@keyframes popUp {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.fx-buff {
+  animation: popUp 0.4s ease-out;
+}
+.fx-stun {
+  animation: popUp 0.4s ease-out;
+}
+
+/* Move: slide up into the battlefield slot. */
+@keyframes moveIn {
+  0% {
+    transform: translateY(14px);
+    opacity: 0.4;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.fx-move {
+  animation: moveIn 0.3s ease-out;
+}
+
+/* Floating toast (score / defeat / draw) rising and fading at screen center. */
+@keyframes toastRise {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.9);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-26px) scale(1);
+  }
+}
+.fx-toast {
+  animation: toastRise 1.5s ease-out forwards;
+}
+
+/* Chain item sliding in from the side. */
+@keyframes slideIn {
+  0% {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.fx-slidein {
+  animation: slideIn 0.28s ease-out;
+}
+
+/* Board screen-shake on scoring / big hits. */
+@keyframes boardShake {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  20% {
+    transform: translate(-4px, 2px);
+  }
+  40% {
+    transform: translate(4px, -2px);
+  }
+  60% {
+    transform: translate(-3px, -2px);
+  }
+  80% {
+    transform: translate(3px, 2px);
+  }
+}
+.fx-board-shake {
+  animation: boardShake 0.4s ease-in-out;
+}
+
+/* Ready (unexhausted, can act) units get a soft emerald breathing ring. */
+@keyframes readyPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+  50% {
+    box-shadow: 0 0 6px 1px rgba(52, 211, 153, 0.55);
+  }
+}
+.fx-ready {
+  animation: readyPulse 2.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .anim-fury,
   .anim-order,
@@ -121,7 +544,25 @@ body {
   .anim-chaos,
   .anim-body,
   .fire-overlay,
-  .light-overlay {
+  .light-overlay,
+  .bf-fx-sand,
+  .bf-fx-clouds,
+  .bf-fx-leaves,
+  .bf-fx-lightning,
+  .bf-fx-fire,
+  .fx-gank,
+  .fx-banner,
+  .fx-summary-row,
+  .fx-damage,
+  .fx-defeat,
+  .fx-play,
+  .fx-buff,
+  .fx-stun,
+  .fx-move,
+  .fx-toast,
+  .fx-slidein,
+  .fx-board-shake,
+  .fx-ready {
     animation: none;
   }
 }

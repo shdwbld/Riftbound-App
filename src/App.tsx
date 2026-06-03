@@ -7,6 +7,7 @@ import Layout from './components/Layout'
 const HomePage = lazy(() => import('./pages/HomePage'))
 const CardsPage = lazy(() => import('./pages/CardsPage'))
 const DecksPage = lazy(() => import('./pages/DecksPage'))
+const DeckOverviewPage = lazy(() => import('./pages/DeckOverviewPage'))
 const DeckBuilderPage = lazy(() => import('./pages/DeckBuilderPage'))
 const PlayPage = lazy(() => import('./pages/PlayPage'))
 const MatchPage = lazy(() => import('./pages/MatchPage'))
@@ -50,6 +51,14 @@ export default function App() {
         />
         <Route
           path="decks/:id"
+          element={
+            <Suspense fallback={<Loading />}>
+              <DeckOverviewPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="decks/:id/edit"
           element={
             <Suspense fallback={<Loading />}>
               <DeckBuilderPage />

@@ -5,6 +5,7 @@ import {
   listDecks,
   createDeck,
   deleteDeck,
+  duplicateDeck,
   importDeck,
   cloneIntoLibrary,
 } from '../lib/deckStorage'
@@ -24,7 +25,7 @@ export default function DecksPage() {
 
   const onCreate = () => {
     const deck = createDeck()
-    navigate(`/decks/${deck.id}`)
+    navigate(`/decks/${deck.id}/edit`)
   }
 
   const onImport = () => {
@@ -147,18 +148,30 @@ export default function DecksPage() {
                     />
                   ))}
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    if (confirm(`Delete "${deck.name}"?`)) {
-                      deleteDeck(deck.id)
-                      refresh()
-                    }
-                  }}
-                  className="absolute bottom-3 right-3 rounded px-2 py-1 text-xs text-white/30 opacity-0 transition hover:bg-rose-500/20 hover:text-rose-300 group-hover:opacity-100"
-                >
-                  Delete
-                </button>
+                <div className="absolute bottom-3 right-3 flex gap-1 opacity-0 transition group-hover:opacity-100">
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      const copy = duplicateDeck(deck.id)
+                      if (copy) refresh()
+                    }}
+                    className="rounded px-2 py-1 text-xs text-white/30 hover:bg-white/10 hover:text-white"
+                  >
+                    Clone
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      if (confirm(`Delete "${deck.name}"?`)) {
+                        deleteDeck(deck.id)
+                        refresh()
+                      }
+                    }}
+                    className="rounded px-2 py-1 text-xs text-white/30 hover:bg-rose-500/20 hover:text-rose-300"
+                  >
+                    Delete
+                  </button>
+                </div>
               </Link>
             )
           })}
@@ -170,6 +183,7 @@ export default function DecksPage() {
           const deck = cloneIntoLibrary({
             name: f.name,
             legendId: f.legendId,
+            championId: f.championId ?? null,
             main: f.main,
             runes: f.runes,
             battlefields: f.battlefields,
@@ -182,20 +196,21 @@ export default function DecksPage() {
 }
 
 function FeaturedDecks({ onCopy }: { onCopy: (f: FeaturedDeck) => void }) {
-  const groups: FeaturedDeck['group'][] = ['Champion Deck', 'Proving Grounds']
+  const groups: FeaturedDeck['group'][] = ['Starter Deck', 'Featured Deck']
   return (
     <section className="space-y-4 pt-4">
       <div>
-        <h2 className="text-xl font-bold">Starter Decks</h2>
+        <h2 className="text-xl font-bold">Decks to try</h2>
         <p className="text-xs text-white/40">
-          The 7 official champions — legal, on-theme builds you can copy and tweak.
-          Not Riot's exact preconstructed lists.
+          The official preconstructed starter decks plus a couple of featured
+          builds — copy any one and tweak it. Unofficial fan tool, not affiliated
+          with Riot Games.
         </p>
       </div>
       {groups.map((g) => (
         <div key={g} className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-white/50">
-            {g === 'Champion Deck' ? 'Champion Decks' : 'Proving Grounds'}
+            {g === 'Starter Deck' ? 'Starter Decks' : 'Featured Decks'}
           </h3>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURED_DECKS.filter((f) => f.group === g).map((f) => {
