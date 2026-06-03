@@ -2353,3 +2353,47 @@ describe('sandbox manual overrides', () => {
     expect(s.players[1].banished.some((x) => x.iid === u.iid)).toBe(true)
   })
 })
+
+describe('Lillia - Bashful Bloom legend cost reduction', () => {
+  const LILLIA = 'unl-189-219' // ":rb_energy_4:, exhaust: play a ready 3 Sprite (Temporary); costs 1 less per friendly Temporary unit"
+  const readyRunes = (s: ReturnType<typeof baseState>, n: number) => {
+    for (let i = 0; i < n; i++) s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+  }
+  const exhaustedRunes = (st: ReturnType<typeof baseState>) =>
+    st.players[0].zones.runePool.filter((x) => x.exhausted).length
+
+  it('costs the full 4 energy with no friendly Temporary units', () => {
+    const s = baseState()
+    s.players[0].legend = mk(LILLIA, 0)
+    readyRunes(s, 3) // only 3 — can't afford 4
+    expect(reduce(s, { type: 'ACTIVATE_LEGEND', player: 0 }).error).toBeTruthy()
+    readyRunes(s, 1) // now 4
+    const r = reduce(s, { type: 'ACTIVATE_LEGEND', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(exhaustedRunes(r.state)).toBe(4)
+  })
+
+  it('is reduced by 1 energy per friendly Temporary unit', () => {
+    const s = baseState()
+    s.players[0].legend = mk(LILLIA, 0)
+    s.battlefields[0].units.push(mk(furyUnit.id, 0, { temporary: true }))
+    s.players[0].zones.base.push(mk(furyUnit.id, 0, { temporary: true }))
+    readyRunes(s, 2) // two Temporary units → cost 2
+    const r = reduce(s, { type: 'ACTIVATE_LEGEND', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(exhaustedRunes(r.state)).toBe(2)
+  })
+
+  it('is completely free with four or more friendly Temporary units', () => {
+    const s = baseState()
+    s.players[0].legend = mk(LILLIA, 0)
+    for (let i = 0; i < 4; i++) s.players[0].zones.base.push(mk(furyUnit.id, 0, { temporary: true }))
+    const baseBefore = s.players[0].zones.base.length
+    // No runes at all — still resolves (free) and makes a ready Sprite.
+    const r = reduce(s, { type: 'ACTIVATE_LEGEND', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.length).toBe(baseBefore + 1)
+    const sprite = r.state.players[0].zones.base[r.state.players[0].zones.base.length - 1]
+    expect(sprite.exhausted).toBe(false)
+  })
+})

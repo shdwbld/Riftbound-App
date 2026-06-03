@@ -540,6 +540,26 @@ function findUnitAnywhere(s: MatchState, iid: string): EngineCard | undefined {
   )
 }
 
+/** Count a player's in-play units (battlefields + base) carrying a keyword.
+ *  Used by cost-reduction clauses like Lillia - Bashful Bloom's "costs 1 less
+ *  for each friendly unit with [Temporary]". For Temporary, also honours the
+ *  instance flag carried by Reflection/token copies, not just the printed keyword. */
+function countFriendlyUnitsWithKeyword(s: MatchState, player: PlayerId, kw: string): number {
+  const has = (u: EngineCard): boolean => {
+    const c = getCard(u.cardId)
+    if (c && c.type === 'unit') {
+      const k = parseKeywords(c) as unknown as Record<string, unknown>
+      if (k[kw]) return true
+    }
+    if (kw === 'temporary' && u.temporary) return true
+    return false
+  }
+  let n = 0
+  for (const bf of s.battlefields) for (const u of bf.units) if (u.owner === player && has(u)) n++
+  for (const u of s.players[player].zones.base) if (u.owner === player && has(u)) n++
+  return n
+}
+
 /** Permanents a player controls that can carry triggered abilities. */
 function controlledPermanents(s: MatchState, player: PlayerId): EngineCard[] {
   const out: EngineCard[] = [
@@ -1636,8 +1656,8 @@ function finishBeginning(s: MatchState): MatchState {
         // Costed activated abilities (":rb_energy_N:, :rb_exhaust:: â€¦", e.g. Viktor
         // - Herald of the Arcane) must pay their Energy cost â€” fire only when the
         // player can afford it (auto-pay), never for free.
-        const act = legendActivationCost(legendCard)
-        if (!act || makeBfApi(s).payEnergy(ap, act.energy)) {
+        const act = legendActivationCost(legendCard, s, ap)
+        if (!act || act.energy === 0 || makeBfApi(s).payEnergy(ap, act.energy)) {
           p.legend.exhausted = true
           for (const line of applyParsed(s, p, e)) s = log(s, ap, `${legendCard.name} (auto): ${line}`)
         }
@@ -1650,12 +1670,20 @@ function finishBeginning(s: MatchState): MatchState {
 }
 
 /** The Energy cost of a legend's costed activated ability (":rb_energy_N:,
- *  :rb_exhaust:: â€¦"), or null when the legend isn't an exhaust-activated ability. */
-function legendActivationCost(card: Card): { energy: number } | null {
+ *  :rb_exhaust:: â€¦"), or null when the legend isn't an exhaust-activated ability.
+ *  When `s`/`player` are supplied, applies any "costs :rb_energy_N: less for each
+ *  friendly unit with [Keyword]" reduction (Lillia - Bashful Bloom). */
+function legendActivationCost(card: Card, s?: MatchState, player?: PlayerId): { energy: number } | null {
   const t = (card.text ?? '').toLowerCase()
   if (!t.includes(':rb_exhaust:')) return null
   const m = t.slice(0, t.indexOf(':rb_exhaust:')).match(/:rb_energy_(\d+):/)
-  return { energy: m ? parseInt(m[1], 10) : 0 }
+  let energy = m ? parseInt(m[1], 10) : 0
+  if (s && player !== undefined) {
+    const redM = (card.text ?? '').match(/costs? :rb_energy_(\d+): less for each friendly unit with \[(\w+)\]/i)
+    if (redM)
+      energy = Math.max(0, energy - parseInt(redM[1], 10) * countFriendlyUnitsWithKeyword(s, player, redM[2].toLowerCase()))
+  }
+  return { energy }
 }
 
 /** Burn Out (empty-deck draw): recycle Trash into the Main Deck, shuffle, and a
@@ -2655,9 +2683,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (p.legend.exhausted) return fail(state, 'Legend already used this turn.')
       const legendCard = getCard(p.legend.cardId)
       // Pay the activated ability's Energy cost ("1, exhaust: …" — Lee Sin's
-      // buff). The exhaust half is the legend tapping below.
-      const costM = (legendCard?.text ?? '').match(/:rb_energy_(\d+):\s*,\s*:rb_exhaust:/)
-      if (costM && !makeBfApi(s).payEnergy(action.player, parseInt(costM[1], 10)))
+      // buff), applying any "costs N less per friendly [Keyword] unit" reduction
+      // (Lillia - Bashful Bloom). The exhaust half is the legend tapping below.
+      const act = legendCard ? legendActivationCost(legendCard, s, action.player) : null
+      if (act && act.energy > 0 && !makeBfApi(s).payEnergy(action.player, act.energy))
         return fail(state, `Not enough Energy to use ${legendCard?.name ?? 'the legend'}.`)
       // Generic activation: exhaust the legend, then auto-resolve its parsed
       // effect (draw/channel/buff/…); anything we can't parse is surfaced.
