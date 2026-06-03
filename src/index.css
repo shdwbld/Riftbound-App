@@ -443,8 +443,47 @@ body {
 .fx-buff {
   animation: popUp 0.4s ease-out;
 }
+
+/* Stun: a dizzy wobble with a brief desaturated flash (distinct from a buff). */
+@keyframes stunWobble {
+  0%, 100% { transform: rotate(0deg); filter: none; }
+  10% { transform: rotate(-9deg); filter: grayscale(0.55) brightness(1.35); }
+  28% { transform: rotate(7deg); }
+  44% { transform: rotate(-6deg); filter: grayscale(0.4); }
+  60% { transform: rotate(5deg); }
+  76% { transform: rotate(-3deg); }
+  90% { transform: rotate(2deg); filter: grayscale(0.2); }
+}
 .fx-stun {
-  animation: popUp 0.4s ease-out;
+  animation: stunWobble 0.7s ease-in-out;
+  transform-origin: 50% 85%;
+}
+
+/* Persistent spinning stars over a stunned unit. */
+@keyframes stunSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.stun-stars {
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  margin-left: -8px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 6;
+  animation: stunSpin 2.4s linear infinite;
+  filter: drop-shadow(0 0 2px rgba(125, 211, 252, 0.95));
+}
+
+/* Hover micro-lift for interactive cards (no transform conflict with the inner
+ *  BoardCard fx, which animates a separate element). */
+.card-lift {
+  transition: transform 0.12s ease-out, filter 0.12s ease-out;
+}
+.card-lift:hover {
+  transform: translateY(-3px);
+  filter: brightness(1.08);
 }
 
 /* Move: slide up into the battlefield slot. */

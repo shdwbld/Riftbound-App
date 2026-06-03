@@ -99,6 +99,9 @@ export default function BoardCard({
           {def?.name ?? ci.cardId}
         </div>
       )}
+      {(ci as { stunned?: boolean }).stunned && !faceDown && (
+        <span className="stun-stars" aria-hidden>💫</span>
+      )}
       {def && isUnit(def) && !faceDown && (() => {
         const base = effectiveMight(ci, def.might)
         const lvl = levelBonus(def, xp)

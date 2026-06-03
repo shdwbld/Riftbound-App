@@ -1262,7 +1262,7 @@ function PlayerMat({
           return (
             <div key={cf.key} className="flex flex-col items-center gap-0.5">
               <CardPreview cardId={c.cardId}>
-                <button onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')}>
+                <button className="card-lift" onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')}>
                   <BoardCard
                     ci={c}
                     flash={cf.flash}
