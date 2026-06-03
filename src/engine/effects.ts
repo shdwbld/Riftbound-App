@@ -71,6 +71,10 @@ export interface ParsedEffect {
   tempMight: number
   /** Return a chosen unit to its owner's hand ("Retreat"). Scope: whose unit. */
   bounce: 'friendly' | 'enemy' | 'any' | null
+  /** Grant a chosen friendly unit a one-shot death shield ("the next time it
+   *  would die this turn, heal it, exhaust it, and recall it instead" —
+   *  Highlander, Tactical Retreat). */
+  deathShield: boolean
   /** Return a card from YOUR TRASH to your hand ("return a unit from your trash
    *  to your hand" — Morbid Return, Cemetery Attendant). `type` filters the trash
    *  by card type ('card' = any). Resolves by returning the highest-cost match. */
@@ -135,6 +139,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   kill: 0,
   tempMight: 0,
   bounce: null,
+  deathShield: false,
   returnFromTrash: null,
   playUnitFromTrash: null,
   revealPlayFromDeck: false,
@@ -151,7 +156,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.stun > 0 || e.grantAssault > 0 || e.grantGanking
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.deathShield
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
@@ -305,6 +310,14 @@ function parse(text: string): ParsedEffect {
   const bounceM = t.match(/return (?:a|an|target|another) (friendly |enemy )?unit to (?:its owner'?s?|your|their) hand/)
   if (bounceM) {
     eff.bounce = bounceM[1]?.trim() === 'friendly' ? 'friendly' : bounceM[1]?.trim() === 'enemy' ? 'enemy' : 'any'
+    hit = true
+  }
+  // One-shot death shield: "the next time it would die this turn, heal it,
+  // exhaust it, and recall it instead" (Highlander, Tactical Retreat).
+  if (/the next time it would die this turn[^.]*?(?:heal it|recall)/.test(t)) {
+    eff.deathShield = true
+    eff.targetScope = eff.targetScope ?? 'friendly'
+    if (!eff.targetCount) eff.targetCount = 1
     hit = true
   }
   // Return a card from your TRASH to your hand ("return a unit/spell/gear from

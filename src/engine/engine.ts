@@ -1366,6 +1366,30 @@ function grantHunt(s: MatchState, player: PlayerId, bfIndex: number): MatchState
 
 /** Deal `amount` damage to a target unit anywhere; defeat it if lethal. Returns
  *  the defeated units (so the caller can fire their death triggers). */
+/** A "if a friendly unit would die, … instead" replacement for `u`: a one-shot
+ *  deathShield, or an attached Zhonya's Hourglass ("kill this instead"). Consumes
+ *  the source and returns true → the caller recalls the unit (heal + exhaust → base)
+ *  instead of trashing it. */
+function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard): boolean {
+  if (u.deathShield) { u.deathShield = false; return true }
+  const zh = u.attached.find((ref) => /if a friendly unit would die, kill this/i.test(getCard(ref.split('|')[0])?.text ?? ''))
+  if (zh) {
+    const [gid, giid] = zh.split('|')
+    u.attached = u.attached.filter((r) => r !== zh)
+    s.players[u.owner].zones.trash.push({ iid: giid || `${u.owner}:gear:${gid}`, cardId: gid, owner: u.owner, exhausted: false, damage: 0, attached: [] })
+    return true
+  }
+  return false
+}
+
+/** Heal (clear damage), exhaust, and recall `u` to its owner's base (the standard
+ *  "… heal it, exhaust it, and recall it instead" payload). The caller has already
+ *  removed `u` from its prior location. */
+function recallToBase(s: MatchState, u: EngineCard): void {
+  s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
+  emit({ kind: 'buff', iid: u.iid, player: u.owner })
+}
+
 function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spellLike = false): EngineCard[] {
   for (let i = 0; i < s.battlefields.length; i++) {
     const bf = s.battlefields[i]
@@ -1380,9 +1404,13 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
       if (mightOf(u) <= 0) {
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
-        sendToTrash(s.players[u.owner], u)
-        emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
-        dead = [u]
+        if (tryRecallInsteadOfDeath(s, u)) {
+          recallToBase(s, u)
+        } else {
+          sendToTrash(s.players[u.owner], u)
+          emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
+          dead = [u]
+        }
       }
       recomputeControllers(s)
       return dead
@@ -1395,6 +1423,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       emit({ kind: 'damage', iid: targetIid, amount, cardId: u.cardId })
       if (mightOf(u) <= 0) {
         p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
+        if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
         sendToTrash(p, u)
         emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
         return [u]
@@ -2357,7 +2386,12 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     const dead =
       (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
       (u.owner === moverOwner && attackersDefeated.has(u.iid))
-    if (dead && altarOfBlood && getCard(u.cardId)?.supertype !== 'token' && makeBfApi(s).payPowerAny(u.owner, 3)) {
+    if (dead && tryRecallInsteadOfDeath(s, u)) {
+      // Zhonya's Hourglass / one-shot shield: heal, exhaust, recall to base.
+      recallToBase(s, u)
+      rescued.add(u.iid)
+      s = log(s, u.owner, `${getCard(u.cardId)?.name} was saved — healed, exhausted, recalled to base.`)
+    } else if (dead && altarOfBlood && getCard(u.cardId)?.supertype !== 'token' && makeBfApi(s).payPowerAny(u.owner, 3)) {
       s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
       emit({ kind: 'buff', iid: u.iid, player: u.owner })
       rescued.add(u.iid)
@@ -2513,6 +2547,10 @@ function resolveSpellEffects(
         s = log(s, controller, `${card.name}: ${e.tempMight > 0 ? '+' : ''}${e.tempMight} Might this turn.`)
       }
       if (e.bounce) s = bounceUnitToHand(s, t, controller, card.name, e.channelExhausted)
+      if (e.deathShield) {
+        const su = findUnitAnywhere(s, t)
+        if (su) { su.deathShield = true; s = log(s, controller, `${card.name}: ${getCard(su.cardId)?.name} is protected from its next death this turn.`) }
+      }
       if (dead.length && e.drawOnKill) {
         const drew = drawN(p, e.drawOnKill)
         s = log(s, controller, `${card.name}: drew ${drew} (a unit died).`)
@@ -2541,6 +2579,7 @@ function killTarget(s: MatchState, iid: string): EngineCard[] {
     const idx = bf.units.findIndex((u) => u.iid === iid)
     if (idx >= 0) {
       const [u] = bf.units.splice(idx, 1)
+      if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); recomputeControllers(s); return [] }
       sendToTrash(s.players[u.owner], u)
       emit({ kind: 'defeat', iid, cardId: u.cardId })
       recomputeControllers(s)
@@ -2551,6 +2590,7 @@ function killTarget(s: MatchState, iid: string): EngineCard[] {
     const idx = p.zones.base.findIndex((u) => u.iid === iid)
     if (idx >= 0) {
       const [u] = p.zones.base.splice(idx, 1)
+      if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
       sendToTrash(p, u)
       emit({ kind: 'defeat', iid, cardId: u.cardId })
       return [u]

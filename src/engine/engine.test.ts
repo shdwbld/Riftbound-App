@@ -620,6 +620,36 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.mainDeck.some((x) => x.iid === unitInDeck.iid)).toBe(false)
   })
 
+  it("Zhonya's Hourglass: an equipped unit that would die is healed + recalled; the gear dies", () => {
+    const s = baseState()
+    s.sandbox = true
+    const u = mk(furyUnit.id, 0, { attached: ['ogn-077-298|zh-1'], damage: 2 })
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(false)
+    const recalled = r.state.players[0].zones.base.find((x) => x.iid === u.iid)
+    expect(recalled).toBeTruthy()
+    expect(recalled?.damage).toBe(0) // healed
+    expect(recalled?.attached.some((a) => a.startsWith('ogn-077-298'))).toBe(false) // gear gone
+    expect(r.state.players[0].zones.trash.some((x) => x.cardId === 'ogn-077-298')).toBe(true) // Hourglass trashed
+  })
+
+  it('death shield: a shielded unit recalls to base instead of dying; shield consumed', async () => {
+    const { spellEffect } = await import('./effects')
+    const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
+    expect(spellEffect(mkCard('Choose a friendly unit. The next time it would die this turn, heal it, exhaust it, and recall it instead.')).deathShield).toBe(true)
+    const s = baseState()
+    s.sandbox = true
+    const u = mk(furyUnit.id, 0, { deathShield: true })
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    const recalled = r.state.players[0].zones.base.find((x) => x.iid === u.iid)
+    expect(recalled).toBeTruthy()
+    expect(recalled?.deathShield).toBeFalsy() // consumed
+  })
+
   it('auto-parses named token creation (Sand Soldier / Bird / Mech)', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) =>

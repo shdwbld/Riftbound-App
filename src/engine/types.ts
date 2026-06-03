@@ -46,6 +46,9 @@ export interface EngineCard {
   facedown?: boolean
   /** Turn this card was hidden facedown (you can't reveal it the same turn). */
   hiddenTurn?: number
+  /** A one-shot "the next time it would die this turn, heal/exhaust/recall it
+   *  instead" shield (Highlander, Tactical Retreat). Consumed on the next death. */
+  deathShield?: boolean
   /** This instance is a token (ceases to exist instead of going to the Trash),
    *  even if its `cardId` points at a normal card — e.g. a Reflection copy. */
   token?: boolean
