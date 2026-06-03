@@ -651,6 +651,12 @@ export default function MatchBoard({
             ? () => onCardAction({ type: 'ACTIVATE_ABILITY', player: perspective, iid: me.legend!.iid })
             : undefined
         }
+        legendOwnLabel={onActivateUnit && me.legend ? canActivateUnit(match, perspective, me.legend.iid)?.label : undefined}
+        onActivateLegendOwn={
+          onActivateUnit && me.legend && canActivateUnit(match, perspective, me.legend.iid)
+            ? () => onActivateUnit(me.legend!.iid)
+            : undefined
+        }
       />
 
       {/* Log */}
@@ -1053,6 +1059,8 @@ function PlayerMat({
   onMoveOverride,
   onActivateLegend,
   activateLegendLabel,
+  onActivateLegendOwn,
+  legendOwnLabel,
 }: {
   me: PlayerState
   target: number
@@ -1076,6 +1084,9 @@ function PlayerMat({
   /** Forge of the Fluft: activate the legend's granted ability (or undefined). */
   onActivateLegend?: () => void
   activateLegendLabel?: string
+  /** The legend's own printed activated ability (Lee Sin, …) + its label. */
+  onActivateLegendOwn?: () => void
+  legendOwnLabel?: string
 }) {
   const dndOn = !!sandbox && !!onMoveOverride
   const domains = playerDomains(me)
@@ -1202,6 +1213,16 @@ function PlayerMat({
                   {me.legend.exhausted ? '○ ability used' : '● ability ready'}
                 </span>
               </MechanicTooltip>
+              {/* The legend's OWN printed activated ability (Lee Sin buff, …) —
+                  needs a target, so it routes through the unit-activation picker. */}
+              {onActivateLegendOwn && legendOwnLabel && !me.legend.exhausted && (
+                <button
+                  onClick={onActivateLegendOwn}
+                  className="rounded bg-sky-500/30 px-1 text-[8px] font-bold text-sky-100 hover:bg-sky-500/50"
+                >
+                  ⚡ {legendOwnLabel}
+                </button>
+              )}
               {/* Battlefield-granted legend ability (Forge of the Fluft). */}
               {onActivateLegend && activateLegendLabel && (
                 <button

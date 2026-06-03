@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility } from './engine'
+import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility, canActivateUnit } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME, GOLD_TOKEN_ID } from './setup'
 import type { Deck } from '../types/deck'
@@ -2370,6 +2370,26 @@ describe('sandbox manual overrides', () => {
     s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'move', iid: u.iid, toZone: 'hand' }).state
     expect(s.players[0].zones.hand.some((x) => x.iid === u.iid)).toBe(true)
     expect(s.players[0].zones.mainDeck.length).toBe(0)
+  })
+})
+
+describe('Legend own activated abilities (Energy + Exhaust)', () => {
+  it('Lee Sin - Blind Monk: 1,exhaust → Buff a chosen friendly unit', () => {
+    const s = baseState()
+    s.players[0].legend = mk('ogn-257-298', 0) // "1, exhaust: Buff a friendly unit"
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // pays the 1 Energy
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(ally)
+    // The legend's own ability is offerable (not exhausted, affordable).
+    const ab = canActivateUnit(s, 0, s.players[0].legend.iid)
+    expect(ab).toBeTruthy()
+    expect(ab!.effect.buff).toBeGreaterThan(0)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend.iid, targets: [ally.iid] })
+    expect(r.error).toBeFalsy()
+    const buffed = r.state.battlefields[0].units.find((u) => u.iid === ally.iid)!
+    expect(buffed.buffs).toBe(1)
+    expect(r.state.players[0].legend!.exhausted).toBe(true)
+    expect(r.state.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(1)
   })
 })
 

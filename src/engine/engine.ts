@@ -1047,9 +1047,13 @@ export type GrantedAbility =
 /** A permanent the player controls (unit at a battlefield or in base, or a gear
  *  in base), by iid — the carrier of a printed ":exhaust:" activated ability. */
 function controlledInstance(s: MatchState, player: PlayerId, iid: string): EngineCard | undefined {
+  const p = s.players[player]
   return (
-    s.players[player]?.zones.base.find((c) => c.iid === iid) ??
-    s.battlefields.flatMap((b) => b.units).find((u) => u.iid === iid && u.owner === player)
+    p?.zones.base.find((c) => c.iid === iid) ??
+    s.battlefields.flatMap((b) => b.units).find((u) => u.iid === iid && u.owner === player) ??
+    // The legend carries its own ":exhaust:" activated ability too (Lee Sin,
+    // Yasuo, Teemo, …); let it be activated through the same path as units.
+    (p?.legend?.iid === iid ? p.legend : undefined)
   )
 }
 
@@ -3272,11 +3276,16 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         u.tempMight = (u.tempMight ?? 0) + ab.effect.tempMightSelf
         emit({ kind: 'buff', iid: u.iid, player: action.player })
       } else {
-        // Targeted parts (deal N / give a unit +N Might this turn).
+        // Targeted parts (deal N / give a unit +N Might this turn / Buff a unit).
         for (const t of action.targets ?? []) {
           if (!isValidTarget(s1, t)) continue
           if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true))
           if (ab.effect.tempMight) s1 = fireDeaths(s1, applyTempMight(s1, t, ab.effect.tempMight, ab.effect.tempMightFloor))
+          // "Buff a friendly unit" (Lee Sin) — a permanent +1 Might counter.
+          if (ab.effect.buff) {
+            const tu = findUnitAnywhere(s1, t)
+            if (tu) { tu.buffs = (tu.buffs ?? 0) + ab.effect.buff; emit({ kind: 'buff', iid: tu.iid, player: action.player }) }
+          }
         }
       }
       // "Kill this" cost resolves after the effect (the source is sacrificed).

@@ -550,7 +550,7 @@ export default function OnlinePage() {
   const activateUnit = (iid: string) => {
     const ab = canActivateUnit(match, seat, iid)
     if (!ab) return
-    const needsTgt = ab.effect.damage > 0 || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
+    const needsTgt = ab.effect.damage > 0 || ab.effect.buff > 0 || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
     if (!needsTgt) { dispatch({ type: 'ACTIVATE_UNIT', player: seat, iid }); return }
     const scope: 'enemy' | 'friendly' = ab.effect.damage > 0 ? 'enemy' : 'friendly'
     setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, kind: 'activateUnit', count: 1, picked: [], targetScope: scope })

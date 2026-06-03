@@ -314,7 +314,7 @@ export default function MatchPage() {
   const activateUnit = (iid: string) => {
     const ab = canActivateUnit(match, controlling, iid)
     if (!ab) return
-    const needsTgt = ab.effect.damage > 0 || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
+    const needsTgt = ab.effect.damage > 0 || ab.effect.buff > 0 || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
     if (!needsTgt) {
       act({ type: 'ACTIVATE_UNIT', player: controlling, iid })
       return
