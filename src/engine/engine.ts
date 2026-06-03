@@ -18,6 +18,13 @@ import {
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, shuffle } from './setup'
 import { parseKeywords, accelerateCost, levelBonus } from './keywords'
 import { addCost } from './autopay'
+import { bfScript, bfScriptAt } from './battlefieldScripts'
+
+/** How many turns the given player has taken (incl. the current one). */
+function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
+  const rank = (player - s.firstPlayer + s.players.length) % s.players.length
+  return Math.floor((s.turn - 1 - rank) / s.players.length) + 1
+}
 import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, type ParsedEffect } from './effects'
 import { triggersFor, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
 import { canAfford } from './autopay'
@@ -441,11 +448,13 @@ function grantHunt(s: MatchState, player: PlayerId, bfIndex: number): MatchState
 
 /** Deal `amount` damage to a target unit anywhere; defeat it if lethal. Returns
  *  the defeated units (so the caller can fire their death triggers). */
-function applyTargetDamage(s: MatchState, targetIid: string, amount: number): EngineCard[] {
+function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spellLike = false): EngineCard[] {
   for (let i = 0; i < s.battlefields.length; i++) {
     const bf = s.battlefields[i]
     const u = bf.units.find((x) => x.iid === targetIid)
     if (u) {
+      // Void Gate: spells/abilities deal +N Bonus Damage to units here.
+      if (spellLike) amount += bfScriptAt(s, i)?.bonusSpellDamageHere ?? 0
       u.damage += amount
       emit({ kind: 'damage', iid: targetIid, amount, cardId: u.cardId })
       let dead: EngineCard[] = []
@@ -502,7 +511,10 @@ function moveUnits(
           (u) => u.iid === iid && u.owner === player,
         )
         if (idx >= 0) {
-          if (!parseKeywords(def(s.battlefields[i].units[idx])).ganking)
+          // Ganking from the keyword OR granted by the source battlefield
+          // (Windswept Hillock). The destination must also allow it.
+          const hasGank = parseKeywords(def(s.battlefields[i].units[idx])).ganking || !!bfScriptAt(s, i)?.grantsGanking
+          if (!hasGank)
             return fail(state, 'Only units with Ganking can move between battlefields.')
           unit = s.battlefields[i].units.splice(idx, 1)[0]
           break
@@ -643,14 +655,34 @@ export function beginTurn(state: MatchState): MatchState {
     }
   }
 
-  // Score: 1 point per held battlefield (skip the very first turn).
+  // Frozen Fortress et al.: deal damage to every unit here at the start of each
+  // player's turn (applies to all owners' units).
+  for (let i = 0; i < s.battlefields.length; i++) {
+    const dmg = bfScriptAt(s, i)?.beginningDamageHere
+    if (!dmg) continue
+    for (const u of [...s.battlefields[i].units]) {
+      const dead = applyTargetDamage(s, u.iid, dmg)
+      if (dead.length) s = fireDeaths(s, dead)
+    }
+    s = log(s, ap, `${getCard(s.battlefields[i].cardId)?.name ?? 'Battlefield'}: dealt ${dmg} to each unit here.`)
+  }
+
+  // Score: 1 point per held battlefield (skip the very first turn). Some
+  // battlefields can't be scored until the controller's Nth turn.
   recomputeControllers(s)
   if (s.turn > 1) {
-    const held = s.battlefields.filter((b) => b.controller === ap).length
-    if (held > 0) {
-      p.points += held * RULES.pointsPerBattlefield
-      emit({ kind: 'score', player: ap, amount: held * RULES.pointsPerBattlefield })
-      s = log(s, ap, `Scored ${held} point(s) (holding ${held} battlefield(s)).`)
+    const ord = playerTurnOrdinal(s, ap)
+    let scorable = 0
+    for (let i = 0; i < s.battlefields.length; i++) {
+      if (s.battlefields[i].controller !== ap) continue
+      const from = bfScriptAt(s, i)?.scoreFromTurn
+      if (from && ord < from) continue
+      scorable++
+    }
+    if (scorable > 0) {
+      p.points += scorable * RULES.pointsPerBattlefield
+      emit({ kind: 'score', player: ap, amount: scorable * RULES.pointsPerBattlefield })
+      s = log(s, ap, `Scored ${scorable} point(s) (holding ${scorable} battlefield(s)).`)
     }
   }
   // Hunt XP for every battlefield the active player holds this turn.
@@ -672,6 +704,10 @@ export function beginTurn(state: MatchState): MatchState {
   // Battlefield "when you hold here" passives for the active player.
   for (const bf of s.battlefields) {
     if (bf.controller !== ap) continue
+    // The Grand Plaza: hold with enough units here → win.
+    const win = bfScript(bf.cardId)?.winOnUnitsHere
+    if (win && bf.units.filter((u) => u.owner === ap).length >= win)
+      return endGame(s, ap)
     const passive = battlefieldPassive(bf.cardId)
     const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
     if (passive.onHold)
@@ -930,12 +966,13 @@ function assignDamage(
   units: EngineCard[],
   role: CombatRole,
   xpOf: (u: EngineCard) => number = () => 0,
+  bonusOf: (u: EngineCard, role: CombatRole) => number = () => 0,
 ): Set<string> {
   const defeated = new Set<string>()
   let remaining = damage
   for (const u of units) {
     if (remaining <= 0) break
-    const hp = mightOf(u, role, xpOf(u))
+    const hp = mightOf(u, role, xpOf(u)) + bonusOf(u, role)
     if (hp <= 0) continue
     if (remaining >= hp) {
       defeated.add(u.iid)
@@ -948,9 +985,14 @@ function assignDamage(
 }
 
 /** Effective Might (lethal threshold) per receiving unit. */
-function hpMap(units: EngineCard[], role: CombatRole, xpOf: (u: EngineCard) => number): Record<string, number> {
+function hpMap(
+  units: EngineCard[],
+  role: CombatRole,
+  xpOf: (u: EngineCard) => number,
+  bonusOf: (u: EngineCard, role: CombatRole) => number = () => 0,
+): Record<string, number> {
   const hp: Record<string, number> = {}
-  for (const u of units) hp[u.iid] = mightOf(u, role, xpOf(u))
+  for (const u of units) hp[u.iid] = Math.max(0, mightOf(u, role, xpOf(u)) + bonusOf(u, role))
   return hp
 }
 
@@ -963,17 +1005,36 @@ function buildAssignStep(
   amount: number,
   manualAllowed: boolean,
   xpOf: (u: EngineCard) => number,
+  bonusOf: (u: EngineCard, role: CombatRole) => number = () => 0,
 ): DamageAssignStep {
   const role: CombatRole = side === 'defenders' ? 'defender' : 'attacker'
   const ordered = damageOrder(receiving)
-  const hp = hpMap(receiving, role, xpOf)
+  const hp = hpMap(receiving, role, xpOf, bonusOf)
   const tanks = receiving.filter((u) => parseKeywords(def(u)).tank).map((u) => u.iid)
   const totalHp = Object.values(hp).reduce((a, b) => a + b, 0)
   // A choice only exists with 2+ live targets and damage that won't kill them all.
   const liveTargets = receiving.filter((u) => hp[u.iid] > 0)
   const manual = manualAllowed && amount > 0 && liveTargets.length >= 2 && amount < totalHp
-  const defeated = manual ? [] : [...assignDamage(amount, ordered, role, xpOf)]
+  const defeated = manual ? [] : [...assignDamage(amount, ordered, role, xpOf, bonusOf)]
   return { dealer, side, targets: ordered.map((u) => u.iid), amount, manual, defeated, hp, tanks }
+}
+
+/** Flat combat-Might delta a battlefield grants units fighting on it (Trifarian
+ *  War Camp +1, Forbidding Waste −2 alone, Black Flame Altar shield). */
+function bfCombatBonus(
+  s: MatchState,
+  bfIndex: number,
+  attackersAlone: boolean,
+  defendersAlone: boolean,
+): (u: EngineCard, role: CombatRole) => number {
+  const script = bfScriptAt(s, bfIndex)
+  if (!script || (!script.mightHere && !script.shieldHere)) return () => 0
+  return (u, role) => {
+    const alone = role === 'attacker' ? attackersAlone : role === 'defender' ? defendersAlone : false
+    let b = script.mightHere ? script.mightHere(u, role, alone) : 0
+    if (role === 'defender' && script.shieldHere) b += script.shieldHere(u)
+    return b
+  }
 }
 
 /** Validate a manual allocation against a step (Tank-first + kill-order). */
@@ -1055,14 +1116,17 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   const xpOf = (u: EngineCard) => s.players[u.owner]?.xp ?? 0
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
   const defenders = bf.units.filter((u) => u.owner !== moverOwner)
-  const attackMight = attackers.reduce((a, u) => a + damageOutput(u, 'attacker', xpOf(u)), 0)
-  const defendMight = defenders.reduce((a, u) => a + damageOutput(u, 'defender', xpOf(u)), 0)
+  const bonusOf = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
+  const dealt = (u: EngineCard, role: CombatRole) =>
+    u.stunned ? 0 : Math.max(0, mightOf(u, role, xpOf(u)) + bonusOf(u, role))
+  const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
+  const defendMight = defenders.reduce((a, u) => a + dealt(u, 'defender'), 0)
   // Mover's damage hits the defenders; the defending side's damage hits attackers.
   const defOwners = [...new Set(defenders.map((u) => u.owner))]
   const atkDealer = defOwners.length === 1 ? defOwners[0] : moverOwner
   const steps = [
-    buildAssignStep(moverOwner, 'defenders', defenders, attackMight, true, xpOf),
-    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, defOwners.length === 1, xpOf),
+    buildAssignStep(moverOwner, 'defenders', defenders, attackMight, true, xpOf, bonusOf),
+    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, defOwners.length === 1, xpOf, bonusOf),
   ]
   return { moverOwner, steps }
 }
@@ -1098,8 +1162,11 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const xpOf = (u: EngineCard) => s.players[u.owner]?.xp ?? 0
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
   const defenders = bf.units.filter((u) => u.owner !== moverOwner)
-  const attackMight = attackers.reduce((a, u) => a + damageOutput(u, 'attacker', xpOf(u)), 0)
-  const defendMight = defenders.reduce((a, u) => a + damageOutput(u, 'defender', xpOf(u)), 0)
+  const bonusOf = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
+  const dealt = (u: EngineCard, role: CombatRole) =>
+    u.stunned ? 0 : Math.max(0, mightOf(u, role, xpOf(u)) + bonusOf(u, role))
+  const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
+  const defendMight = defenders.reduce((a, u) => a + dealt(u, 'defender'), 0)
 
   // Defeats from the resolved steps.
   const defendersDefeated = new Set<string>(steps.filter((st) => st.side === 'defenders').flatMap((st) => st.defeated))
@@ -1197,7 +1264,7 @@ function resolveSpellEffects(
     for (const t of tgts) {
       let dead: EngineCard[] = []
       if (e.damage) {
-        dead = applyTargetDamage(s, t, e.damage)
+        dead = applyTargetDamage(s, t, e.damage, true)
         s = log(s, controller, `${card.name} dealt ${e.damage}.`)
       } else if (e.kill) {
         dead = killTarget(s, t)
@@ -1538,6 +1605,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const bf = state.battlefields[action.toBattlefield]
         if (!bf || !bf.units.some((u) => u.owner === action.player))
           return fail(state, 'Ambush must target a battlefield where you have units.')
+        if (bfScriptAt(state, action.toBattlefield)?.noPlayHere)
+          return fail(state, `Units can't be played at ${getCard(bf.cardId)?.name ?? 'that battlefield'}.`)
       } else {
         const guard = requireActiveAction(state, action.player)
         if (guard) return fail(state, guard)
@@ -1749,6 +1818,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return fail(state, 'Invalid battlefield.')
       if (state.battlefields[action.toBattlefield].controller !== action.player)
         return fail(state, 'You must control a battlefield to Hide a unit there.')
+      if (bfScriptAt(state, action.toBattlefield)?.noPlayHere)
+        return fail(state, "Units can't be played at that battlefield.")
       const s = clone(state)
       const p = s.players[action.player]
       const unit = p.zones.base.find((u) => u.iid === action.iid)
@@ -1789,6 +1860,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           (u) => u.iid === action.iid && u.owner === action.player,
         )
         if (idx >= 0) {
+          if (bfScriptAt(s, i)?.noMoveToBase)
+            return fail(state, `Units can't move from ${getCard(bf.cardId)?.name ?? 'here'} to base.`)
           const [u] = bf.units.splice(idx, 1)
           s.players[action.player].zones.base.push({ ...u, exhausted: true })
           recomputeControllers(s)

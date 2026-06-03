@@ -1027,3 +1027,64 @@ describe('feedback events', () => {
     expect(res.events).toBeUndefined()
   })
 })
+
+describe('battlefield scripts (Batch 1)', () => {
+  const bfByName = (name: string) => CARDS.find((c) => c.type === 'battlefield' && c.name === name)
+
+  it("Vilemaw's Lair blocks retreating to base", () => {
+    const v = bfByName("Vilemaw's Lair")
+    if (!v) return
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: v.id, units: [u], controller: 0 }
+    const r = reduce(s, { type: 'RETREAT', player: 0, iid: u.iid })
+    expect(r.error).toBeTruthy()
+  })
+
+  it('The Grand Plaza: holding with 7+ units here wins', () => {
+    const p = bfByName('The Grand Plaza')
+    if (!p) return
+    const s = baseState()
+    s.turn = 3
+    s.battlefields[0] = { cardId: p.id, units: Array.from({ length: 7 }, () => mk(furyUnit.id, 0)), controller: 0 }
+    for (let i = 0; i < 4; i++) {
+      s.players[0].zones.runeDeck.push(mk(furyRune.id, 0))
+      s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    }
+    const after = beginTurn(s)
+    expect(after.winner).toBe(0)
+  })
+
+  it('Frozen Fortress deals 1 to each unit here at the start of a turn', () => {
+    const f = bfByName('Frozen Fortress')
+    if (!f) return
+    const s = baseState()
+    s.turn = 2
+    const u = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: f.id, units: [u], controller: null }
+    for (let i = 0; i < 4; i++) {
+      s.players[0].zones.runeDeck.push(mk(furyRune.id, 0))
+      s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    }
+    const after = beginTurn(s)
+    const unit = after.battlefields[0].units.find((x) => x.iid === u.iid)
+    expect(unit?.damage).toBe(1)
+  })
+
+  it('Forgotten Monument: no scoring until the controller’s 3rd turn', () => {
+    const m = bfByName('Forgotten Monument')
+    if (!m) return
+    const seed = (s: ReturnType<typeof baseState>) => {
+      for (let i = 0; i < 4; i++) {
+        s.players[0].zones.runeDeck.push(mk(furyRune.id, 0))
+        s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+      }
+      s.battlefields[0] = { cardId: m.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+      return s
+    }
+    const early = beginTurn(seed({ ...baseState(), turn: 3 })) // player 0's 2nd turn
+    expect(early.players[0].points).toBe(0)
+    const onThird = beginTurn(seed({ ...baseState(), turn: 5 })) // player 0's 3rd turn
+    expect(onThird.players[0].points).toBe(1)
+  })
+})
