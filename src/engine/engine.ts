@@ -18,7 +18,7 @@ import {
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, shuffle } from './setup'
 import { parseKeywords, accelerateCost, levelBonus } from './keywords'
 import { addCost } from './autopay'
-import { bfScript, bfScriptAt } from './battlefieldScripts'
+import { bfScript, bfScriptAt, type BfApi } from './battlefieldScripts'
 
 /** How many turns the given player has taken (incl. the current one). */
 function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
@@ -419,6 +419,65 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string): M
   return fireTriggers(s, fired)
 }
 
+/** Engine primitives a battlefield script may call. Mutates `s` in place
+ *  (players are shared refs; logs push directly onto s.log). */
+function makeBfApi(s: MatchState): BfApi {
+  const note = (player: PlayerId | null, text: string) => s.log.push({ turn: s.turn, player, text })
+  return {
+    recycleRune(player) {
+      const p = s.players[player]
+      const idx = p.zones.runePool.findIndex((r) => !r.exhausted)
+      const at = idx >= 0 ? idx : p.zones.runePool.length ? 0 : -1
+      if (at < 0) return
+      const [r] = p.zones.runePool.splice(at, 1)
+      p.zones.runeDeck.push({ ...r, exhausted: false, damage: 0 })
+      note(player, `Recycled a rune.`)
+    },
+    readyRunes(player, n) {
+      const p = s.players[player]
+      let readied = 0
+      for (const r of p.zones.runePool) {
+        if (readied >= n) break
+        if (r.exhausted) {
+          r.exhausted = false
+          readied++
+        }
+      }
+      if (readied) note(player, `Readied ${readied} rune(s).`)
+    },
+    revealTopSpellElseRecycle(player) {
+      const p = s.players[player]
+      const top = p.zones.mainDeck[0]
+      if (!top) return
+      p.zones.mainDeck.shift()
+      if (getCard(top.cardId)?.type === 'spell') {
+        p.zones.hand.push(top)
+        note(player, `Revealed a spell — added it to hand.`)
+      } else {
+        p.zones.mainDeck.push(top)
+        note(player, `Revealed a non-spell — recycled it.`)
+      }
+    },
+    tempMightToUnitHere(player, bfIndex, n) {
+      const u = s.battlefields[bfIndex]?.units.find((x) => x.owner === player && getCard(x.cardId)?.type === 'unit')
+      if (u) {
+        u.tempMight = (u.tempMight ?? 0) + n
+        note(player, `+${n} Might this turn to ${getCard(u.cardId)?.name}.`)
+      }
+    },
+    log: (text) => note(null, text),
+  }
+}
+
+/** Fire battlefield "when a player plays a spell" scripts (Abandoned Hall). */
+function bfSpellPlayed(s: MatchState, player: PlayerId): MatchState {
+  for (let i = 0; i < s.battlefields.length; i++) {
+    const script = bfScriptAt(s, i)
+    if (script?.onSpellPlayed) script.onSpellPlayed(makeBfApi(s), player, i)
+  }
+  return s
+}
+
 /** Apply a battlefield's "when you conquer here" passive to the conqueror. */
 function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number): MatchState {
   if (s.winner !== null) return s
@@ -430,6 +489,9 @@ function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number): 
       s = log(s, player, `${bfName} (conquer): ${line}`)
   else if (passive.manualConquer)
     s = log(s, player, `${bfName} (conquer): resolve its effect manually.`)
+  // Scripted on-conquer (Sigil of the Storm, Targon's Peak).
+  const script = bfScript(bf.cardId)
+  if (script?.onConquer) script.onConquer(makeBfApi(s), player, bfIndex)
   return s
 }
 
@@ -517,6 +579,7 @@ function moveUnits(
           if (!hasGank)
             return fail(state, 'Only units with Ganking can move between battlefields.')
           unit = s.battlefields[i].units.splice(idx, 1)[0]
+          bfScriptAt(s, i)?.onMoveFrom?.(unit) // Back-Alley Bar: +1 Might this turn
           break
         }
       }
@@ -1183,6 +1246,12 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
       combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
   s = fireTriggers(s, combatFired)
 
+  // Scripted "when you defend here" (Ravenbloom Conservatory).
+  const defendScript = bfScript(bf.cardId)
+  if (defendScript?.onDefend)
+    for (const owner of new Set(defenders.map((u) => u.owner)))
+      defendScript.onDefend(makeBfApi(s), owner, bfIndex)
+
   const survivors: EngineCard[] = []
   const defeated: EngineCard[] = []
   for (const u of bf.units) {
@@ -1708,6 +1777,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         // "When you play a spell" triggers fire as it's played, before it resolves.
         let s1 = firePlayTriggers(s, action.player, ci.iid)
+        s1 = bfSpellPlayed(s1, action.player)
         s1 = resolveSpellEffects(s1, action.player, card, action.targets)
         sendToTrash(s1.players[action.player], ci)
         return ok(s1)
@@ -1726,7 +1796,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       s.priority = nextPlayer(s, action.player)
       // Play-triggers fire now (before the chain resolves), so they still happen
       // even if this spell is later Countered.
-      const sPlayed = firePlayTriggers(s, action.player, ci.iid)
+      let sPlayed = firePlayTriggers(s, action.player, ci.iid)
+      sPlayed = bfSpellPlayed(sPlayed, action.player)
       return ok(
         log(sPlayed, action.player, `Played ${card.name} — it's on the Chain (opponents may respond).`),
       )
@@ -1863,6 +1934,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (bfScriptAt(s, i)?.noMoveToBase)
             return fail(state, `Units can't move from ${getCard(bf.cardId)?.name ?? 'here'} to base.`)
           const [u] = bf.units.splice(idx, 1)
+          bfScriptAt(s, i)?.onMoveFrom?.(u) // Back-Alley Bar: +1 Might this turn
           s.players[action.player].zones.base.push({ ...u, exhausted: true })
           recomputeControllers(s)
           return ok(log(s, action.player, `${def(u)?.name} retreated to base.`))

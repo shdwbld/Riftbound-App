@@ -1088,3 +1088,59 @@ describe('battlefield scripts (Batch 1)', () => {
     expect(onThird.players[0].points).toBe(1)
   })
 })
+
+describe('battlefield scripts (Batch 2)', () => {
+  const bfByName = (name: string) => CARDS.find((c) => c.type === 'battlefield' && c.name === name)
+
+  it('Sigil of the Storm: conquering recycles one of your runes', () => {
+    const v = bfByName('Sigil of the Storm')
+    if (!v) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: v.id, units: [], controller: null }
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(r.state.battlefields[0].controller).toBe(0)
+    expect(r.state.players[0].zones.runeDeck.length).toBe(1)
+    expect(r.state.players[0].zones.runePool.length).toBe(0)
+  })
+
+  it("Targon's Peak: conquering readies up to 2 runes", () => {
+    const v = bfByName("Targon's Peak")
+    if (!v) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: v.id, units: [], controller: null }
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0, { exhausted: true }), mk(furyRune.id, 0, { exhausted: true }))
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(r.state.players[0].zones.runePool.filter((x) => !x.exhausted).length).toBe(2)
+  })
+
+  it('Back-Alley Bar: a unit moving from here gets +1 Might this turn', () => {
+    const v = bfByName('Back-Alley Bar')
+    if (!v) return
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: v.id, units: [u], controller: 0 }
+    const r = reduce(s, { type: 'RETREAT', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.tempMight).toBe(1)
+  })
+
+  it('Ravenbloom Conservatory: defending reveals a top-deck spell to hand', () => {
+    const v = bfByName('Ravenbloom Conservatory')
+    const spell = CARDS.find((c) => c.type === 'spell')
+    if (!v || !spell) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: v.id, units: [mk(furyUnit.id, 1, { exhausted: true })], controller: 1 }
+    s.players[1].zones.mainDeck.push(mk(spell.id, 1))
+    const atk = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(atk)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: atk.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.players[1].zones.hand.some((c) => c.cardId === spell.id)).toBe(true)
+  })
+})

@@ -10,6 +10,20 @@ import { parseKeywords } from './keywords'
 // add trigger events and the costed/keyword mechanics.
 // ---------------------------------------------------------------------------
 
+// Engine primitives the script hooks can call (the engine binds these to the
+// state being mutated, so battlefield logic stays declarative in this file).
+export interface BfApi {
+  /** Recycle one of the player's runes (ready first) to the rune deck bottom. */
+  recycleRune(player: number): void
+  /** Ready (un-exhaust) up to N of the player's runes. */
+  readyRunes(player: number, n: number): void
+  /** Reveal the top Main Deck card: a spell goes to hand, else it's recycled. */
+  revealTopSpellElseRecycle(player: number): void
+  /** Give +N Might this turn to one of the player's units at this battlefield. */
+  tempMightToUnitHere(player: number, bfIndex: number, n: number): void
+  log(text: string): void
+}
+
 export interface BattlefieldScript {
   /** Units here can't move to their base (Vilemaw's Lair). */
   noMoveToBase?: boolean
@@ -27,8 +41,19 @@ export interface BattlefieldScript {
   bonusSpellDamageHere?: number
   /** Combat Might delta for a unit here (role + whether it fights alone). */
   mightHere?: (unit: EngineCard, role: 'attacker' | 'defender' | null, alone: boolean) => number
-  /** Combat Shield granted to a unit here while defending (e.g. Temporary units). */
+  /** Combat Shield granted to a unit here while defending (e.g. Temporary units,
+   *  Fortified Position). */
   shieldHere?: (unit: EngineCard) => number
+
+  // --- Batch 2: trigger events --------------------------------------------
+  /** Resolved when you conquer this battlefield (Sigil of the Storm, Targon's Peak). */
+  onConquer?: (api: BfApi, player: number, bfIndex: number) => void
+  /** Resolved when you defend here in a showdown (Ravenbloom Conservatory). */
+  onDefend?: (api: BfApi, player: number, bfIndex: number) => void
+  /** Resolved when the controller plays a spell (Abandoned Hall). */
+  onSpellPlayed?: (api: BfApi, player: number, bfIndex: number) => void
+  /** Mutate a unit as it moves away from here (Back-Alley Bar +1 Might this turn). */
+  onMoveFrom?: (unit: EngineCard) => void
 }
 
 const baseName = (name: string) => name.replace(/\s*\([^)]*\)\s*$/, '').trim()
@@ -45,6 +70,14 @@ const SCRIPTS: Record<string, BattlefieldScript> = {
   'Trifarian War Camp': { mightHere: () => 1 },
   'Forbidding Waste': { mightHere: (_u, role, alone) => (role === 'defender' && alone ? -2 : 0) },
   'Black Flame Altar': { shieldHere: (u) => (parseKeywords(getCard(u.cardId)).temporary ? 1 : 0) },
+
+  // --- Batch 2: trigger events ---------------------------------------------
+  'Fortified Position': { shieldHere: () => 2 }, // "a unit gains Shield 2" → defenders here +2
+  'Back-Alley Bar': { onMoveFrom: (u) => { u.tempMight = (u.tempMight ?? 0) + 1 } },
+  'Sigil of the Storm': { onConquer: (api, p) => api.recycleRune(p) },
+  "Targon's Peak": { onConquer: (api, p) => api.readyRunes(p, 2) },
+  'Ravenbloom Conservatory': { onDefend: (api, p) => api.revealTopSpellElseRecycle(p) },
+  'Abandoned Hall': { onSpellPlayed: (api, p, i) => api.tempMightToUnitHere(p, i, 1) },
 }
 
 export function bfScript(cardId: string | undefined): BattlefieldScript | undefined {
