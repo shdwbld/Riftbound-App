@@ -1103,7 +1103,13 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
   const text = card?.text ?? ''
   let sepEnd = -1
   let costStr = ''
-  const dbl = text.lastIndexOf('::')
+  // The cost↔effect separator is the FIRST "::" followed by whitespace. Matching
+  // the space avoids two traps: consecutive cost glyphs (":rb_energy_2::rb_rune_
+  // fury:" — Vi-Hotheaded) create a spurious "::" with no space, and a later
+  // reminder-text "::" (Pyke quotes a token's "…:rb_exhaust:: [Add]…") would
+  // fool lastIndexOf.
+  const sepM = text.match(/::\s/)
+  const dbl = sepM ? sepM.index! : -1
   if (dbl >= 0) {
     sepEnd = dbl + 2
     const before = text.slice(0, dbl + 1) // keep the glyph's closing colon
@@ -3289,11 +3295,19 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // "Move a friendly unit … to its base" (The Syren, Yasuo pull-back).
           if (/\bmove\b/i.test(ab.effectText) && /\bbase\b/i.test(ab.effectText) && battlefieldOf(s1, t) >= 0)
             sendUnitToBase(s1, t)
+          // "Return / Put a unit … to (its owner's) hand" (Teemo, Pyke). Tokens
+          // cease to exist; attached gear detaches to base (bounceUnitToHand).
+          if (/(return|put|bounce)/i.test(ab.effectText) && /\bhand\b/i.test(ab.effectText))
+            s1 = bounceUnitToHand(s1, t, action.player, name, 0)
         }
       }
       // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)
+      // Pyke - Bloodharbor Ripper: "… Play a Gold gear token exhausted." (the
+      // second sentence isn't captured in effectText, so read the source text).
+      if (/gold gear token/i.test(getCard(u.cardId)?.text ?? ''))
+        spawnGold(s1.players[action.player], 1, s1.turn)
       // "Kill this" cost resolves after the effect (the source is sacrificed).
       if (ab.killThis) s1 = fireDeaths(s1, killTarget(s1, u.iid))
       return ok(s1)

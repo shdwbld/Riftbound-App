@@ -2421,6 +2421,33 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.players[0].zones.base.find((u) => u.iid === syren.iid)!.exhausted).toBe(true)
   })
 
+  it('Teemo - Swift Scout: 1,exhaust → return a unit to hand from the board', () => {
+    const s = baseState()
+    s.players[0].legend = mk('ogn-263-298', 0) // "1, exhaust: Put a Teemo unit you own into your hand…"
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend.iid, targets: [u.iid] })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.length).toBe(0)
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === u.iid)).toBe(true)
+    expect(r.state.players[0].legend!.exhausted).toBe(true)
+  })
+
+  it('Pyke - Bloodharbor Ripper: 1,exhaust → return a unit to hand + play a Gold token', () => {
+    const s = baseState()
+    s.players[0].legend = mk('unl-185-219', 0)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[1].units.push(u)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend.iid, targets: [u.iid] })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.length).toBe(0)
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === u.iid)).toBe(true)
+    // A Gold gear token (exhausted) was added to base.
+    expect(r.state.players[0].zones.base.some((c) => c.cardId === GOLD_TOKEN_ID && c.exhausted)).toBe(true)
+  })
+
   it('Garbage Grabber (gear): Recycle 3, 1, exhaust → Draw 1', () => {
     const s = baseState()
     const grab = mk('ogn-099-298', 0)
