@@ -1127,6 +1127,11 @@ function hasTank(s: MatchState, u: EngineCard): boolean {
 function auraMightBonus(s: MatchState, u: EngineCard): number {
   let b = 0
   if (getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Soul Shepherd')) b += 1
+  // Self-scaling champions whose Might tracks a game value (state-aware, so the
+  // bonus updates live and is consulted by combat — showdownSteps/combatMightAt).
+  const name = (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+  if (name === 'Draven - Showboat') b += s.players[u.owner]?.points ?? 0 // "increased by your points"
+  if (name === 'Dr. Mundo - Expert') b += s.players[u.owner]?.zones.trash.length ?? 0 // "by cards in your trash"
   return b
 }
 
@@ -2242,6 +2247,14 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   if (alone && (role === 'attacker' || role === 'defender')) {
     const am = text.match(/while (?:i'm|i am) attacking (?:or defending )?alone,? i have \+(\d+)\s*(?::rb_might:|might)/)
     if (am) b += parseInt(am[1], 10)
+    // Fiora - Peerless: "When I attack or defend one on one, double my Might this
+    // combat." 1v1 = her side alone AND exactly one enemy here. Doubling = +her
+    // current Might. Applied as a combat-Might aura so showdownSteps sees it.
+    if (/double my might this combat/.test(text)) {
+      const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
+      const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => x.owner !== u.owner).length : 0
+      if (enemies === 1) b += mightOf(u, role, owner.xp ?? 0)
+    }
     // Controller's gear: Mask of Foresight — "When a friendly unit attacks or
     // defends alone, give it +N Might this turn." Modeled as a lone-combatant aura.
     for (const g of owner.zones.base) {
@@ -2290,6 +2303,9 @@ function auraMightHere(here: EngineCard[], u: EngineCard): number {
     const t = (def(src)?.text ?? '').toLowerCase()
     const m = t.match(/other buffed friendly units at my battlefield have \+(\d+)\s*(?::rb_might:|might)/)
     if (m && (u.buffs ?? 0) > 0) b += parseInt(m[1], 10)
+    // Garen - Commander: "Other friendly units have +N Might here." (no buff gate)
+    const gm = t.match(/other friendly units have \+(\d+)\s*(?::rb_might:|might) here/)
+    if (gm) b += parseInt(gm[1], 10)
   }
   return b
 }
@@ -3132,15 +3148,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // [Level N] grants "enters ready", a base "I enter ready" ability (Master
         // Yi - Honed), or the controller's legend grants it (Wuju Master L11).
         const levelReady = levelBonus(card, p.xp).ready
-        const baseReady = /\bi enters? ready\b/i.test(card.text ?? '')
+        // Leona - Zealot: "If an opponent's score is within N points of the Victory
+        // Score, I enter ready." — a CONDITIONAL enter-ready, not unconditional.
+        const scoreReadyM = (card.text ?? '').toLowerCase().match(/if an opponent'?s score is within (\d+) points? of the victory score, i enter(?:s)? ready/)
+        const baseReady = /\bi enters? ready\b/i.test(card.text ?? '') && !scoreReadyM
         // Wuju Master: "[Level 11] Your units enter ready." while the controller has 11+ XP.
         const legText = (getCard(p.legend?.cardId ?? '')?.text ?? '').toLowerCase()
         const legReadyM = legText.match(/\[level\s*(\d+)\][^.]*?your units enter(?:s)? ready/)
         const legendReady = !!legReadyM && p.xp >= parseInt(legReadyM[1], 10)
-        // Monch: "If an opponent controls a stunned unit, … enter ready."
-        const condReady = /if an opponent controls a stunned unit,[^.]*?enter(?:s)? ready/i.test(card.text ?? '')
+        // Conditional enter-ready: Monch (opponent controls a stunned unit) and
+        // Leona - Zealot (an opponent is within N points of winning).
+        const monchReady = /if an opponent controls a stunned unit,[^.]*?enter(?:s)? ready/i.test(card.text ?? '')
           && [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)]
             .some((u) => u.owner !== action.player && u.stunned)
+        const leonaReady = !!scoreReadyM
+          && s.players.some((pl, i) => i !== action.player && s.pointsToWin - pl.points <= parseInt(scoreReadyM[1], 10))
+        const condReady = monchReady || leonaReady
         const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady
         // Ambush: a Reaction unit enters directly at a contested battlefield.
         const ambushBf = kw.ambush && action.toBattlefield != null ? action.toBattlefield : null

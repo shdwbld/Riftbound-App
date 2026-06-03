@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility, canActivateUnit } from './engine'
+import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility, canActivateUnit, combatMightAt } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME, GOLD_TOKEN_ID } from './setup'
 import type { Deck } from '../types/deck'
@@ -3086,5 +3086,72 @@ describe('Lillia - Bashful Bloom legend cost reduction', () => {
     expect(r.state.players[0].zones.base.length).toBe(baseBefore + 1)
     const sprite = r.state.players[0].zones.base[r.state.players[0].zones.base.length - 1]
     expect(sprite.exhausted).toBe(false)
+  })
+})
+
+describe('champion suite — state-aware Might & conditional ready', () => {
+  it('Draven - Showboat: Might increased by your points', () => {
+    const id = 'ogn-028-298'
+    if (!CARD_INDEX[id]) return
+    const base = (CARD_INDEX[id] as { might: number }).might
+    const s = baseState()
+    const d = mk(id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [d], controller: 0 }
+    expect(combatMightAt(s, 0, d, 'attacker')).toBe(base)
+    s.players[0].points = 3
+    expect(combatMightAt(s, 0, d, 'attacker')).toBe(base + 3)
+  })
+
+  it('Dr. Mundo - Expert: Might increased by cards in your trash', () => {
+    const id = 'ogn-109-298'
+    if (!CARD_INDEX[id]) return
+    const base = (CARD_INDEX[id] as { might: number }).might
+    const s = baseState()
+    const m = mk(id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [m], controller: 0 }
+    expect(combatMightAt(s, 0, m, 'attacker')).toBe(base)
+    s.players[0].zones.trash.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    expect(combatMightAt(s, 0, m, 'attacker')).toBe(base + 2)
+  })
+
+  it('Garen - Commander: other friendly units here get +1 Might (not himself)', () => {
+    const id = 'ogs-013-024'
+    if (!CARD_INDEX[id]) return
+    const ally = mk(injectCard('garen-ally', 'A unit.', { might: 2 }), 0)
+    const enemy = mk(injectCard('garen-enemy', 'A unit.', { might: 2 }), 1)
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(id, 0), ally, enemy], controller: 0 }
+    expect(combatMightAt(s, 0, ally, 'attacker')).toBe(3) // 2 + 1 from Garen
+    expect(combatMightAt(s, 0, enemy, 'defender')).toBe(2) // enemy unaffected
+  })
+
+  it('Fiora - Peerless: doubles her Might when one-on-one', () => {
+    const id = 'sfd-110-221'
+    if (!CARD_INDEX[id]) return
+    const base = (CARD_INDEX[id] as { might: number }).might
+    const s = baseState()
+    const f = mk(id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [f, mk(furyUnit.id, 1)], controller: null }
+    expect(combatMightAt(s, 0, f, 'attacker')).toBe(base * 2) // 1v1 → doubled
+    s.battlefields[0].units.push(mk(furyUnit.id, 1)) // a 2nd enemy → not 1v1
+    expect(combatMightAt(s, 0, f, 'attacker')).toBe(base)
+  })
+
+  it('Leona - Zealot: enters ready only when an opponent is within 3 of the Victory Score', () => {
+    // 0-cost stand-in with Leona's exact conditional-ready text (the real card has
+    // an Energy/Power cost; the gating logic is what's under test, verbatim).
+    const id = injectCard('leona-ready', "If an opponent's score is within 3 points of the Victory Score, I enter ready.", { type: 'unit', energy: 0, power: {}, might: 4 })
+    const play = (oppPoints: number) => {
+      const s = baseState()
+      s.pointsToWin = 8
+      s.players[1].points = oppPoints
+      const u = mk(id, 0)
+      s.players[0].zones.hand.push(u)
+      const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+      expect(r.error).toBeFalsy()
+      return r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.exhausted
+    }
+    expect(play(0)).toBe(true) // opponent far from winning → enters exhausted
+    expect(play(6)).toBe(false) // opponent at 6/8 (within 3) → enters ready
   })
 })
