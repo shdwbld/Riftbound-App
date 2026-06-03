@@ -2420,6 +2420,24 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.players[0].zones.base.some((u) => u.iid === ally.iid)).toBe(true)
     expect(r.state.players[0].zones.base.find((u) => u.iid === syren.iid)!.exhausted).toBe(true)
   })
+
+  it('Garbage Grabber (gear): Recycle 3, 1, exhaust → Draw 1', () => {
+    const s = baseState()
+    const grab = mk('ogn-099-298', 0)
+    s.players[0].zones.base.push(grab)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    for (let i = 0; i < 3; i++) s.players[0].zones.trash.push(mk(furyUnit.id, 0))
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0)) // a card to draw
+    const ab = canActivateUnit(s, 0, grab.iid)
+    expect(ab).toBeTruthy()
+    expect(ab!.recycleTrash).toBe(3)
+    const handBefore = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: grab.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(handBefore + 1) // drew 1
+    expect(r.state.players[0].zones.trash.length).toBe(0) // recycled 3
+    expect(r.state.players[0].zones.base.find((u) => u.iid === grab.iid)!.exhausted).toBe(true)
+  })
 })
 
 describe('Lillia - Bashful Bloom legend cost reduction', () => {

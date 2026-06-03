@@ -3291,6 +3291,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             sendUnitToBase(s1, t)
         }
       }
+      // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
+      if (ab.effect.draw) drawN(p, ab.effect.draw)
+      if (ab.effect.channel) channelN(p, ab.effect.channel)
       // "Kill this" cost resolves after the effect (the source is sacrificed).
       if (ab.killThis) s1 = fireDeaths(s1, killTarget(s1, u.iid))
       return ok(s1)
