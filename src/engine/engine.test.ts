@@ -729,6 +729,36 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.hand.length).toBe(2) // Deathknell doubled
   })
 
+  it('Karthus - Eternal: its static "[Deathknell]" reference is not its own Deathknell', async () => {
+    const { parseKeywords } = await import('./keywords')
+    const { parseTriggers } = await import('./triggers')
+    const karthus = CARD_INDEX['ogn-236-298']
+    if (!karthus) return // dataset lacks Karthus - Eternal
+    // The "Your [Deathknell] effects …" reference must not flag Karthus himself.
+    expect(parseKeywords(karthus).deathknell).toBe(false)
+    expect(parseTriggers(karthus).some((t) => t.event === 'death')).toBe(false)
+    // Karthus dying produces no spurious "Deathknell …" log line.
+    const s = baseState()
+    s.sandbox = true
+    const k = mk(karthus.id, 0)
+    s.battlefields[0].units.push(k)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: k.iid })
+    expect(r.state.log.some((l) => /Deathknell/i.test(l.text))).toBe(false)
+  })
+
+  it('Karthus doubling targets only its controller\'s Deathknells, not an enemy\'s', () => {
+    const karthus = injectCard('karthus-scope', 'Your [Deathknell] effects trigger an additional time.', { might: 5 })
+    const sentry = injectCard('sentry-scope', '[Deathknell] — Draw 1. (When I die, get the effect.)', { might: 1 })
+    const s = baseState()
+    s.sandbox = true
+    s.players[0].zones.base.push(mk(karthus, 0)) // P0 has Karthus
+    const enemySentry = mk(sentry, 1) // an ENEMY Deathknell unit
+    s.battlefields[0].units.push(enemySentry)
+    for (let i = 0; i < 4; i++) s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: enemySentry.iid })
+    expect(r.state.players[1].zones.hand.length).toBe(1) // not doubled by my Karthus
+  })
+
   it('Karthus absent: the same Deathknell fires once (draw 1)', () => {
     const sentry = injectCard('sentry-test2', '[Deathknell] — Draw 1. (When I die, get the effect.)', { might: 1 })
     const s = baseState()

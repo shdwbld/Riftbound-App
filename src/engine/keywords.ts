@@ -138,6 +138,15 @@ export function parseKeywords(card: Card | undefined): Keywords {
     const ungranted = text.replace(/\b(?:with|give (?:it|them)|have)\s+\[temporary\]/gi, '')
     if (!/\[temporary\]/i.test(ungranted)) kw.temporary = false
   }
+  // "[Deathknell]" REFERENCED as a noun in a static ability ("Your [Deathknell]
+  // effects trigger an additional time" — Karthus - Eternal) is not a Deathknell
+  // on THIS card. A real Deathknell ability reads "[Deathknell] — <effect>" or
+  // "[Deathknell][>] <effect>". Without this, Karthus mis-fires a junk death
+  // trigger (and the doubler would even double its own junk).
+  if (kw.deathknell) {
+    const referenced = text.replace(/\byour\s+\[deathknell\]\s+effects/gi, '')
+    if (!/\[deathknell\]/i.test(referenced)) kw.deathknell = false
+  }
   cache.set(card.id, kw)
   return kw
 }
