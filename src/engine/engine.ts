@@ -540,6 +540,27 @@ function findUnitAnywhere(s: MatchState, iid: string): EngineCard | undefined {
   )
 }
 
+/** Remove the card with `iid` from wherever it currently sits (any battlefield,
+ *  any player's zones / banished / legend / champion) and return it. Used by the
+ *  sandbox `move` override to relocate any card freely. */
+function pluckCardAnywhere(s: MatchState, iid: string): EngineCard | undefined {
+  for (const bf of s.battlefields) {
+    const i = bf.units.findIndex((u) => u.iid === iid)
+    if (i >= 0) return bf.units.splice(i, 1)[0]
+  }
+  for (const pl of s.players) {
+    for (const z of Object.keys(pl.zones) as ZoneId[]) {
+      const i = pl.zones[z].findIndex((c) => c.iid === iid)
+      if (i >= 0) return pl.zones[z].splice(i, 1)[0]
+    }
+    const bi = pl.banished.findIndex((c) => c.iid === iid)
+    if (bi >= 0) return pl.banished.splice(bi, 1)[0]
+    if (pl.legend?.iid === iid) { const c = pl.legend; pl.legend = null; return c }
+    if (pl.champion?.iid === iid) { const c = pl.champion; pl.champion = null; return c }
+  }
+  return undefined
+}
+
 /** Count a player's in-play units (battlefields + base) carrying a keyword.
  *  Used by cost-reduction clauses like Lillia - Bashful Bloom's "costs 1 less
  *  for each friendly unit with [Temporary]". For Temporary, also honours the
@@ -3301,6 +3322,27 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         case 'draw': drawN(s.players[action.player], 1); break
         case 'channel': channelN(s.players[action.player], 1); break
+        case 'move': {
+          if (!action.iid) break
+          const card = pluckCardAnywhere(s, action.iid)
+          if (!card) break
+          if (action.toBattlefield != null && s.battlefields[action.toBattlefield]) {
+            card.exhausted = false
+            card.facedown = false
+            s.battlefields[action.toBattlefield].units.push(card)
+          } else if (action.toZone === 'banished') {
+            s.players[card.owner].banished.push(card)
+          } else if (action.toZone === 'mainDeck' || action.toZone === 'runeDeck') {
+            // Decks draw from the front, so "to deck" puts the card on top.
+            s.players[card.owner].zones[action.toZone].unshift(card)
+          } else if (action.toZone) {
+            s.players[card.owner].zones[action.toZone].push(card)
+          } else {
+            // No valid destination — put it back in its owner's base.
+            s.players[card.owner].zones.base.push(card)
+          }
+          break
+        }
       }
       recomputeControllers(s)
       return ok(log(s, action.player, `Override: ${action.op}${nm ? ` ${nm}` : ''}.`))

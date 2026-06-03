@@ -2352,6 +2352,25 @@ describe('sandbox manual overrides', () => {
     expect(s.battlefields[0].units.length).toBe(0)
     expect(s.players[1].banished.some((x) => x.iid === u.iid)).toBe(true)
   })
+
+  it('move relocates a card between any zones / battlefields', () => {
+    let s = baseState()
+    s.sandbox = true
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.hand.push(u)
+    // hand → battlefield 1 (enters ready, faceup).
+    s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'move', iid: u.iid, toBattlefield: 1 }).state
+    expect(s.battlefields[1].units.some((x) => x.iid === u.iid)).toBe(true)
+    expect(s.players[0].zones.hand.length).toBe(0)
+    // battlefield → top of deck.
+    s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'move', iid: u.iid, toZone: 'mainDeck' }).state
+    expect(s.battlefields[1].units.length).toBe(0)
+    expect(s.players[0].zones.mainDeck[0].iid).toBe(u.iid) // on top
+    // deck → hand.
+    s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'move', iid: u.iid, toZone: 'hand' }).state
+    expect(s.players[0].zones.hand.some((x) => x.iid === u.iid)).toBe(true)
+    expect(s.players[0].zones.mainDeck.length).toBe(0)
+  })
 })
 
 describe('Lillia - Bashful Bloom legend cost reduction', () => {

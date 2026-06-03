@@ -15,11 +15,16 @@ import type { Domain } from '../types/cards'
 export type PlayerId = number
 
 /** A manual-override operation (sandbox mode). Unit ops act on `iid`; resource
- *  ops (draw / channel) act on the acting player. */
+ *  ops (draw / channel) act on the acting player; `move` relocates the card at
+ *  `iid` to `toBattlefield` or `toZone` (drag-and-drop / "Move to…" menu). */
 export type OverrideOp =
   | 'stun' | 'unstun' | 'ready' | 'exhaust' | 'buff' | 'unbuff'
   | 'mightUp' | 'mightDown' | 'kill' | 'banish' | 'trash' | 'toBase'
-  | 'draw' | 'channel'
+  | 'draw' | 'channel' | 'move'
+
+/** A destination zone for a sandbox `move` override (a player zone, the
+ *  banishment pile, or — with `toBattlefield` set — a battlefield). */
+export type OverrideZone = ZoneId | 'banished'
 
 export interface EngineCard {
   iid: string
@@ -299,8 +304,10 @@ export type Action =
   | { type: 'ACTIVATE_UNIT'; player: PlayerId; iid: string; targets?: string[] }
   /** Toggle shared manual-override (sandbox) mode for the whole match. */
   | { type: 'SET_SANDBOX'; player: PlayerId; on: boolean }
-  /** A manual override op applied in sandbox mode (either player, any card). */
-  | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number }
+  /** A manual override op applied in sandbox mode (either player, any card).
+   *  `move` uses `toBattlefield` (a battlefield) or `toZone` (a player zone /
+   *  banished) to relocate the card at `iid`. */
+  | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number; toZone?: OverrideZone }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number }
   | {
       type: 'PLAY_SPELL'

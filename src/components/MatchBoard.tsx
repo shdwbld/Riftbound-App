@@ -7,6 +7,7 @@ import {
   type PlayerState,
   type Action,
   type OverrideOp,
+  type OverrideZone,
   type GameEvent,
 } from '../engine/types'
 import { canPlay, combatMight, matchUsesXp, grantedAbilityFor, canActivateUnit } from '../engine/engine'
@@ -288,6 +289,15 @@ export default function MatchBoard({
       }
       items.push({ label: '🛠 Banish', action: ov('banish') })
       items.push({ label: '🛠 Trash', action: ov('trash') })
+      // Move this card to any zone / battlefield (also available via drag-drop).
+      const mv = (toZone: OverrideZone | undefined, toBattlefield: number | undefined): Action =>
+        ({ type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone, toBattlefield })
+      if (zone !== 'hand') items.push({ label: '🛠→ Hand', action: mv('hand', undefined) })
+      if (zone !== 'base') items.push({ label: '🛠→ Base', action: mv('base', undefined) })
+      for (let i = 0; i < match.battlefields.length; i++)
+        if (!(zone === 'battlefield' && match.battlefields[i].units.some((u) => u.iid === ci.iid)))
+          items.push({ label: `🛠→ Battlefield ${i + 1}`, action: mv(undefined, i) })
+      items.push({ label: '🛠→ Deck (top)', action: mv('mainDeck', undefined) })
       items.push({ label: `🛠 ${getCard(ci.cardId)?.name ?? 'Owner'} draws 1`, action: { type: 'OVERRIDE', player: owner, op: 'draw' } })
       items.push({ label: '🛠 Owner channels 1', action: { type: 'OVERRIDE', player: owner, op: 'channel' } })
     }
