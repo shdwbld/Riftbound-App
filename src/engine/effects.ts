@@ -82,6 +82,10 @@ export interface ParsedEffect {
    *  target must be on a battlefield; `targetScope` says whose, `targetCount` how
    *  many. Not a recall (keeps damage); resolved via sendUnitToBase. */
   moveToBase: boolean
+  /** Move a chosen unit to a player-chosen battlefield ("Move an enemy unit" —
+   *  Charm, Skyward Strike). Distinct from moveToBase (which has a fixed base
+   *  destination); the destination is picked via a pendingChoice. */
+  moveUnit: boolean
   /** Grant a chosen friendly unit a one-shot death shield ("the next time it
    *  would die this turn, heal it, exhaust it, and recall it instead" —
    *  Highlander, Tactical Retreat). */
@@ -158,6 +162,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   tempMight: 0,
   bounce: null,
   moveToBase: false,
+  moveUnit: false,
   deathShield: false,
   banishOnDeath: false,
   returnFromTrash: null,
@@ -176,7 +181,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.moveToBase || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.deathShield
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.moveToBase || e.moveUnit || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.deathShield
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
@@ -353,6 +358,13 @@ function parse(text: string): ParsedEffect {
     eff.battlefieldOnly = true // a unit at base can't be moved to base
     hit = true
   }
+  // Move a chosen unit to a chosen battlefield ("Move an enemy unit" — Charm,
+  // Skyward Strike). Only when it's NOT a move-to-base; the destination is picked
+  // via a pendingChoice. Excludes the "move me/self" forms (no unit noun).
+  else if (/\bmove (?:a|an|target|up to \w+) (?:friendly |enemy )?units?\b/.test(t)) {
+    eff.moveUnit = true
+    hit = true
+  }
   // One-shot death shield: "the next time it would die this turn, heal it,
   // exhaust it, and recall it instead" (Highlander, Tactical Retreat).
   if (/the next time it would die this turn[^.]*?(?:heal it|recall)/.test(t)) {
@@ -478,7 +490,7 @@ function parse(text: string): ParsedEffect {
             ? 'enemy'
             : eff.tempMight > 0 || eff.buff > 0 || eff.grantAssault > 0 || eff.grantGanking
               ? 'friendly' // buffs / keyword grants help your own units
-              : eff.bounce || eff.moveToBase
+              : eff.bounce || eff.moveToBase || eff.moveUnit
                 ? 'any' // a generic "return / move a unit" can hit either side
                 : 'enemy' // damage / kill / debuff default to enemies
   }

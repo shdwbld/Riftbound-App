@@ -2704,6 +2704,19 @@ function resolveSpellEffects(
         const nm = getCard(mu?.cardId ?? '')?.name ?? 'a unit'
         if (mu && sendUnitToBase(s, t)) s = log(s, controller, `${card.name}: moved ${nm} to its base.`)
       }
+      if (e.moveUnit) {
+        // "Move an enemy unit" (Charm) — the caster picks the destination
+        // battlefield via a pendingChoice (offered for the first moved target).
+        const mu = findUnitAnywhere(s, t)
+        const here = battlefieldOf(s, t)
+        const dests = s.battlefields
+          .map((b, i) => ({ i, b }))
+          .filter(({ i }) => i !== here)
+          .map(({ i }) => ({ iid: `bf:${i}`, label: bfBaseNameAt(s, i) || `Battlefield ${i + 1}` }))
+        if (mu && dests.length) {
+          offerChoice(s, { player: controller, kind: 'moveToBf', bfIndex: here, prompt: `Move ${getCard(mu.cardId)?.name ?? 'the unit'} to which battlefield?`, options: dests, payload: t })
+        }
+      }
       if (e.deathShield) {
         const su = findUnitAnywhere(s, t)
         if (su) { su.deathShield = true; s = log(s, controller, `${card.name}: ${getCard(su.cardId)?.name} is protected from its next death this turn.`) }
@@ -3454,6 +3467,24 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s = log(s, action.player, 'Dusk Rose Lab — declined.')
         }
         return ok(finishBeginning(s))
+      }
+
+      // Move a chosen unit to a chosen battlefield (Charm). action.iid is "bf:N"
+      // (a destination), and the unit being moved is carried in pc.payload.
+      if (pc.kind === 'moveToBf') {
+        const unitIid = pc.payload
+        if (action.iid && unitIid && action.iid.startsWith('bf:')) {
+          const dest = parseInt(action.iid.slice(3), 10)
+          const card = pluckCardAnywhere(s, unitIid)
+          if (card && s.battlefields[dest]) {
+            s.battlefields[dest].units.push(card)
+            recomputeControllers(s)
+            s = log(s, action.player, `Moved ${getCard(card.cardId)?.name ?? 'a unit'} to ${bfBaseNameAt(s, dest) || `Battlefield ${dest + 1}`}.`)
+          }
+        } else {
+          s = log(s, action.player, 'Move — declined.')
+        }
+        return ok(s)
       }
 
       // Decline the optional effect (non-resuming kinds).

@@ -2116,6 +2116,27 @@ describe('Vi deck — combat/targeting', () => {
     expect(r.state.players[1].zones.base.some((u) => u.iid === enemy.iid && u.exhausted)).toBe(true)
   })
 
+  it('Charm: moves an enemy unit to a chosen battlefield (destination via pendingChoice)', () => {
+    const charm = injectCard('charm-test', 'Move an enemy unit.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const sp = mk(charm, 0)
+    s.players[0].zones.hand.push(sp)
+    expect(getLegalTargets(s, CARD_INDEX[charm], 0)).toContain(enemy.iid)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemy.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    // A destination choice (battlefields other than the current one) is pending.
+    expect(r.state.pendingChoice?.kind).toBe('moveToBf')
+    expect(r.state.pendingChoice?.options.every((o) => o.iid.startsWith('bf:') && o.iid !== 'bf:0')).toBe(true)
+    const dest = r.state.pendingChoice!.options[0].iid
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: dest })
+    const destIdx = parseInt(dest.slice(3), 10)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(false)
+    expect(r.state.battlefields[destIdx].units.some((u) => u.iid === enemy.iid)).toBe(true)
+  })
+
   it('Right of Conquest: draws 1 per battlefield you control', () => {
     const id = injectCard('roc-test', 'When you play me, draw 1 for each battlefield you control.', { energy: 0, power: {} })
     const s = baseState()
