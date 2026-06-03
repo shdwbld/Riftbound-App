@@ -755,11 +755,20 @@ function OpponentMat({
             </button>
           </CardPreview>
         )}
-        {/* face-down hand */}
+        {/* Hand: rune cards are public (shown face-up); everything else stays
+            face-down. */}
         <div className="flex gap-0.5">
-          {opp.zones.hand.slice(0, 6).map((_, i) => (
-            <CardBack key={i} size="sm" />
-          ))}
+          {opp.zones.hand.map((c) =>
+            getCard(c.cardId)?.type === 'rune' ? (
+              <CardPreview key={c.iid} cardId={c.cardId}>
+                <button onClick={() => onInspect(c)} title="Opponent's rune (revealed)">
+                  <BoardCard ci={c} size="sm" xp={opp.xp} />
+                </button>
+              </CardPreview>
+            ) : (
+              <CardBack key={c.iid} size="sm" />
+            ),
+          )}
           {opp.zones.hand.length === 0 && <span className="text-[10px] text-white/30">no cards</span>}
         </div>
         <div className="ml-auto flex items-center gap-1">
@@ -788,6 +797,45 @@ function OpponentMat({
               <CardPreview key={cf.key} cardId={u.cardId}>
                 <button onClick={() => onInspect(u)}>
                   <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={opp.xp} />
+                </button>
+              </CardPreview>
+            )
+          })}
+        </div>
+      )}
+      {/* Rune pool — runes are public; exhausted (spent) runes stay visible to
+          everyone so opponents can see what's been used. */}
+      {opp.zones.runePool.length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <span className="text-[8px] uppercase tracking-wide text-white/30">
+            Runes {opp.zones.runePool.filter((r) => !r.exhausted).length}/{opp.zones.runePool.length}
+          </span>
+          {opp.zones.runePool.map((r) => {
+            const d = getCard(r.cardId)
+            const dom = d?.type === 'rune' ? d.produces[0] : undefined
+            const color = dom ? DOMAIN_META[dom].color : '#888'
+            return (
+              <CardPreview key={r.iid} cardId={r.cardId}>
+                <button
+                  onClick={() => onInspect(r)}
+                  title={`${d?.name ?? 'Rune'}${r.exhausted ? ' (exhausted)' : ''}`}
+                  className={`relative w-7 shrink-0 overflow-hidden rounded border transition hover:border-white/50 ${
+                    r.exhausted ? 'opacity-40 saturate-50' : ''
+                  }`}
+                  style={{ aspectRatio: '744/1039', borderColor: color }}
+                >
+                  {d?.imageUrl ? (
+                    <img src={d.imageUrl} alt={d.name} loading="lazy" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center" style={{ color }}>
+                      {dom ? <DomainIcon domain={dom} size={14} /> : '◆'}
+                    </span>
+                  )}
+                  {r.exhausted && (
+                    <span className="absolute inset-x-0 bottom-0 bg-black/70 text-center text-[6px] font-bold uppercase tracking-wide text-white/70">
+                      used
+                    </span>
+                  )}
                 </button>
               </CardPreview>
             )
