@@ -1274,6 +1274,42 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
   })
 })
 
+describe('Dusk Rose Lab (resumable Beginning Phase)', () => {
+  const dusk = () => CARDS.find((c) => c.type === 'battlefield' && c.name === 'Dusk Rose Lab')
+
+  function setup() {
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: dusk()!.id, units: [u], controller: 0 }
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    return { s, u }
+  }
+
+  it('pauses before scoring with a sacrifice prompt; resolving kills + draws then resumes', () => {
+    if (!dusk()) return
+    const { s, u } = setup()
+    const paused = beginTurn(s)
+    expect(paused.pendingChoice?.kind).toBe('duskRoseSacrifice')
+    expect(paused.phase).toBe('score') // not yet the action phase
+    const r = reduce(paused, { type: 'RESOLVE_CHOICE', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.pendingChoice).toBeUndefined()
+    expect(r.state.phase).toBe('action')
+    expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(false) // killed
+    expect(r.state.players[0].zones.hand.length).toBe(2) // Dusk Rose draw + regular draw
+  })
+
+  it('declining resumes the turn with no sacrifice', () => {
+    if (!dusk()) return
+    const { s, u } = setup()
+    const paused = beginTurn(s)
+    const r = reduce(paused, { type: 'RESOLVE_CHOICE', player: 0, iid: null })
+    expect(r.state.phase).toBe('action')
+    expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(true) // alive
+    expect(r.state.players[0].zones.hand.length).toBe(1) // only the regular draw
+  })
+})
+
 describe('Phase A — cost increases + Repeat grant/discount', () => {
   const bf = (name: string) => CARDS.find((c) => c.type === 'battlefield' && c.name === name)
 

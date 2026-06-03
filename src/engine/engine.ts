@@ -947,6 +947,30 @@ export function beginTurn(state: MatchState): MatchState {
     s = log(s, ap, `${getCard(s.battlefields[i].cardId)?.name ?? 'Battlefield'}: dealt ${dmg} to each unit here.`)
   }
 
+  // Dusk Rose Lab: "you may kill a unit you control here to draw 1 — before
+  // scoring." It's a sacrifice, so it prompts; pause the Beginning Phase here
+  // (phase 'score' blocks normal actions) and resume via RESOLVE_CHOICE →
+  // finishBeginning, so the kill lands before the scoring step below.
+  recomputeControllers(s)
+  for (let i = 0; i < s.battlefields.length; i++) {
+    if (bfBaseNameAt(s, i) !== 'Dusk Rose Lab' || s.battlefields[i].controller !== ap) continue
+    const opts = s.battlefields[i].units.filter((u) => u.owner === ap).map((u) => unitOpt(u))
+    if (opts.length) {
+      offerChoice(s, { player: ap, kind: 'duskRoseSacrifice', bfIndex: i, prompt: 'Dusk Rose Lab — kill a unit you control here to draw 1?', options: opts })
+      s.phase = 'score'
+      return s // paused before scoring; RESOLVE_CHOICE resumes finishBeginning
+    }
+  }
+  return finishBeginning(s)
+}
+
+/** The back half of the Beginning Phase (scoring → Hunt/hold → channel → draw →
+ *  legend → action). Split out of `beginTurn` so Dusk Rose Lab's pre-scoring
+ *  sacrifice prompt can pause and resume here. */
+function finishBeginning(s: MatchState): MatchState {
+  const ap = s.activePlayer
+  const p = s.players[ap]
+
   // Score: 1 point per held battlefield (skip the very first turn). Some
   // battlefields can't be scored until the controller's Nth turn.
   recomputeControllers(s)
@@ -2257,11 +2281,27 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     case 'RESOLVE_CHOICE': {
       const pc = state.pendingChoice
       if (!pc || pc.player !== action.player) return fail(state, 'No choice to resolve right now.')
-      const s = clone(state)
+      let s = clone(state)
       s.pendingChoice = undefined
-      // Decline the optional effect.
+      if (action.iid !== null && !pc.options.some((o) => o.iid === action.iid))
+        return fail(state, 'That is not a valid choice.')
+
+      // Dusk Rose Lab pauses the Beginning Phase before scoring; resolving it
+      // (pick or decline) resumes via finishBeginning.
+      if (pc.kind === 'duskRoseSacrifice') {
+        if (action.iid !== null) {
+          const nm = getCard(findUnitAnywhere(s, action.iid)?.cardId ?? '')?.name ?? 'a unit'
+          s = fireDeaths(s, killTarget(s, action.iid))
+          drawN(s.players[action.player], 1)
+          s = log(s, action.player, `Dusk Rose Lab — killed ${nm} to draw 1.`)
+        } else {
+          s = log(s, action.player, 'Dusk Rose Lab — declined.')
+        }
+        return ok(finishBeginning(s))
+      }
+
+      // Decline the optional effect (non-resuming kinds).
       if (action.iid === null) return ok(log(s, action.player, 'Declined the battlefield effect.'))
-      if (!pc.options.some((o) => o.iid === action.iid)) return fail(state, 'That is not a valid choice.')
       const name = getCard(findUnitAnywhere(s, action.iid)?.cardId ?? '')?.name ?? 'a unit'
       switch (pc.kind) {
         case 'moveHereToBase':
