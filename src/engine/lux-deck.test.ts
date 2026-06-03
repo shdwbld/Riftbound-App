@@ -143,6 +143,28 @@ describe('Retreat', () => {
     const channelled = r.state.players[0].zones.runePool.filter((x) => x.cardId === anyRune.id && x.exhausted)
     expect(channelled.length).toBeGreaterThanOrEqual(1)
   })
+
+  it('returns a bounced unit\'s attached gear to base instead of losing it', () => {
+    const s = baseState()
+    const gearIid = 'gear-1'
+    const friendly = mk(injectCard('retreat-unit2', '', { might: 3 }), 0, {
+      attached: [`sfd-073-221|${gearIid}`], // Experimental Hexplate equipped
+    })
+    s.battlefields[0].units.push(friendly)
+    s.players[0].zones.runeDeck.push(mk(anyRune.id, 0))
+    const retreat = mk('ogn-104-298', 0)
+    s.players[0].zones.hand.push(retreat)
+    const payRune = mk(anyRune.id, 0)
+    s.players[0].zones.runePool.push(payRune)
+    let r = reduce(s, {
+      type: 'PLAY_SPELL', player: 0, iid: retreat.iid, targets: [friendly.iid],
+      payment: { exhaust: [payRune.iid], recycle: [], poolEnergy: 0, poolPower: {} },
+    })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    // Gear is now an unattached piece in base, not lost.
+    expect(r.state.players[0].zones.base.some((c) => c.cardId === 'sfd-073-221')).toBe(true)
+  })
 })
 
 // --- Chemtech Cask ---------------------------------------------------------

@@ -1040,6 +1040,14 @@ function bounceUnitToHand(s: MatchState, iid: string, by: PlayerId, spellName: s
   if (!u) return s
   const owner = u.owner
   const isToken = getCard(u.cardId)?.supertype === 'token' || u.token
+  // Attached gear loses its host — return it to the owner's Base, unattached
+  // (same as a manual Detach), rather than letting it vanish with the unit.
+  for (const ref of u.attached) {
+    const [gCardId, gIid] = ref.split('|')
+    if (!gCardId) continue
+    s.players[owner].zones.base.push({ iid: gIid || `${owner}:gear:${gCardId}`, cardId: gCardId, owner, exhausted: false, damage: 0, attached: [] })
+    s = log(s, owner, `${spellName}: ${getCard(gCardId)?.name ?? 'Gear'} detached to base.`)
+  }
   const bfi = s.battlefields.findIndex((b) => b.units.some((x) => x.iid === iid))
   if (bfi >= 0) {
     if (isToken) {
