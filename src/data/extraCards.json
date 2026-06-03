@@ -18,5 +18,48 @@
     "set": "UNL",
     "number": 3,
     "tags": ["Battlefield"]
+  },
+  {
+    "id": "tok-sand-soldier",
+    "name": "Sand Soldier",
+    "type": "unit",
+    "domains": [],
+    "rarity": "common",
+    "set": "TOK",
+    "number": 1,
+    "tags": ["Shurima"],
+    "supertype": "token",
+    "energy": 0,
+    "power": {},
+    "might": 2
+  },
+  {
+    "id": "tok-bird",
+    "name": "Bird",
+    "type": "unit",
+    "domains": [],
+    "rarity": "common",
+    "set": "TOK",
+    "number": 2,
+    "tags": ["Bird"],
+    "supertype": "token",
+    "energy": 0,
+    "power": {},
+    "might": 1,
+    "text": "[Deflect] (Opponents must pay :rb_rune_rainbow: more to choose me with a spell or ability.)"
+  },
+  {
+    "id": "tok-mech",
+    "name": "Mech",
+    "type": "unit",
+    "domains": [],
+    "rarity": "common",
+    "set": "TOK",
+    "number": 3,
+    "tags": ["Mech"],
+    "supertype": "token",
+    "energy": 0,
+    "power": {},
+    "might": 3
   }
 ]

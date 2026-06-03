@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { reduce, beginTurn, canPlay } from './engine'
-import { autoPayForCard } from './autopay'
-import { RULES, createMatch, TOKEN_PILE_IDS } from './setup'
+import { autoPayForCard, effectiveCostOf } from './autopay'
+import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME } from './setup'
 import type { Deck } from '../types/deck'
 import {
   type MatchState,
@@ -556,6 +556,34 @@ describe('tokens (Recruit)', () => {
       ({ id: 't', name: 'T', type: 'unit', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {}, might: 1 }) as never
     expect(onPlayEffect(mkCard('When you play me, play a 1 :rb_might: Recruit unit token here.')).recruits).toBe(1)
     expect(spellEffect(mkCard('Play three 1 :rb_might: Recruit unit tokens.')).recruits).toBe(3)
+  })
+
+  it('auto-parses named token creation (Sand Soldier / Bird / Mech)', async () => {
+    const { spellEffect } = await import('./effects')
+    const mkCard = (text: string) =>
+      ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
+    const sand = spellEffect(mkCard('Play a 2 :rb_might: Sand Soldier unit token.')).namedToken
+    expect(sand).toEqual({ name: 'sand soldier', count: 1, exhausted: true })
+    const bird = spellEffect(mkCard('Play three Bird unit tokens.')).namedToken
+    expect(bird).toEqual({ name: 'bird', count: 3, exhausted: true })
+    const mech = spellEffect(mkCard('Play a ready 3 :rb_might: Mech unit token.')).namedToken
+    expect(mech).toEqual({ name: 'mech', count: 1, exhausted: false })
+  })
+
+  it('spawns a named token onto the base when an on-play effect resolves', () => {
+    const tokId = TOKEN_BY_NAME['sand soldier']
+    if (!tokId) return // dataset has no Sand Soldier token
+    // 0-cost unit whose on-play text creates a Sand Soldier token.
+    const unitId = injectCard('ss-maker', 'When you play me, play a 2 :rb_might: Sand Soldier unit token.', { energy: 0, power: {} })
+    const s = baseState()
+    const card = mk(unitId, 0)
+    s.players[0].zones.hand.push(card)
+    const { state, error } = reduce(s, {
+      type: 'PLAY_UNIT', player: 0, iid: card.iid,
+      payment: { exhaust: [], recycle: [], poolEnergy: 0, poolPower: {} },
+    })
+    expect(error).toBeUndefined()
+    expect(state.players[0].zones.base.some((u) => u.cardId === tokId)).toBe(true)
   })
 })
 
@@ -1187,5 +1215,61 @@ describe('battlefield scripts (Batch 3a)', () => {
     const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
     expect(r.state.players[0].legend?.exhausted).toBe(false)
     expect(r.state.players[0].zones.runePool[0].exhausted).toBe(true)
+  })
+})
+
+describe('cost modifiers (state-aware effectiveCostOf)', () => {
+  it('applies a flat self reduction ("I cost N less")', () => {
+    const id = injectCard('cm-flat', 'I cost :rb_energy_2: less.', { energy: 3, power: {} })
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(1)
+  })
+
+  it('never reduces a cost below zero', () => {
+    const id = injectCard('cm-floor0', 'I cost :rb_energy_5: less.', { energy: 1, power: {} })
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(0)
+  })
+
+  it('gates a [Legion] reduction on having played a card this turn', () => {
+    const id = injectCard('cm-legion', '[Legion] — I cost :rb_energy_2: less.', { energy: 3, power: {} })
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(3) // none played yet
+    s.players[0].cardsPlayedThisTurn = 1
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(1)
+  })
+
+  it('reduces 1 per card in your trash', () => {
+    const id = injectCard('cm-trash', 'I cost :rb_energy_1: less for each card in your trash.', { energy: 4, power: {} })
+    const s = baseState()
+    s.players[0].zones.trash.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(2)
+  })
+
+  it('honors a "to a minimum of" floor on the per-card-played reduction', () => {
+    const id = injectCard('cm-min', "I cost :rb_energy_1: less for each card you've played this turn, to a minimum of :rb_energy_1:.", { energy: 3, power: {} })
+    const s = baseState()
+    s.players[0].cardsPlayedThisTurn = 9
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(1)
+  })
+
+  it('applies a conditional "if you control a <Tag>" reduction', () => {
+    const mechId = TOKEN_BY_NAME['mech']
+    if (!mechId) return
+    const id = injectCard('cm-cond', 'This costs :rb_energy_2: less if you control a Mech.', { energy: 3, power: {} })
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(3) // no Mech
+    s.players[0].zones.base.push(mk(mechId, 0))
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(1)
+  })
+
+  it("Ornn's Forge: non-token gear you play costs 1 less while you control it", () => {
+    const forge = CARDS.find((c) => c.type === 'battlefield' && c.name.startsWith("Ornn's Forge"))
+    if (!forge) return
+    const gearId = injectCard('cm-gear', 'A piece of gear.', { type: 'gear', energy: 2, power: {} })
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[gearId]).energy).toBe(2)
+    s.battlefields[0] = { cardId: forge.id, units: [], controller: 0 }
+    expect(effectiveCostOf(s, 0, CARD_INDEX[gearId]).energy).toBe(1)
   })
 })

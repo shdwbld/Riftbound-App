@@ -1,6 +1,6 @@
 import { getCard } from '../data/cards'
 import type { Card, Domain } from '../types/cards'
-import type { PlayerState, Payment, ResolvedCost, EngineCard } from './types'
+import type { PlayerState, Payment, ResolvedCost, EngineCard, MatchState, PlayerId } from './types'
 
 // ---------------------------------------------------------------------------
 // Auto-pay: pick a valid Payment from a player's ready rune pool for a given
@@ -12,6 +12,62 @@ export function costOf(card: Card): ResolvedCost {
   if (card.type === 'unit' || card.type === 'spell' || card.type === 'gear')
     return { energy: card.energy, power: card.power }
   return { energy: 0, power: {} }
+}
+
+/** State-aware cost: applies "I cost X less" self-reductions and battlefield
+ *  cost modifiers (Ornn's Forge) on top of the printed cost. Energy-only; colored
+ *  Power is left as printed. Reductions never push a cost below 0 (or below an
+ *  explicit "to a minimum of" floor). Increases are intentionally NOT applied
+ *  here (they could wrongly block plays in this casual sim). */
+export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card): ResolvedCost {
+  const base = costOf(card)
+  const p = state.players[player]
+  if (!p) return base
+  const t = (card.text ?? '').toLowerCase()
+  let energy = base.energy
+  let floor = 0
+
+  const controlsTag = (tag: string): boolean =>
+    [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)].some(
+      (u) => u.owner === player && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
+    )
+  const controlsBF = (name: string): boolean =>
+    state.battlefields.some((b) => b.controller === player && (getCard(b.cardId)?.name ?? '').toLowerCase().startsWith(name))
+
+  // "I cost N less for each card in your trash" (Rhasa the Sunderer).
+  let m = t.match(/cost :rb_energy_(\d+): less for each card in your trash/)
+  if (m) energy -= Number(m[1]) * p.zones.trash.length
+
+  // "I cost N less for each card you've played this turn[, to a minimum of M]"
+  // (Battering Ram). The minimum is a floor on the resulting cost, not the cut.
+  m = t.match(/cost :rb_energy_(\d+): less for each (?:other )?card you'?ve played this turn(?:[^.]*?minimum of :rb_energy_(\d+))?/)
+  if (m) {
+    energy -= Number(m[1]) * (p.cardsPlayedThisTurn ?? 0)
+    if (m[2]) floor = Math.max(floor, Number(m[2]))
+  }
+
+  // "This costs N less if you control a <Tag>" (Production Surge → Mech).
+  m = t.match(/costs? :rb_energy_(\d+): less if you control an? ([a-z' -]+?)[.)]/)
+  if (m && controlsTag(m[2].trim())) energy -= Number(m[1])
+
+  // Flat unconditional "I cost N less" — but not the for-each / conditional /
+  // play-from-elsewhere variants handled above. [Legion] gates it on having
+  // already played a card this turn (Noxus Hopeful).
+  m = t.match(/i cost :rb_energy_(\d+): less\b/)
+  if (m && !/less for|less if|less to play from/.test(t)) {
+    const legionGated = /\[legion\]/.test(t)
+    if (!legionGated || (p.cardsPlayedThisTurn ?? 0) >= 1) energy -= Number(m[1])
+  }
+
+  // Ornn's Forge: non-token gear you play costs 1 less while you control it.
+  if (card.type === 'gear' && card.supertype !== 'token' && controlsBF("ornn's forge")) energy -= 1
+
+  return { energy: Math.max(floor, Math.max(0, energy)), power: base.power }
+}
+
+/** Auto-pay a card using its state-aware effective cost. */
+export function autoPayEff(state: MatchState, player: PlayerId, card: Card): Payment | null {
+  return autoPay(state.players[player], effectiveCostOf(state, player, card))
 }
 
 /** Sum two costs (e.g. a card's base cost + an optional Accelerate cost). */

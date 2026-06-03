@@ -15,9 +15,9 @@ import {
   ok,
   fail,
 } from './types'
-import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, shuffle } from './setup'
+import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
 import { parseKeywords, accelerateCost, levelBonus } from './keywords'
-import { addCost } from './autopay'
+import { addCost, effectiveCostOf, autoPayEff } from './autopay'
 import { bfScript, bfScriptAt, type BfApi } from './battlefieldScripts'
 
 /** How many turns the given player has taken (incl. the current one). */
@@ -27,7 +27,6 @@ function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
 }
 import { spellEffect, onPlayEffect, needsTarget, hasUntargetedPart, hasTargetedPart, type ParsedEffect } from './effects'
 import { triggersFor, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
-import { canAfford } from './autopay'
 import { battlefieldPassive } from './battlefields'
 
 // ---------------------------------------------------------------------------
@@ -95,13 +94,6 @@ function log(s: MatchState, player: PlayerId | null, text: string): MatchState {
 const nextPlayer = (s: MatchState, p: PlayerId): PlayerId =>
   (p + 1) % s.players.length
 const def = (ci: EngineCard): Card | undefined => getCard(ci.cardId)
-
-/** The resolved energy+power cost of a playable card. */
-function costOf(card: Card): ResolvedCost {
-  if (card.type === 'unit' || card.type === 'spell' || card.type === 'gear')
-    return { energy: card.energy, power: card.power }
-  return { energy: 0, power: {} }
-}
 
 function findInZone(
   p: PlayerState,
@@ -299,6 +291,24 @@ function spawnGold(p: PlayerState, n: number, turn: number): number {
   return n
 }
 
+/** Create N copies of a named unit token (Sprite / Sand Soldier / Bird / Mech)
+ *  onto a player's Base. Returns how many were actually created. */
+function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, exhausted: boolean): number {
+  const id = TOKEN_BY_NAME[name.toLowerCase()]
+  if (!id) return 0
+  for (let i = 0; i < n; i++)
+    p.zones.base.push({
+      iid: `${p.id}:tok:${id}#${(tokenCounter++).toString(36)}`,
+      cardId: id,
+      owner: p.id,
+      exhausted,
+      damage: 0,
+      attached: [],
+      enteredTurn: turn,
+    })
+  return n
+}
+
 /** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text. */
 function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect): string[] {
   const lines: string[] = []
@@ -306,6 +316,13 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect): string[] {
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
   if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
   if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn)} Gold token(s).`)
+  if (e.namedToken) {
+    const made = spawnNamedToken(p, e.namedToken.name, e.namedToken.count, s.turn, e.namedToken.exhausted)
+    if (made) {
+      const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
+      lines.push(`Created ${made} ${label} token(s).`)
+    }
+  }
   if (e.readyUnits) {
     // Surface a "choose which unit(s) to ready" prompt for the player.
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
@@ -908,7 +925,7 @@ export function beginTurn(state: MatchState): MatchState {
     const legendCard = getCard(p.legend.cardId)
     if (legendCard) {
       const e = spellEffect(legendCard)
-      if (e.draw || e.channel || e.recruits) {
+      if (e.draw || e.channel || e.recruits || e.goldTokens || e.namedToken) {
         p.legend.exhausted = true
         for (const line of applyParsed(s, p, e)) s = log(s, ap, `${legendCard.name} (auto): ${line}`)
       }
@@ -1677,7 +1694,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (legendCard) {
         const e = spellEffect(legendCard)
         for (const line of applyParsed(s1, p, e)) s1 = log(s1, action.player, line)
-        if (!e.draw && !e.channel && !e.recruits)
+        if (!e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken)
           s1 = log(s1, action.player, `(Resolve the legend's effect manually.)`)
       }
       return ok(s1)
@@ -1764,7 +1781,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // into the cost (so the payment must cover it) and the unit enters ready.
       const accelChosen =
         action.type === 'PLAY_UNIT' && !!action.accelerate && !!accelerateCost(card)
-      let effCost = accelChosen ? addCost(costOf(card), accelerateCost(card)!) : costOf(card)
+      const baseCost = effectiveCostOf(s, action.player, card)
+      let effCost = accelChosen ? addCost(baseCost, accelerateCost(card)!) : baseCost
       // Deflect: a spell choosing an enemy unit with Deflect X costs X more.
       if (action.type === 'PLAY_SPELL') {
         const surcharge = deflectSurcharge(state, action.targets, action.player)
@@ -1812,7 +1830,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s1 = { ...s1, vision: { player: action.player, cardId: p.zones.mainDeck[0].cardId } }
           s1 = log(s1, action.player, `Vision — look at the top of your deck; you may recycle it.`)
         }
-        if (e.manual && !e.draw && !e.channel && !e.recruits && !legionGated)
+        if (e.manual && !e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
         // Weaponmaster: auto-attach a piece of gear from your hand on entry.
         if (kw.weaponmaster) {
@@ -2118,7 +2136,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const s = clone(state)
       const p = s.players[action.player]
       const ci = findInZone(p, 'hand', action.iid)!
-      const err = applyPayment(p, costOf(card), action.payment)
+      const err = applyPayment(p, effectiveCostOf(s, action.player, card), action.payment)
       if (err) return fail(state, err)
       removeFromZone(p, 'hand', action.iid)
       p.cardsPlayedThisTurn = (p.cardsPlayedThisTurn ?? 0) + 1
@@ -2357,8 +2375,8 @@ export function canPlay(state: MatchState, player: PlayerId, iid: string): PlayC
     if (guard) return { valid: false, reason: guard }
   }
 
-  // Affordability.
-  if (!canAfford(p, card)) return { valid: false, reason: 'Not enough resources.' }
+  // Affordability (state-aware: applies "I cost X less" / battlefield modifiers).
+  if (!autoPayEff(state, player, card)) return { valid: false, reason: 'Not enough resources.' }
 
   // A spell that targets but has nothing to hit: still playable if it has a
   // non-target part (resolve only that); otherwise it can't be played.

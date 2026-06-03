@@ -15,7 +15,7 @@ import {
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
 import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge } from '../engine/engine'
-import { autoPay, canAfford, costOf, addCost, costIsFree } from '../engine/autopay'
+import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
@@ -413,11 +413,11 @@ export default function OnlinePage() {
     const me = match.players[seat]
     const reaction = me.zones.hand.find((c) => {
       const card = getCard(c.cardId)
-      return card?.type === 'spell' && canAfford(me, card)
+      return card?.type === 'spell' && !!autoPayEff(match, seat, card)
     })
     if (!reaction) return flash('No affordable Reaction spell to counter with.')
     const card = getCard(reaction.cardId)!
-    const cost = costOf(card)
+    const cost = effectiveCostOf(match, seat, card)
     // Route the Counter's rune payment through the picker overlay too.
     if (!costIsFree(cost)) {
       if (!autoPay(me, cost)) return flash('Cannot pay for the counter.')
@@ -463,7 +463,7 @@ export default function OnlinePage() {
     // Accelerate is an OPTIONAL extra cost on units — confirm to pay it so the
     // unit enters READY (can act the turn it arrives).
     let accelerate = false
-    let cost = costOf(card)
+    let cost = effectiveCostOf(match, seat, card)
     if (type === 'PLAY_UNIT') {
       const ac = accelerateCost(card)
       if (ac) {

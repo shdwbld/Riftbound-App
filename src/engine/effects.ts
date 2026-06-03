@@ -22,6 +22,8 @@ export interface ParsedEffect {
   recruits: number
   /** Number of Gold gear tokens to create. */
   goldTokens: number
+  /** A named unit token to create (Sprite / Sand Soldier / Bird / Mech). */
+  namedToken: { name: string; count: number; exhausted: boolean } | null
   /** Number of your units to ready (un-exhaust) — the player chooses which. */
   readyUnits: number
   /** +1 Might buff counters to apply (e.g. "gains +1 Might"). */
@@ -50,6 +52,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   damage: 0,
   recruits: 0,
   goldTokens: 0,
+  namedToken: null,
   readyUnits: 0,
   buff: 0,
   kill: 0,
@@ -68,7 +71,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.channel > 0 || e.recruits > 0 || e.goldTokens > 0 || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0
+  return e.draw > 0 || e.channel > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -113,6 +116,14 @@ function parse(text: string): ParsedEffect {
   // Gold gear tokens: "play a Gold gear token", "play 2 gold gear tokens".
   const goldM = t.match(new RegExp(`play ${NUM}[^.]*?gold gear tokens?`))
   if (goldM) { eff.goldTokens += num(goldM[1]); hit = true }
+
+  // Named unit tokens: "play a 2 :rb_might: Sand Soldier unit token",
+  // "play a ready 3 Sprite unit token", "play a 1 Might Bird unit token".
+  const namedM = t.match(/play (?:a |an |(\d+|two|three) )?(?:ready |exhausted )?[^.]*?\b(sprite|sand soldier|bird|mech)\b[^.]*?tokens?/)
+  if (namedM) {
+    eff.namedToken = { name: namedM[2], count: namedM[1] ? num(namedM[1]) : 1, exhausted: !/\bready\b/.test(namedM[0]) }
+    hit = true
+  }
 
   // Ready your unit(s): "ready a friendly unit", "ready up to 2 units" — the
   // player chooses which to un-exhaust. ("enters ready" is a different effect.)

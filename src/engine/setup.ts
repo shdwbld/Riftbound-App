@@ -74,6 +74,19 @@ const GOLD = CARDS.find(
 export const GOLD_TOKEN_ID = GOLD?.id ?? null
 export const TOKEN_PILE_IDS = [RECRUIT?.id, GOLD?.id].filter((x): x is string => !!x)
 
+/** Map a token's base name (lowercased, art/suffix stripped) → its card id, so
+ *  effects that read "play a … Sprite/Sand Soldier/Bird/Mech token" can resolve
+ *  which token card to create. Built from every token card in the data set. */
+export const TOKEN_BY_NAME: Record<string, string> = (() => {
+  const m: Record<string, string> = {}
+  for (const c of CARDS) {
+    if (c.supertype !== 'token') continue
+    const base = c.name.split(/\s*\(|\s*\/\//)[0].trim().toLowerCase()
+    if (base && !(base in m)) m[base] = c.id
+  }
+  return m
+})()
+
 /** The champion name a Legend builds around (text before " - " / "," / "("). */
 function championName(legendId: string | null): string | null {
   if (!legendId) return null
