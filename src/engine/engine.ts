@@ -2570,6 +2570,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (repeatChosen) effCost = addCost(effCost, repeatAvail!)
       const err = applyPayment(p, effCost, action.payment)
       if (err) return fail(state, err)
+      // A card's "cost" for threshold triggers (Lux — "a spell that costs 5+") is
+      // total Energy + Power, not just Energy.
+      const effTotal = effCost.energy + Object.values(effCost.power).reduce((a, b) => a + (b ?? 0), 0)
 
       if (fromChampion) p.champion = null
       else removeFromZone(p, 'hand', action.iid)
@@ -2642,7 +2645,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             s1 = log(s1, action.player, `Weaponmaster: no Equipment in hand to attach.`)
           }
         }
-        s1 = firePlayTriggers(s1, action.player, ci.iid, card, effCost.energy)
+        s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
         return ok(s1)
       }
 
@@ -2653,12 +2656,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             if (u.iid === action.targetIid && u.owner === action.player) {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
-              return ok(firePlayTriggers(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`), action.player, ci.iid, card, effCost.energy))
+              return ok(firePlayTriggers(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`), action.player, ci.iid, card, effTotal))
             }
         }
         p.zones.base.push({ ...ci })
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
-        return ok(firePlayTriggers(log(s, action.player, `Played gear ${card.name} (unattached).`), action.player, ci.iid, card, effCost.energy))
+        return ok(firePlayTriggers(log(s, action.player, `Played gear ${card.name} (unattached).`), action.player, ci.iid, card, effTotal))
       }
 
       // Spell. In a showdown we resolve immediately (legacy path). In the
@@ -2666,7 +2669,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (inShowdown) {
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         // "When you play a spell" triggers fire as it's played, before it resolves.
-        let s1 = firePlayTriggers(s, action.player, ci.iid, card, effCost.energy)
+        let s1 = firePlayTriggers(s, action.player, ci.iid, card, effTotal)
         s1 = fireChemtechCask(s1, action.player)
         s1 = bfSpellPlayed(s1, action.player, effCost.energy)
         s1 = resolveSpellEffects(s1, action.player, card, action.targets)
@@ -2692,7 +2695,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       s.priority = nextPlayer(s, action.player)
       // Play-triggers fire now (before the chain resolves), so they still happen
       // even if this spell is later Countered.
-      let sPlayed = firePlayTriggers(s, action.player, ci.iid, card, effCost.energy)
+      let sPlayed = firePlayTriggers(s, action.player, ci.iid, card, effTotal)
       sPlayed = fireChemtechCask(sPlayed, action.player)
       sPlayed = bfSpellPlayed(sPlayed, action.player, effCost.energy)
       return ok(

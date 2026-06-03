@@ -47,6 +47,28 @@ function baseState(bf0 = battlefield.id): MatchState {
   } as MatchState
 }
 
+// --- Lux cost threshold counts total cost (Energy + Power) -----------------
+describe('Lux - Illuminated cost threshold', () => {
+  const MIND_RUNE = 'ogn-089-298'
+  it('triggers on a spell whose Energy+Power total is 5+ (e3 + 2 Power)', () => {
+    const s = baseState()
+    const lux = mk('ogs-006-024', 0)
+    s.players[0].zones.base.push(lux)
+    // A spell costing 3 Energy + 2 mind Power = total 5 → should trigger Lux.
+    const spell = mk(injectCard('lux-pw-spell', 'Channel 1.', { type: 'spell', energy: 3, power: { mind: 2 } }), 0)
+    s.players[0].zones.hand.push(spell)
+    const exhaust: string[] = []
+    const recycle: string[] = []
+    for (let i = 0; i < 3; i++) { const r = mk(MIND_RUNE, 0); s.players[0].zones.runePool.push(r); exhaust.push(r.iid) }
+    for (let i = 0; i < 2; i++) { const r = mk(MIND_RUNE, 0); s.players[0].zones.runePool.push(r); recycle.push(r.iid) }
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, payment: { exhaust, recycle, poolEnergy: 0, poolPower: {} } })
+    expect(r.error).toBeUndefined()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.base.find((u) => u.iid === lux.iid)!.tempMight ?? 0).toBe(3)
+  })
+})
+
 // --- Crownguard mana ability ----------------------------------------------
 describe('Lux - Crownguard', () => {
   it('exhausts to add 2 Energy to the pool', () => {
