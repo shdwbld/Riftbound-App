@@ -1,4 +1,4 @@
-import { getCard } from '../data/cards'
+﻿import { getCard } from '../data/cards'
 import { type Card, type Domain, isUnit } from '../types/cards'
 import {
   type MatchState,
@@ -149,7 +149,7 @@ function applyPayment(
     return `Need to recycle exactly ${powerTotal} rune(s) for power.`
 
   // Energy: each exhaust target must be a ready rune in the pool. (A rune may
-  // ALSO appear in `recycle` — exhaust for energy, then recycle for power.)
+  // ALSO appear in `recycle` â€” exhaust for energy, then recycle for power.)
   const exhaustSet = new Set<string>()
   for (const iid of payment.exhaust) {
     if (exhaustSet.has(iid)) return 'A rune was listed twice for energy.'
@@ -331,7 +331,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect): string[] {
     const cnt = Math.min(e.readyUnits, exhausted.length)
     if (cnt > 0) {
       s.readyChoice = { player: p.id, count: (s.readyChoice?.player === p.id ? s.readyChoice.count : 0) + cnt }
-      lines.push(`Ready ${cnt} unit(s) — choose which.`)
+      lines.push(`Ready ${cnt} unit(s) â€” choose which.`)
     }
   }
   return lines
@@ -357,7 +357,7 @@ function controlledPermanents(s: MatchState, player: PlayerId): EngineCard[] {
   return out
 }
 
-/** Collect a player's GLOBAL ("when you …") triggers for an event. */
+/** Collect a player's GLOBAL ("when you â€¦") triggers for an event. */
 function collectGlobal(s: MatchState, player: PlayerId, event: TriggerEvent): FiredTrigger[] {
   const out: FiredTrigger[] = []
   for (const u of controlledPermanents(s, player))
@@ -366,7 +366,7 @@ function collectGlobal(s: MatchState, player: PlayerId, event: TriggerEvent): Fi
   return out
 }
 
-/** Self-scope triggers ("when I …") for a player's units, optionally limited to
+/** Self-scope triggers ("when I â€¦") for a player's units, optionally limited to
  *  specific source iids (e.g. the units that just moved / conquered). */
 function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?: string[]): FiredTrigger[] {
   const only = iids ? new Set(iids) : null
@@ -402,7 +402,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[]): MatchState {
         did = true
       }
     }
-    // "give me +1 Might this turn" — temporary Might on the source unit.
+    // "give me +1 Might this turn" â€” temporary Might on the source unit.
     if (e.tempMightSelf && sourceIid) {
       const u = findUnitAnywhere(s, sourceIid)
       if (u) {
@@ -412,8 +412,8 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[]): MatchState {
         did = true
       }
     }
-    if (e.damage) s = log(s, player, `${label}: deal ${e.damage} — choose a target (resolve manually).`)
-    else if (!did) s = log(s, player, `${label}: ${ability.text} — resolve manually.`)
+    if (e.damage) s = log(s, player, `${label}: deal ${e.damage} â€” choose a target (resolve manually).`)
+    else if (!did) s = log(s, player, `${label}: ${ability.text} â€” resolve manually.`)
   }
   return s
 }
@@ -427,9 +427,9 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
   return fireTriggers(s, fired)
 }
 
-/** Fire a player's GLOBAL "when you play …" triggers as a card is played. Fires
+/** Fire a player's GLOBAL "when you play â€¦" triggers as a card is played. Fires
  *  at play time regardless of whether the played card later resolves (a spell
- *  countered on the chain still triggers these — rule 4.x / T2). Excludes the
+ *  countered on the chain still triggers these â€” rule 4.x / T2). Excludes the
  *  card just played so it doesn't react to its own entry. */
 function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string): MatchState {
   const fired = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
@@ -469,10 +469,10 @@ function makeBfApi(s: MatchState): BfApi {
       p.zones.mainDeck.shift()
       if (getCard(top.cardId)?.type === 'spell') {
         p.zones.hand.push(top)
-        note(player, `Revealed a spell — added it to hand.`)
+        note(player, `Revealed a spell â€” added it to hand.`)
       } else {
         p.zones.mainDeck.push(top)
-        note(player, `Revealed a non-spell — recycled it.`)
+        note(player, `Revealed a non-spell â€” recycled it.`)
       }
     },
     tempMightToUnitHere(player, bfIndex, n) {
@@ -553,7 +553,7 @@ function makeBfApi(s: MatchState): BfApi {
       const top = s.players[player].zones.mainDeck[0]
       if (!top) return
       s.vision = { player, cardId: top.cardId }
-      note(player, `Predict — look at the top of your deck; you may recycle it.`)
+      note(player, `Predict â€” look at the top of your deck; you may recycle it.`)
     },
     readyGear(player) {
       const p = s.players[player]
@@ -588,6 +588,16 @@ function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number): 
     script.onConquer(makeBfApi(s), player, bfIndex)
     return s
   }
+  // Emperor's Dais is a multi-step optional ("pay 1 + return a unit here â†’ play
+  // a Sand Soldier here"), so it's handled as a choice prompt, taking precedence
+  // over the generic parser (which would otherwise just make the token).
+  if (bfBaseNameAt(s, bfIndex) === "Emperor's Dais") {
+    if (canPayEnergy(s, player, 1)) {
+      const opts = bf.units.filter((u) => u.owner === player).map((u) => unitOpt(u))
+      offerChoice(s, { player, kind: 'daisReturn', bfIndex, prompt: "Emperor's Dais â€” pay 1 and return a unit here to hand to play a Sand Soldier here?", options: opts })
+    }
+    return s
+  }
   const passive = battlefieldPassive(bf.cardId)
   if (passive.onConquer)
     for (const line of applyParsed(s, s.players[player], passive.onConquer))
@@ -596,6 +606,43 @@ function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number): 
     s = log(s, player, `${bfName} (conquer): resolve its effect manually.`)
   return s
 }
+
+/** Base name of the battlefield at index i (art-variant suffix stripped). */
+function bfBaseNameAt(s: MatchState, i: number): string {
+  return (getCard(s.battlefields[i]?.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
+}
+
+/** Whether a player can pay N Energy (pool first, then ready runes). */
+function canPayEnergy(s: MatchState, player: PlayerId, n: number): boolean {
+  const p = s.players[player]
+  const ready = p.zones.runePool.filter((r) => !r.exhausted).length
+  return (p.pool?.energy ?? 0) + ready >= n
+}
+
+/** Move a unit (at any battlefield) to its owner's base, exhausted. Returns
+ *  success. Mirrors RETREAT's bookkeeping (onMoveFrom + controller recompute). */
+function sendUnitToBase(s: MatchState, iid: string): boolean {
+  for (let i = 0; i < s.battlefields.length; i++) {
+    const idx = s.battlefields[i].units.findIndex((u) => u.iid === iid)
+    if (idx >= 0) {
+      const [u] = s.battlefields[i].units.splice(idx, 1)
+      bfScriptAt(s, i)?.onMoveFrom?.(u) // Back-Alley Bar: +1 Might this turn
+      s.players[u.owner].zones.base.push({ ...u, exhausted: true })
+      recomputeControllers(s)
+      return true
+    }
+  }
+  return false
+}
+
+/** Offer an optional battlefield choice. Single-slot: ignored if one is already
+ *  pending or there are no valid options (the "you may" simply doesn't fire). */
+function offerChoice(s: MatchState, spec: NonNullable<MatchState['pendingChoice']>): void {
+  if (s.pendingChoice || spec.options.length === 0) return
+  s.pendingChoice = spec
+}
+
+const unitOpt = (u: EngineCard) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? u.iid })
 
 /** Award Hunt XP for a player's units at a battlefield they just conquered or
  *  are holding (rule: Hunt N grants N XP on conquer/hold). Mutates + logs. */
@@ -708,7 +755,7 @@ function moveUnits(
       passes: 0,
       movedUnit: moved[0].iid,
     }
-    s2 = log(s2, player, 'Showdown opened — opponents may respond.')
+    s2 = log(s2, player, 'Showdown opened â€” opponents may respond.')
   } else if (
     s2.battlefields[toBattlefield].controller === player &&
     prevController !== player
@@ -758,7 +805,7 @@ export function beginTurn(state: MatchState): MatchState {
   const p = s.players[ap]
 
   // Reset per-turn counters (LEGION) and empty the resource pool (it does not
-  // carry between turns — emptied at end of the Draw step / end of turn).
+  // carry between turns â€” emptied at end of the Draw step / end of turn).
   p.cardsPlayedThisTurn = 0
   p.pool = { energy: 0, power: {} }
 
@@ -768,9 +815,9 @@ export function beginTurn(state: MatchState): MatchState {
     p.zones[z] = p.zones[z].map((c) => ({ ...c, exhausted: false }))
   for (const bf of s.battlefields)
     bf.units = bf.units.map((u) => (u.owner === ap ? { ...u, exhausted: false } : u))
-  s = log(s, ap, `— Turn ${s.turn}: ${p.name} · Awaken —`)
+  s = log(s, ap, `â€” Turn ${s.turn}: ${p.name} Â· Awaken â€”`)
 
-  // Start-of-turn triggered abilities (card text "at the start of your turn …").
+  // Start-of-turn triggered abilities (card text "at the start of your turn â€¦").
   s = fireTriggers(s, collectGlobal(s, ap, 'startOfTurn'))
 
   // Battlefield "first Beginning Phase" passives (e.g. Obelisk channels 1).
@@ -869,13 +916,19 @@ export function beginTurn(state: MatchState): MatchState {
   // Battlefield "when you hold here" passives for the active player.
   for (const bf of s.battlefields) {
     if (bf.controller !== ap) continue
-    // The Grand Plaza: hold with enough units here → win.
+    // The Grand Plaza: hold with enough units here â†’ win.
     const script = bfScript(bf.cardId)
     if (script?.winOnUnitsHere && bf.units.filter((u) => u.owner === ap).length >= script.winOnUnitsHere)
       return endGame(s, ap)
     // Scripted "when you hold here" takes precedence over the generic parser.
     if (script?.onHold) {
       script.onHold(makeBfApi(s), ap, s.battlefields.indexOf(bf))
+      continue
+    }
+    // Amateur Recital: on hold, you may move any unit at a battlefield to base.
+    if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'Amateur Recital') {
+      const opts = s.battlefields.flatMap((b) => b.units).map((u) => unitOpt(u))
+      offerChoice(s, { player: ap, kind: 'moveAnyToBase', bfIndex: s.battlefields.indexOf(bf), prompt: 'Amateur Recital â€” move a unit at a battlefield to its base?', options: opts })
       continue
     }
     const passive = battlefieldPassive(bf.cardId)
@@ -894,12 +947,12 @@ export function beginTurn(state: MatchState): MatchState {
   }
   if (p.points >= s.pointsToWin) return endGame(s, ap)
 
-  // First-turn process (Core Rules v1.2 §462–466), by seat in turn order:
-  //   • 1v1: the player going SECOND channels +1 on their first turn.
-  //   • FFA 3-4: the player going FIRST skips their first Draw; the player going
+  // First-turn process (Core Rules v1.2 Â§462â€“466), by seat in turn order:
+  //   â€¢ 1v1: the player going SECOND channels +1 on their first turn.
+  //   â€¢ FFA 3-4: the player going FIRST skips their first Draw; the player going
   //     LAST channels +1 on their first turn.
   const n = s.players.length
-  const order = (ap - s.firstPlayer + n) % n // 0 = first player … n-1 = last
+  const order = (ap - s.firstPlayer + n) % n // 0 = first player â€¦ n-1 = last
   const isPlayersFirstTurn = s.turn === order + 1
   const channelBonus =
     isPlayersFirstTurn &&
@@ -918,7 +971,7 @@ export function beginTurn(state: MatchState): MatchState {
   }
   if (channeled) s = log(s, ap, `Channeled ${channeled} rune(s).`)
 
-  // Draw — empty deck triggers Burn Out (reshuffle Trash, opponent scores). The
+  // Draw â€” empty deck triggers Burn Out (reshuffle Trash, opponent scores). The
   // FFA first player skips their very first Draw.
   const drawCount = skipFirstDraw ? 0 : RULES.drawPerTurn
   if (skipFirstDraw) s = log(s, ap, `${p.name} skips their first draw (going first).`)
@@ -935,7 +988,7 @@ export function beginTurn(state: MatchState): MatchState {
   }
 
   // Auto-activate the Legend's ability once per turn (its auto-resolvable parts:
-  // draw / channel / recruit). No manual button — abilities resolve themselves.
+  // draw / channel / recruit). No manual button â€” abilities resolve themselves.
   if (p.legend && !p.legend.exhausted) {
     const legendCard = getCard(p.legend.cardId)
     if (legendCard) {
@@ -957,12 +1010,12 @@ function burnOut(state: MatchState, player: PlayerId): MatchState {
   const beneficiary = nextPlayer(state, player)
   const p = state.players[player]
   if (p.zones.trash.length === 0) {
-    const s = log(state, player, `${p.name} burned out with no Trash — ${state.players[beneficiary].name} wins!`)
+    const s = log(state, player, `${p.name} burned out with no Trash â€” ${state.players[beneficiary].name} wins!`)
     return endGame(s, beneficiary)
   }
   p.zones.mainDeck = shuffle([...p.zones.mainDeck, ...p.zones.trash])
   p.zones.trash = []
-  const s = log(state, player, `${p.name} burned out — Trash reshuffled into the deck.`)
+  const s = log(state, player, `${p.name} burned out â€” Trash reshuffled into the deck.`)
   return awardPoints(s, beneficiary, 1, 'scored from Burn Out', 'hold')
 }
 
@@ -976,7 +1029,7 @@ function endGame(state: MatchState, winner: PlayerId): MatchState {
 
 /** Award point(s) and check for the win. The winning point via Conquer is
  *  restricted: it only counts if the player controls ALL battlefields that
- *  turn — otherwise they draw a card instead of scoring it. Hold/Burn-Out
+ *  turn â€” otherwise they draw a card instead of scoring it. Hold/Burn-Out
  *  points are unrestricted. */
 function awardPoints(
   s: MatchState,
@@ -995,7 +1048,7 @@ function awardPoints(
     return log(
       s,
       player,
-      `${p.name}'s winning point must be a Hold or a full conquer — drew a card instead.`,
+      `${p.name}'s winning point must be a Hold or a full conquer â€” drew a card instead.`,
     )
   }
   p.points += amount
@@ -1025,7 +1078,7 @@ function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
   return Math.max(0, m)
 }
 
-/** Combat damage a unit DEALS — 0 if Stunned (it still keeps Might to survive). */
+/** Combat damage a unit DEALS â€” 0 if Stunned (it still keeps Might to survive). */
 function damageOutput(ci: EngineCard, role: CombatRole, xp = 0): number {
   return ci.stunned ? 0 : mightOf(ci, role, xp)
 }
@@ -1035,7 +1088,7 @@ export function isMighty(ci: EngineCard): boolean {
   return mightOf(ci) >= 5
 }
 
-/** A unit's current displayed Might (base + buffs + gear + temp + level − damage). */
+/** A unit's current displayed Might (base + buffs + gear + temp + level âˆ’ damage). */
 export function displayMight(ci: EngineCard, xp = 0): number {
   const d = getCard(ci.cardId)
   if (!d || d.type !== 'unit') return 0
@@ -1167,7 +1220,7 @@ function hpMap(
 }
 
 /** Build one side's damage-assignment step. `manualAllowed` is false when there
- *  is no single dealer (multi-owner defenders) — then it auto-resolves. */
+ *  is no single dealer (multi-owner defenders) â€” then it auto-resolves. */
 function buildAssignStep(
   dealer: PlayerId,
   side: 'attackers' | 'defenders',
@@ -1190,7 +1243,7 @@ function buildAssignStep(
 }
 
 /** Flat combat-Might delta a battlefield grants units fighting on it (Trifarian
- *  War Camp +1, Forbidding Waste −2 alone, Black Flame Altar shield). */
+ *  War Camp +1, Forbidding Waste âˆ’2 alone, Black Flame Altar shield). */
 function bfCombatBonus(
   s: MatchState,
   bfIndex: number,
@@ -1231,9 +1284,9 @@ export function validateAllocation(step: DamageAssignStep, alloc: Record<string,
   return null
 }
 
-/** Deflect surcharge (Core Rules §735): an opponent's spell/ability that
+/** Deflect surcharge (Core Rules Â§735): an opponent's spell/ability that
  *  CHOOSES a unit with Deflect X costs X more to play. Summed over all chosen
- *  enemy targets. (Modeled here as extra generic cost — see note in autopay.) */
+ *  enemy targets. (Modeled here as extra generic cost â€” see note in autopay.) */
 export function deflectSurcharge(
   state: MatchState,
   targets: string[] | undefined,
@@ -1314,7 +1367,7 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
     const current = steps.findIndex((st) => st.manual)
     s.showdown!.assign = { steps, current }
     s.showdown!.priority = steps[current].dealer
-    return s // paused — wait for ASSIGN_DAMAGE
+    return s // paused â€” wait for ASSIGN_DAMAGE
   }
   return finalizeShowdown(s, bfIndex, steps)
 }
@@ -1358,6 +1411,14 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   if (defendScript?.onDefend)
     for (const owner of new Set(defenders.map((u) => u.owner)))
       defendScript.onDefend(makeBfApi(s), owner, bfIndex)
+  // Reaver's Row: a defender here may move a friendly unit here to base.
+  if (bfBaseNameAt(s, bfIndex) === "Reaver's Row") {
+    const owner = bf.controller
+    if (owner != null) {
+      const opts = bf.units.filter((u) => u.owner === owner).map((u) => unitOpt(u))
+      offerChoice(s, { player: owner, kind: 'moveHereToBase', bfIndex, prompt: "Reaver's Row â€” move a friendly unit here to base?", options: opts })
+    }
+  }
 
   const survivors: EngineCard[] = []
   const defeated: EngineCard[] = []
@@ -1376,7 +1437,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   s = log(
     s,
     moverOwner,
-    `Showdown at ${bfName}: ${attackMight} vs ${defendMight} Might — ${lost} unit(s) defeated.`,
+    `Showdown at ${bfName}: ${attackMight} vs ${defendMight} Might â€” ${lost} unit(s) defeated.`,
   )
   // Death triggers (Deathknell + any "when I'm defeated") for every casualty.
   s = fireDeaths(s, defeated)
@@ -1392,13 +1453,13 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     for (const u of moverRemain)
       s.players[moverOwner].zones.base.push({ ...u, exhausted: true, damage: 0 })
     recomputeControllers(s)
-    s = log(s, moverOwner, `No conquer — ${moverRemain.length} attacker(s) recalled to base.`)
+    s = log(s, moverOwner, `No conquer â€” ${moverRemain.length} attacker(s) recalled to base.`)
   }
 
   s.showdown = null
   s.phase = 'action'
 
-  // "When I win a combat" — the mover cleared the defenders and still holds units.
+  // "When I win a combat" â€” the mover cleared the defenders and still holds units.
   const moverHere = s.battlefields[bfIndex].units.filter((u) => u.owner === moverOwner).map((u) => u.iid)
   const enemyHere = s.battlefields[bfIndex].units.some((u) => u.owner !== moverOwner)
   if (moverHere.length > 0 && !enemyHere)
@@ -1431,12 +1492,12 @@ function resolveSpellEffects(
   // Untargeted parts (draw / channel / recruit) always resolve.
   for (const line of applyParsed(s, p, e)) s = log(s, controller, line)
 
-  // Targeted parts: damage / kill / ±Might-this-turn, applied to each chosen
+  // Targeted parts: damage / kill / Â±Might-this-turn, applied to each chosen
   // target that's still in play.
   if (hasTargetedPart(e)) {
     const tgts = (targets ?? []).filter((t) => isValidTarget(s, t))
     if (tgts.length === 0 && !hasUntargetedPart(e))
-      s = log(s, controller, `${card.name} fizzled — no valid target.`)
+      s = log(s, controller, `${card.name} fizzled â€” no valid target.`)
     for (const t of tgts) {
       let dead: EngineCard[] = []
       if (e.damage) {
@@ -1464,11 +1525,11 @@ function resolveSpellEffects(
   const kw = parseKeywords(card)
   if ((kw.vision || kw.predict) && p.zones.mainDeck.length > 0) {
     s = { ...s, vision: { player: controller, cardId: p.zones.mainDeck[0].cardId } }
-    s = log(s, controller, `${kw.predict ? 'Predict' : 'Vision'} — look at the top of your deck; you may recycle it.`)
+    s = log(s, controller, `${kw.predict ? 'Predict' : 'Vision'} â€” look at the top of your deck; you may recycle it.`)
   }
 
   if (e.manual && !hasTargetedPart(e) && !hasUntargetedPart(e))
-    s = log(s, controller, `Cast ${card.name} — resolve its effect manually.`)
+    s = log(s, controller, `Cast ${card.name} â€” resolve its effect manually.`)
   return s
 }
 
@@ -1540,9 +1601,9 @@ function resolveTopOfChain(state: MatchState): MatchState {
       const [target] = s.chain.splice(idx, 1)
       sendToTrash(s.players[target.controller], target.instance)
       emit({ kind: 'counter', iid: target.instance.iid, player: item.controller, cardId: target.cardId })
-      s = log(s, item.controller, `Countered ${getCard(target.cardId)?.name ?? 'a spell'} — it does not resolve.`)
+      s = log(s, item.controller, `Countered ${getCard(target.cardId)?.name ?? 'a spell'} â€” it does not resolve.`)
     } else {
-      s = log(s, item.controller, `Counter fizzled — its target left the chain.`)
+      s = log(s, item.controller, `Counter fizzled â€” its target left the chain.`)
     }
     sendToTrash(p, item.instance)
     return s
@@ -1552,7 +1613,7 @@ function resolveTopOfChain(state: MatchState): MatchState {
     s = resolveSpellEffects(s, item.controller, card, item.targets)
     // [Repeat]: resolve the effect an extra time per paid repeat.
     for (let r = 0; r < (item.repeat ?? 0); r++) {
-      s = log(s, item.controller, `${card.name}: Repeat — resolving its effect again.`)
+      s = log(s, item.controller, `${card.name}: Repeat â€” resolving its effect again.`)
       s = resolveSpellEffects(s, item.controller, card, item.targets)
     }
   }
@@ -1603,7 +1664,7 @@ function finalizeSetup(s: MatchState): MatchState {
     bfIds.reduce((sum, id) => sum + battlefieldPassive(id).winDelta, 0)
   s.setup = undefined
   s.phase = 'mulligan'
-  return log(s, null, 'Setup complete — players mulligan.')
+  return log(s, null, 'Setup complete â€” players mulligan.')
 }
 
 /** Advance the setup state to the next pending step, or finalize into mulligan.
@@ -1641,12 +1702,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const s = clone(state)
       const su = s.setup!
       su.rolls = [...action.rolls]
-      // Highest roll wins (first max on a tie — the UI re-rolls ties for fairness).
+      // Highest roll wins (first max on a tie â€” the UI re-rolls ties for fairness).
       let winner = 0
       for (let i = 1; i < su.rolls.length; i++) if (su.rolls[i] > su.rolls[winner]) winner = i
       su.winner = winner
       su.step = 'first'
-      return ok(log(s, null, `Turn-order roll: ${su.rolls.map((r, i) => `${s.players[i].name} ${r}`).join(', ')} — ${s.players[winner].name} chooses.`))
+      return ok(log(s, null, `Turn-order roll: ${su.rolls.map((r, i) => `${s.players[i].name} ${r}`).join(', ')} â€” ${s.players[winner].name} chooses.`))
     }
 
     case 'CHOOSE_FIRST': {
@@ -1850,7 +1911,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         let s1 = log(
           s,
           action.player,
-          `Played ${card.name}${ambushBf != null ? ' (Ambush)' : accelChosen ? ' (ready · Accelerate)' : levelReady ? ' (ready · Level)' : ''}.`,
+          `Played ${card.name}${ambushBf != null ? ' (Ambush)' : accelChosen ? ' (ready Â· Accelerate)' : levelReady ? ' (ready Â· Level)' : ''}.`,
         )
         const e = onPlayEffect(card)
         const legionGated = kw.legion && !legionActive
@@ -1863,7 +1924,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // recycle) is surfaced to the controller (same look, both keywords).
         if ((kw.vision || kw.predict) && p.zones.mainDeck.length > 0) {
           s1 = { ...s1, vision: { player: action.player, cardId: p.zones.mainDeck[0].cardId } }
-          s1 = log(s1, action.player, `${kw.predict ? 'Predict' : 'Vision'} — look at the top of your deck; you may recycle it.`)
+          s1 = log(s1, action.player, `${kw.predict ? 'Predict' : 'Vision'} â€” look at the top of your deck; you may recycle it.`)
         }
         if (e.manual && !e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
@@ -1908,7 +1969,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         s1 = bfSpellPlayed(s1, action.player, effCost.energy)
         s1 = resolveSpellEffects(s1, action.player, card, action.targets)
         if (repeatChosen) {
-          s1 = log(s1, action.player, `${card.name}: Repeat — resolving its effect again.`)
+          s1 = log(s1, action.player, `${card.name}: Repeat â€” resolving its effect again.`)
           s1 = resolveSpellEffects(s1, action.player, card, action.targets)
         }
         sendToTrash(s1.players[action.player], ci)
@@ -1932,7 +1993,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       let sPlayed = firePlayTriggers(s, action.player, ci.iid)
       sPlayed = bfSpellPlayed(sPlayed, action.player, effCost.energy)
       return ok(
-        log(sPlayed, action.player, `Played ${card.name} — it's on the Chain (opponents may respond).`),
+        log(sPlayed, action.player, `Played ${card.name} â€” it's on the Chain (opponents may respond).`),
       )
     }
 
@@ -1992,7 +2053,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
       const s = clone(state)
-      // Banish removes a unit from play to its OWNER's Banishment — no Deathknell.
+      // Banish removes a unit from play to its OWNER's Banishment â€” no Deathknell.
       for (const bf of s.battlefields) {
         const idx = bf.units.findIndex((u) => u.iid === action.iid)
         if (idx >= 0) {
@@ -2105,6 +2166,38 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       return ok(log(s, action.player, `Readied ${getCard(u.cardId)?.name}.`))
     }
 
+    case 'RESOLVE_CHOICE': {
+      const pc = state.pendingChoice
+      if (!pc || pc.player !== action.player) return fail(state, 'No choice to resolve right now.')
+      const s = clone(state)
+      s.pendingChoice = undefined
+      // Decline the optional effect.
+      if (action.iid === null) return ok(log(s, action.player, 'Declined the battlefield effect.'))
+      if (!pc.options.some((o) => o.iid === action.iid)) return fail(state, 'That is not a valid choice.')
+      const name = getCard(findUnitAnywhere(s, action.iid)?.cardId ?? '')?.name ?? 'a unit'
+      switch (pc.kind) {
+        case 'moveHereToBase':
+        case 'moveAnyToBase':
+          sendUnitToBase(s, action.iid)
+          return ok(log(s, action.player, `Moved ${name} to base.`))
+        case 'daisReturn': {
+          // Pay 1, return the chosen unit here to its owner's hand, then play a
+          // Sand Soldier token at this battlefield.
+          if (!makeBfApi(s).payEnergy(action.player, 1)) return fail(state, "Can't pay for Emperor's Dais.")
+          const bf = s.battlefields[pc.bfIndex]
+          const idx = bf.units.findIndex((u) => u.iid === action.iid)
+          if (idx < 0) return fail(state, 'That unit is no longer here.')
+          const [u] = bf.units.splice(idx, 1)
+          s.players[u.owner].zones.hand.push({ iid: u.iid, cardId: u.cardId, owner: u.owner, exhausted: false, damage: 0, attached: [] })
+          const tokId = TOKEN_BY_NAME['sand soldier']
+          if (tokId) bf.units.push({ iid: `${action.player}:tok:${tokId}#${(tokenCounter++).toString(36)}`, cardId: tokId, owner: action.player, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+          recomputeControllers(s)
+          return ok(log(s, action.player, `Emperor's Dais â€” returned ${name} to hand and played a Sand Soldier.`))
+        }
+      }
+      return ok(s)
+    }
+
     case 'ASSIGN_DAMAGE': {
       if (state.phase !== 'showdown' || !state.showdown?.assign)
         return fail(state, 'No damage to assign right now.')
@@ -2152,7 +2245,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       let s = clone(state)
       s.passes += 1
       s.priority = nextPlayer(s, action.player)
-      // All players passed in a row → resolve the top of the chain.
+      // All players passed in a row â†’ resolve the top of the chain.
       if (s.passes >= s.players.length) {
         s = resolveTopOfChain(s)
         s.passes = 0
@@ -2191,7 +2284,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       })
       s.passes = 0
       s.priority = nextPlayer(s, action.player)
-      return ok(log(s, action.player, `Played ${card.name} to Counter — it's on the Chain.`))
+      return ok(log(s, action.player, `Played ${card.name} to Counter â€” it's on the Chain.`))
     }
 
     case 'END_TURN': {
@@ -2228,7 +2321,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
 
     case 'ADD': {
       // "Add" puts resources straight into the pool. It resolves instantly and
-      // cannot be reacted to — no chain item, no priority window (T14).
+      // cannot be reacted to â€” no chain item, no priority window (T14).
       const s = clone(state)
       const p = s.players[action.player]
       if (!p.pool) p.pool = { energy: 0, power: {} }
@@ -2315,9 +2408,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
 /** Common guard: must be the active player's action phase. */
 function requireActiveAction(state: MatchState, player: PlayerId): string | null {
   if (state.chain.length > 0)
-    return 'The chain is open — pass priority or respond first.'
+    return 'The chain is open â€” pass priority or respond first.'
   if (state.phase === 'showdown')
-    return 'A showdown is open — pass or respond first.'
+    return 'A showdown is open â€” pass or respond first.'
   if (state.phase !== 'action') return 'Not the action phase.'
   if (state.activePlayer !== player) return 'Not your turn.'
   return null
@@ -2326,7 +2419,7 @@ function requireActiveAction(state: MatchState, player: PlayerId): string | null
 // ---------------------------------------------------------------------------
 // Read-only validity API (UI-facing). These mirror the guards inside the PLAY
 // handler so the interface can grey out unplayable cards, gate spells that have
-// no legal target, and highlight only legal targets — without mutating state.
+// no legal target, and highlight only legal targets â€” without mutating state.
 // The PLAY handler remains the canonical authority; these never diverge in a
 // way that lets an illegal play through (they are a superset of its rejections).
 // ---------------------------------------------------------------------------
@@ -2339,7 +2432,7 @@ function unitsInPlay(s: MatchState): EngineCard[] {
   ]
 }
 
-/** True if `iid` is still a unit in play — used to re-validate a spell's chosen
+/** True if `iid` is still a unit in play â€” used to re-validate a spell's chosen
  *  target at resolution (a target may have left play while on the chain). */
 export function isValidTarget(state: MatchState, iid: string): boolean {
   return unitsInPlay(state).some((u) => u.iid === iid)
@@ -2367,13 +2460,13 @@ export interface PlayCheck {
   /** True when the card is a spell that will require a target selection. */
   needsTarget?: boolean
   /** True when the spell targets but no target exists, yet it has a non-target
-   *  part (e.g. "draw 1") — it can be played to resolve only that part. */
+   *  part (e.g. "draw 1") â€” it can be played to resolve only that part. */
   targetOptional?: boolean
 }
 
 /** Can `player` play the card instance `iid` (from hand or Champion Zone) right
  *  now? Mirrors the PLAY handler: zone/type, timing (chain/showdown/action),
- *  affordability, and — for damage spells — that at least one legal target
+ *  affordability, and â€” for damage spells â€” that at least one legal target
  *  exists. Read-only. */
 export function canPlay(state: MatchState, player: PlayerId, iid: string): PlayCheck {
   const p = state.players[player]
@@ -2390,7 +2483,7 @@ export function canPlay(state: MatchState, player: PlayerId, iid: string): PlayC
   const inShowdown = state.phase === 'showdown' && !!state.showdown
   const chainOpen = state.chain.length > 0
 
-  // Timing — same branches the PLAY handler enforces.
+  // Timing â€” same branches the PLAY handler enforces.
   if (type === 'spell' && chainOpen) {
     if (state.priority !== player) return { valid: false, reason: 'Not your priority.' }
     if (!(kw.reaction || kw.action))

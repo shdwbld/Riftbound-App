@@ -671,6 +671,15 @@ export default function OnlinePage() {
           onCancel={() => setAmbushPick(null)}
         />
       )}
+      {match.pendingChoice && match.pendingChoice.player === seat && (
+        <ChoiceModal
+          title="✦ Battlefield"
+          subtitle={match.pendingChoice.prompt}
+          options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
+          onPick={(iid) => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: String(iid) })}
+          onCancel={() => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null })}
+        />
+      )}
       {deflectPay && (
         <PaymentModal
           player={match.players[seat]}

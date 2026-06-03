@@ -1274,6 +1274,49 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
   })
 })
 
+describe('battlefield choice prompts (Emperor\'s Dais / move-to-base)', () => {
+  it("Emperor's Dais: conquering offers return-a-unit, which plays a Sand Soldier", () => {
+    const dais = CARDS.find((c) => c.type === 'battlefield' && c.name === "Emperor's Dais")
+    const tokId = TOKEN_BY_NAME['sand soldier']
+    if (!dais || !tokId) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: dais.id, units: [], controller: null }
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // to pay the 1 Energy
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(r.state.pendingChoice?.kind).toBe('daisReturn')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.pendingChoice).toBeUndefined()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === u.iid)).toBe(true) // returned
+    expect(r.state.battlefields[0].units.some((x) => x.cardId === tokId)).toBe(true) // token played
+    expect(r.state.players[0].zones.runePool[0].exhausted).toBe(true) // paid 1
+  })
+
+  it('a move-to-base choice moves the chosen unit off its battlefield', () => {
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[1] = { cardId: battlefield.id, units: [u], controller: 0 }
+    s.pendingChoice = { player: 0, kind: 'moveAnyToBase', bfIndex: 1, prompt: 'x', options: [{ iid: u.iid, label: 'U' }] }
+    const r = reduce(s, { type: 'RESOLVE_CHOICE', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[1].units.length).toBe(0)
+    expect(r.state.players[0].zones.base.some((x) => x.iid === u.iid)).toBe(true)
+  })
+
+  it('declining a battlefield choice clears it with no effect', () => {
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[1] = { cardId: battlefield.id, units: [u], controller: 0 }
+    s.pendingChoice = { player: 0, kind: 'moveHereToBase', bfIndex: 1, prompt: 'x', options: [{ iid: u.iid, label: 'U' }] }
+    const r = reduce(s, { type: 'RESOLVE_CHOICE', player: 0, iid: null })
+    expect(r.error).toBeUndefined()
+    expect(r.state.pendingChoice).toBeUndefined()
+    expect(r.state.battlefields[1].units.length).toBe(1) // unchanged
+  })
+})
+
 describe('Predict / Repeat keywords', () => {
   it('parses [Predict] and [Repeat] keywords', async () => {
     const { parseKeywords, repeatCost } = await import('./keywords')

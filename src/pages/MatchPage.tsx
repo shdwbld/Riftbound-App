@@ -433,6 +433,15 @@ export default function MatchPage() {
           onCancel={() => setAmbushPick(null)}
         />
       )}
+      {match.pendingChoice && match.pendingChoice.player === controlling && (
+        <ChoiceModal
+          title="✦ Battlefield"
+          subtitle={match.pendingChoice.prompt}
+          options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
+          onPick={(iid) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: String(iid) })}
+          onCancel={() => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null })}
+        />
+      )}
       {deflectPay && (
         <PaymentModal
           player={match.players[controlling]}

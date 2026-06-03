@@ -169,6 +169,15 @@ export interface MatchState {
   /** A pending "ready a unit" choice: the player picks which exhausted unit(s)
    *  to ready, one at a time, until `count` reaches 0. */
   readyChoice?: { player: PlayerId; count: number }
+  /** A pending optional battlefield choice (Reaver's Row, Amateur Recital,
+   *  Emperor's Dais): the player picks a unit to act on, or declines. */
+  pendingChoice?: {
+    player: PlayerId
+    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn'
+    bfIndex: number
+    prompt: string
+    options: { iid: string; label: string }[]
+  }
   /** Pre-game setup state (turn-order roll, first-player choice, champion +
    *  battlefield selection). Present only while phase === 'setup'. */
   setup?: SetupState
@@ -238,6 +247,9 @@ export type Action =
   | { type: 'VISION_DECIDE'; player: PlayerId; recycle: boolean }
   /** Ready (un-exhaust) a chosen unit toward a pending "ready a unit" effect. */
   | { type: 'READY_UNIT'; player: PlayerId; iid: string }
+  /** Resolve a pending optional battlefield choice — `iid` is the chosen unit,
+   *  or null to decline the "you may" effect. */
+  | { type: 'RESOLVE_CHOICE'; player: PlayerId; iid: string | null }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number }
   | {
       type: 'PLAY_SPELL'
