@@ -62,7 +62,13 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
   // Ornn's Forge: non-token gear you play costs 1 less while you control it.
   if (card.type === 'gear' && card.supertype !== 'token' && controlsBF("ornn's forge")) energy -= 1
 
-  return { energy: Math.max(floor, Math.max(0, energy)), power: base.power }
+  energy = Math.max(floor, Math.max(0, energy))
+
+  // Cost INCREASES (applied after reductions, so they can't be undercut to 0 by
+  // a reduction): Vaults of Helia bumps non-token units this turn.
+  if (card.type === 'unit' && card.supertype !== 'token') energy += p.unitCostBump ?? 0
+
+  return { energy, power: base.power }
 }
 
 /** Auto-pay a card using its state-aware effective cost. */

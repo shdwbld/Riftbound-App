@@ -6,10 +6,10 @@ import type { Deck } from '../types/deck'
 import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
-import { accelerateCost, repeatCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
@@ -230,7 +230,7 @@ export default function MatchPage() {
     // Repeat is an OPTIONAL extra cost on spells — confirm to pay it so the
     // spell's effect resolves a second time.
     if (type === 'PLAY_SPELL') {
-      const rc = repeatCost(card)
+      const rc = repeatCostFor(match, controlling, card)
       if (rc) {
         repeat = window.confirm(
           `${card.name} has Repeat. Pay ${costLabel(rc)} extra to resolve its effect again?\n\nOK = pay & repeat · Cancel = resolve once.`,

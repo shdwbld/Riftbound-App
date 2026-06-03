@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, beginTurn, canPlay } from './engine'
+import { reduce, beginTurn, canPlay, repeatCostFor } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME } from './setup'
 import type { Deck } from '../types/deck'
@@ -1271,6 +1271,55 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
     expect(effectiveCostOf(s, 0, CARD_INDEX[gearId]).energy).toBe(2)
     s.battlefields[0] = { cardId: forge.id, units: [], controller: 0 }
     expect(effectiveCostOf(s, 0, CARD_INDEX[gearId]).energy).toBe(1)
+  })
+})
+
+describe('Phase A — cost increases + Repeat grant/discount', () => {
+  const bf = (name: string) => CARDS.find((c) => c.type === 'battlefield' && c.name === name)
+
+  it('Vaults of Helia: a held player\'s non-token units cost 1 more', () => {
+    const id = injectCard('vh-unit', 'A unit.', { energy: 3, power: {} })
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(3)
+    s.players[0].unitCostBump = 1
+    expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(4)
+  })
+
+  it('Vaults of Helia: holding it sets the cost bump in beginTurn', () => {
+    const v = bf('Vaults of Helia')
+    if (!v) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: v.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const r = beginTurn(s)
+    expect(r.players[0].unitCostBump).toBe(1)
+  })
+
+  it('Marai Spire: a friendly Repeat costs 1 Energy less', () => {
+    const m = bf('Marai Spire')
+    if (!m) return
+    const spellId = injectCard('ms-rep', 'Draw 1. [Repeat] :rb_energy_2: (You may pay the additional cost.)', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    expect(repeatCostFor(s, 0, CARD_INDEX[spellId])?.energy).toBe(2)
+    s.battlefields[0] = { cardId: m.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    expect(repeatCostFor(s, 0, CARD_INDEX[spellId])?.energy).toBe(1)
+  })
+
+  it('The Academy: grants Repeat equal to base cost to a non-Repeat spell', () => {
+    const spellId = injectCard('ac-spell', 'Draw 1.', { type: 'spell', energy: 2, power: {} })
+    const s = baseState()
+    expect(repeatCostFor(s, 0, CARD_INDEX[spellId])).toBeNull() // no grant, no keyword
+    s.players[0].grantRepeatNextSpell = true
+    expect(repeatCostFor(s, 0, CARD_INDEX[spellId])?.energy).toBe(2) // base cost
+  })
+
+  it('The Academy: holding it grants the next-spell Repeat flag in beginTurn', () => {
+    const a = bf('The Academy')
+    if (!a) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: a.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    expect(beginTurn(s).players[0].grantRepeatNextSpell).toBe(true)
   })
 })
 

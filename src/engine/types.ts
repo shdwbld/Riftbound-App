@@ -53,6 +53,11 @@ export interface PlayerState {
   tokenPile: string[]
   /** Main-deck cards this player has played this turn (drives LEGION). */
   cardsPlayedThisTurn?: number
+  /** Extra Energy non-token units cost to play this turn (Vaults of Helia). */
+  unitCostBump?: number
+  /** Set when a battlefield (The Academy) grants the next spell [Repeat] equal
+   *  to its base cost; consumed by the next spell played. */
+  grantRepeatNextSpell?: boolean
   points: number
   /** Experience earned (via Hunt on conquer/hold); fuels Level abilities. */
   xp: number

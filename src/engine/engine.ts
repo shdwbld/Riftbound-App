@@ -17,7 +17,7 @@ import {
 } from './types'
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
 import { parseKeywords, accelerateCost, repeatCost, levelBonus } from './keywords'
-import { addCost, effectiveCostOf, autoPayEff } from './autopay'
+import { addCost, costOf, effectiveCostOf, autoPayEff } from './autopay'
 import { bfScript, bfScriptAt, type BfApi } from './battlefieldScripts'
 
 /** How many turns the given player has taken (incl. the current one). */
@@ -622,6 +622,23 @@ function bfBaseNameAt(s: MatchState, i: number): string {
   return (getCard(s.battlefields[i]?.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
 }
 
+/** Whether `player` controls a battlefield with the given base name. */
+function controlsBFNamed(s: MatchState, player: PlayerId, name: string): boolean {
+  return s.battlefields.some((b, i) => b.controller === player && bfBaseNameAt(s, i) === name)
+}
+
+/** The effective [Repeat] cost when `player` plays `card`: the printed keyword
+ *  cost, or — if The Academy granted Repeat this turn — the spell's base cost;
+ *  then reduced by 1 Energy (min 0) while the player controls Marai Spire.
+ *  Null when the spell has no Repeat (keyword or granted). */
+export function repeatCostFor(s: MatchState, player: PlayerId, card: Card): ResolvedCost | null {
+  let cost: ResolvedCost | null = repeatCost(card)
+  if (!cost && s.players[player]?.grantRepeatNextSpell && card.type === 'spell') cost = costOf(card)
+  if (!cost) return null
+  if (controlsBFNamed(s, player, 'Marai Spire')) cost = { energy: Math.max(0, cost.energy - 1), power: cost.power }
+  return cost
+}
+
 /** Whether a player can pay N Energy (pool first, then ready runes). */
 function canPayEnergy(s: MatchState, player: PlayerId, n: number): boolean {
   const p = s.players[player]
@@ -650,6 +667,45 @@ function sendUnitToBase(s: MatchState, iid: string): boolean {
 function offerChoice(s: MatchState, spec: NonNullable<MatchState['pendingChoice']>): void {
   if (s.pendingChoice || spec.options.length === 0) return
   s.pendingChoice = spec
+}
+
+/** Fire "when a unit is played here" battlefield effects for a unit that just
+ *  entered a battlefield (only happens via Ambush). */
+function bfUnitPlayedHere(s: MatchState, player: PlayerId, bfIndex: number, iid: string): void {
+  const name = bfBaseNameAt(s, bfIndex)
+  if (name === 'Valley of Idols') {
+    // "you may pay 1 to [Buff] it" — pure benefit, auto-pay when affordable.
+    const u = s.battlefields[bfIndex].units.find((x) => x.iid === iid)
+    if (u && (u.buffs ?? 0) < 1 && makeBfApi(s).payEnergy(player, 1)) {
+      u.buffs = (u.buffs ?? 0) + 1
+      s.log.push({ turn: s.turn, player, text: `Valley of Idols: paid 1 to Buff ${getCard(u.cardId)?.name}.` })
+    }
+  } else if (name === 'Star Spring' && getCard(s.battlefields[bfIndex].units.find((x) => x.iid === iid)?.cardId ?? '')?.supertype !== 'token') {
+    // "you may move another unit you control here to its base."
+    const opts = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === player && u.iid !== iid).map((u) => unitOpt(u))
+    offerChoice(s, { player, kind: 'moveAnyToBase', bfIndex, prompt: 'Star Spring — move another unit you control to its base?', options: opts })
+  }
+}
+
+/** Return a unit at a battlefield to its owner's hand, firing Ripper's Bay if it
+ *  was there. Returns the removed instance (already in hand), or null. */
+function returnUnitToHand(s: MatchState, bfIndex: number, iid: string): EngineCard | null {
+  const bf = s.battlefields[bfIndex]
+  const idx = bf.units.findIndex((u) => u.iid === iid)
+  if (idx < 0) return null
+  const rippersBay = bfBaseNameAt(s, bfIndex) === "Ripper's Bay"
+  const [u] = bf.units.splice(idx, 1)
+  s.players[u.owner].zones.hand.push({ iid: u.iid, cardId: u.cardId, owner: u.owner, exhausted: false, damage: 0, attached: [] })
+  recomputeControllers(s)
+  if (rippersBay && makeBfApi(s).payEnergy(u.owner, 1)) {
+    // "may pay 1 to channel 1 rune exhausted" — auto-pay when affordable.
+    const r = s.players[u.owner].zones.runeDeck.shift()
+    if (r) {
+      s.players[u.owner].zones.runePool.push({ ...r, exhausted: true })
+      s.log.push({ turn: s.turn, player: u.owner, text: `Ripper's Bay: paid 1 to channel a rune (exhausted).` })
+    }
+  }
+  return u
 }
 
 const unitOpt = (u: EngineCard) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? u.iid })
@@ -818,6 +874,8 @@ export function beginTurn(state: MatchState): MatchState {
   // carry between turns â€” emptied at end of the Draw step / end of turn).
   p.cardsPlayedThisTurn = 0
   p.pool = { energy: 0, power: {} }
+  p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
+  p.grantRepeatNextSpell = false
 
   // Awaken: ready everything the active player controls.
   if (p.legend) p.legend.exhausted = false
@@ -939,6 +997,18 @@ export function beginTurn(state: MatchState): MatchState {
     if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'Amateur Recital') {
       const opts = s.battlefields.flatMap((b) => b.units).map((u) => unitOpt(u))
       offerChoice(s, { player: ap, kind: 'moveAnyToBase', bfIndex: s.battlefields.indexOf(bf), prompt: 'Amateur Recital â€” move a unit at a battlefield to its base?', options: opts })
+      continue
+    }
+    // Vaults of Helia: your non-token units cost 1 more to play this turn.
+    if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'Vaults of Helia') {
+      p.unitCostBump = (p.unitCostBump ?? 0) + 1
+      s = log(s, ap, `Vaults of Helia (hold): your units cost 1 more this turn.`)
+      continue
+    }
+    // The Academy: give your next spell this turn [Repeat] equal to its base cost.
+    if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'The Academy') {
+      p.grantRepeatNextSpell = true
+      s = log(s, ap, `The Academy (hold): your next spell gains [Repeat] this turn.`)
       continue
     }
     const passive = battlefieldPassive(bf.cardId)
@@ -1893,10 +1963,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (surcharge > 0) effCost = addCost(effCost, { energy: surcharge, power: {} })
       }
       // Repeat: an OPTIONAL additional cost on a spell to resolve its effect
-      // again. When the player opts in, fold it into the cost to be paid.
-      const repeatChosen =
-        action.type === 'PLAY_SPELL' && !!action.repeat && !!repeatCost(card)
-      if (repeatChosen) effCost = addCost(effCost, repeatCost(card)!)
+      // again. When the player opts in, fold it into the cost to be paid. The
+      // cost may come from the keyword or from The Academy's grant, and is
+      // discounted by Marai Spire (all handled by repeatCostFor).
+      const repeatAvail = action.type === 'PLAY_SPELL' ? repeatCostFor(s, action.player, card) : null
+      const repeatChosen = action.type === 'PLAY_SPELL' && !!action.repeat && !!repeatAvail
+      if (repeatChosen) effCost = addCost(effCost, repeatAvail!)
       const err = applyPayment(p, effCost, action.payment)
       if (err) return fail(state, err)
 
@@ -1906,6 +1978,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // LEGION is "on" if you already played another Main Deck card this turn.
       const legionActive = (p.cardsPlayedThisTurn ?? 0) >= 1
       p.cardsPlayedThisTurn = (p.cardsPlayedThisTurn ?? 0) + 1
+      // The Academy grant applies to one spell, consumed when that spell is played.
+      if (card.type === 'spell') p.grantRepeatNextSpell = false
 
       if (action.type === 'PLAY_UNIT') {
         // Units enter exhausted unless the player paid Accelerate, or an active
@@ -1917,6 +1991,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (ambushBf != null) {
           s.battlefields[ambushBf].units.push({ ...ci, exhausted: false, enteredTurn: s.turn })
           recomputeControllers(s)
+          bfUnitPlayedHere(s, action.player, ambushBf, ci.iid) // Valley of Idols / Star Spring
         } else {
           p.zones.base.push({ ...ci, exhausted: !entersReady, enteredTurn: s.turn })
         }
@@ -2198,10 +2273,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // Sand Soldier token at this battlefield.
           if (!makeBfApi(s).payEnergy(action.player, 1)) return fail(state, "Can't pay for Emperor's Dais.")
           const bf = s.battlefields[pc.bfIndex]
-          const idx = bf.units.findIndex((u) => u.iid === action.iid)
-          if (idx < 0) return fail(state, 'That unit is no longer here.')
-          const [u] = bf.units.splice(idx, 1)
-          s.players[u.owner].zones.hand.push({ iid: u.iid, cardId: u.cardId, owner: u.owner, exhausted: false, damage: 0, attached: [] })
+          if (!returnUnitToHand(s, pc.bfIndex, action.iid)) return fail(state, 'That unit is no longer here.')
           const tokId = TOKEN_BY_NAME['sand soldier']
           if (tokId) bf.units.push({ iid: `${action.player}:tok:${tokId}#${(tokenCounter++).toString(36)}`, cardId: tokId, owner: action.player, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
           recomputeControllers(s)

@@ -14,10 +14,10 @@ import {
   type GameEvent,
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
-import { accelerateCost, repeatCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import PaymentModal from '../components/PaymentModal'
 import ChoiceModal from '../components/ChoiceModal'
@@ -476,7 +476,7 @@ export default function OnlinePage() {
     }
     // Repeat is an OPTIONAL extra cost on spells — confirm to resolve twice.
     if (type === 'PLAY_SPELL') {
-      const rc = repeatCost(card)
+      const rc = repeatCostFor(match, seat, card)
       if (rc) {
         repeat = window.confirm(
           `${card.name} has Repeat. Pay ${costLabel(rc)} extra to resolve its effect again?\n\nOK = pay & repeat · Cancel = resolve once.`,
