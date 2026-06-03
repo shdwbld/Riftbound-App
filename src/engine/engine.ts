@@ -3234,6 +3234,49 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       return ok(s1)
     }
 
+    case 'SET_SANDBOX': {
+      const s = clone(state)
+      s.sandbox = action.on
+      return ok(log(s, action.player, `Manual overrides ${action.on ? 'enabled' : 'disabled'}.`))
+    }
+
+    case 'OVERRIDE': {
+      if (!state.sandbox) return fail(state, 'Manual overrides are off.')
+      let s = clone(state)
+      const u = action.iid ? findUnitAnywhere(s, action.iid) : undefined
+      const nm = u ? getCard(u.cardId)?.name ?? 'a unit' : ''
+      switch (action.op) {
+        case 'stun': if (u) u.stunned = true; break
+        case 'unstun': if (u) u.stunned = false; break
+        case 'ready': if (u) u.exhausted = false; break
+        case 'exhaust': if (u) u.exhausted = true; break
+        case 'buff': if (u) u.buffs = (u.buffs ?? 0) + 1; break
+        case 'unbuff': if (u) u.buffs = Math.max(0, (u.buffs ?? 0) - 1); break
+        case 'mightUp': if (u) u.tempMight = (u.tempMight ?? 0) + 1; break
+        case 'mightDown': if (u) u.tempMight = (u.tempMight ?? 0) - 1; break
+        case 'kill': if (action.iid) s = fireDeaths(s, killTarget(s, action.iid)); break
+        case 'toBase': if (action.iid) sendUnitToBase(s, action.iid); break
+        case 'banish':
+        case 'trash': {
+          if (!action.iid) break
+          for (const bf of s.battlefields) {
+            const i = bf.units.findIndex((x) => x.iid === action.iid)
+            if (i >= 0) { const [x] = bf.units.splice(i, 1); (action.op === 'banish' ? s.players[x.owner].banished : s.players[x.owner].zones.trash).push(x); break }
+          }
+          for (const pl of s.players)
+            for (const z of Object.keys(pl.zones) as ZoneId[]) {
+              const i = pl.zones[z].findIndex((x) => x.iid === action.iid)
+              if (i >= 0) { const [x] = pl.zones[z].splice(i, 1); (action.op === 'banish' ? pl.banished : pl.zones.trash).push(x); break }
+            }
+          break
+        }
+        case 'draw': drawN(s.players[action.player], 1); break
+        case 'channel': channelN(s.players[action.player], 1); break
+      }
+      recomputeControllers(s)
+      return ok(log(s, action.player, `Override: ${action.op}${nm ? ` ${nm}` : ''}.`))
+    }
+
     case 'ASSIGN_DAMAGE': {
       if (state.phase !== 'showdown' || !state.showdown?.assign)
         return fail(state, 'No damage to assign right now.')

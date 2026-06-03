@@ -6,6 +6,7 @@ import {
   type EngineCard,
   type PlayerState,
   type Action,
+  type OverrideOp,
   type GameEvent,
 } from '../engine/types'
 import { canPlay, combatMight, matchUsesXp, grantedAbilityFor, canActivateUnit } from '../engine/engine'
@@ -268,6 +269,27 @@ export default function MatchBoard({
           items.push({ label: '🙈 Hide', action: { type: 'HIDE', player: perspective, iid: ci.iid, toBattlefield: bfIdx, runeIid: rune.iid } })
       }
       items.push({ label: '🗑 Trash', action: { type: 'TRASH_CARD', player: perspective, iid: ci.iid } })
+    }
+    // Manual overrides (shared sandbox): full god-mode ops on ANY card for EITHER
+    // player, to fix or force a board state the engine doesn't model.
+    if (match.sandbox) {
+      const owner = ci.owner
+      const ov = (op: OverrideOp): Action => ({ type: 'OVERRIDE', player: owner, op, iid: ci.iid })
+      if (card?.type === 'unit') {
+        const stunned = (ci as { stunned?: boolean }).stunned
+        items.push({ label: stunned ? '🛠 Un-stun' : '🛠 Stun', action: ov(stunned ? 'unstun' : 'stun') })
+        items.push({ label: ci.exhausted ? '🛠 Ready' : '🛠 Exhaust', action: ov(ci.exhausted ? 'ready' : 'exhaust') })
+        items.push({ label: '🛠 Might +1', action: ov('mightUp') })
+        items.push({ label: '🛠 Might −1', action: ov('mightDown') })
+        items.push({ label: '🛠 Buff +1 (perm)', action: ov('buff') })
+        items.push({ label: '🛠 Buff −1 (perm)', action: ov('unbuff') })
+        items.push({ label: '🛠 To base', action: ov('toBase') })
+        items.push({ label: '🛠 Kill', action: ov('kill') })
+      }
+      items.push({ label: '🛠 Banish', action: ov('banish') })
+      items.push({ label: '🛠 Trash', action: ov('trash') })
+      items.push({ label: `🛠 ${getCard(ci.cardId)?.name ?? 'Owner'} draws 1`, action: { type: 'OVERRIDE', player: owner, op: 'draw' } })
+      items.push({ label: '🛠 Owner channels 1', action: { type: 'OVERRIDE', player: owner, op: 'channel' } })
     }
     if (items.length) setMenu({ x: e.clientX, y: e.clientY, items })
   }

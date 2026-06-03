@@ -366,6 +366,7 @@ export default function MatchPage() {
         onExit={() => setMatch(null)}
         manualPay={manualPay}
         onToggleManualPay={() => setManualPay((v) => !v)}
+        onToggleSandbox={() => act({ type: 'SET_SANDBOX', player: controlling, on: !match.sandbox })}
       />
       <MatchBoard
         match={match}
@@ -503,12 +504,14 @@ function Toolbar({
   onExit,
   manualPay,
   onToggleManualPay,
+  onToggleSandbox,
 }: {
   match: MatchState
   controlling: PlayerId
   onExit: () => void
   manualPay: boolean
   onToggleManualPay: () => void
+  onToggleSandbox?: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#15151f] p-2 text-sm">
@@ -527,10 +530,21 @@ function Toolbar({
           </span>
         ))}
       </div>
+      {onToggleSandbox && (
+        <button
+          onClick={onToggleSandbox}
+          title="Manual overrides (shared): when ON, either player can right-click ANY card to stun / ready / kill / ±Might / move it, to fix or override the engine."
+          className={`ml-auto rounded px-2 py-1 text-xs font-semibold ${
+            match.sandbox ? 'bg-fuchsia-500/40 text-fuchsia-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
+          }`}
+        >
+          {match.sandbox ? '🛠 Overrides: ON' : '🛠 Overrides'}
+        </button>
+      )}
       <button
         onClick={onToggleManualPay}
         title="ON: every rune-spending play opens the rune picker. OFF: auto-pay silently."
-        className={`ml-auto rounded px-2 py-1 text-xs font-semibold ${
+        className={`${onToggleSandbox ? '' : 'ml-auto '}rounded px-2 py-1 text-xs font-semibold ${
           manualPay ? 'bg-amber-500/30 text-amber-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
         }`}
       >

@@ -593,9 +593,20 @@ export default function OnlinePage() {
         roomCode={roomCode}
         onLeave={leave}
         extra={
-          <span className={`rounded px-2 py-1 text-xs ${myTurn ? 'bg-emerald-500/20 text-emerald-200' : 'bg-white/5 text-white/50'}`}>
-            {myTurn ? 'Your move' : `${match.players[controlling].name}'s move`}
-          </span>
+          <>
+            <button
+              onClick={() => dispatch({ type: 'SET_SANDBOX', player: seat, on: !match.sandbox })}
+              title="Manual overrides (shared): when ON, either player can right-click ANY card to stun / ready / kill / ±Might / move it, to fix or override the engine."
+              className={`rounded px-2 py-1 text-xs font-semibold ${
+                match.sandbox ? 'bg-fuchsia-500/40 text-fuchsia-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
+              }`}
+            >
+              {match.sandbox ? '🛠 Overrides: ON' : '🛠 Overrides'}
+            </button>
+            <span className={`rounded px-2 py-1 text-xs ${myTurn ? 'bg-emerald-500/20 text-emerald-200' : 'bg-white/5 text-white/50'}`}>
+              {myTurn ? 'Your move' : `${match.players[controlling].name}'s move`}
+            </span>
+          </>
         }
       />
       {amOut && (

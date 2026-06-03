@@ -14,6 +14,13 @@ import type { Domain } from '../types/cards'
 /** Seat index, 0-based. 2 players for 1v1; up to 4 for multiplayer. */
 export type PlayerId = number
 
+/** A manual-override operation (sandbox mode). Unit ops act on `iid`; resource
+ *  ops (draw / channel) act on the acting player. */
+export type OverrideOp =
+  | 'stun' | 'unstun' | 'ready' | 'exhaust' | 'buff' | 'unbuff'
+  | 'mightUp' | 'mightDown' | 'kill' | 'banish' | 'trash' | 'toBase'
+  | 'draw' | 'channel'
+
 export interface EngineCard {
   iid: string
   cardId: string
@@ -211,6 +218,10 @@ export interface MatchState {
   /** Pre-game setup state (turn-order roll, first-player choice, champion +
    *  battlefield selection). Present only while phase === 'setup'. */
   setup?: SetupState
+  /** Manual-override / sandbox mode: when on, EITHER player may apply manual
+   *  OVERRIDE ops (stun / ready / kill / ±Might / move / …) to ANY card at any
+   *  time, to fix or override the engine. Shared (synced) game state. */
+  sandbox?: boolean
 }
 
 /** Interactive pre-game setup (Core Rules §111–120): roll for turn order, the
@@ -286,6 +297,10 @@ export type Action =
   /** Activate a unit's own printed activated ability ("cost: effect" — Arena
    *  Kingpin, Xerath, Vi - Hotheaded, …). `targets` for effects that need one. */
   | { type: 'ACTIVATE_UNIT'; player: PlayerId; iid: string; targets?: string[] }
+  /** Toggle shared manual-override (sandbox) mode for the whole match. */
+  | { type: 'SET_SANDBOX'; player: PlayerId; on: boolean }
+  /** A manual override op applied in sandbox mode (either player, any card). */
+  | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number }
   | {
       type: 'PLAY_SPELL'

@@ -2308,3 +2308,48 @@ describe('Lux — spell-cost play triggers gate on cost', () => {
     expect(s2.players[0].zones.hand.length).toBe(handBeforeBig + 1)
   })
 })
+
+describe('sandbox manual overrides', () => {
+  it('rejects OVERRIDE while sandbox is off, allows it once enabled', () => {
+    let s = baseState()
+    const u = mk(furyUnit.id, 1)
+    s.battlefields[0].units.push(u)
+    // Off by default.
+    expect(reduce(s, { type: 'OVERRIDE', player: 0, op: 'stun', iid: u.iid }).error).toBeTruthy()
+    s = reduce(s, { type: 'SET_SANDBOX', player: 0, on: true }).state
+    expect(s.sandbox).toBe(true)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'stun', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    expect((r.state.battlefields[0].units[0] as { stunned?: boolean }).stunned).toBe(true)
+  })
+
+  it('applies unit ops on EITHER player\'s card (kill, might, ready)', () => {
+    let s = baseState()
+    s.sandbox = true
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0].units.push(enemy)
+    // ±Might via tempMight.
+    s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'mightUp', iid: enemy.iid }).state
+    expect((s.battlefields[0].units[0] as { tempMight?: number }).tempMight).toBe(1)
+    // Ready an exhausted enemy unit.
+    s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'ready', iid: enemy.iid }).state
+    expect(s.battlefields[0].units[0].exhausted).toBe(false)
+    // Kill removes it from the battlefield.
+    s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: enemy.iid }).state
+    expect(s.battlefields[0].units.find((x) => x.iid === enemy.iid)).toBeUndefined()
+  })
+
+  it('banishes / draws for the targeted card owner', () => {
+    let s = baseState()
+    s.sandbox = true
+    const u = mk(furyUnit.id, 1)
+    s.battlefields[0].units.push(u)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    const handBefore = s.players[1].zones.hand.length
+    s = reduce(s, { type: 'OVERRIDE', player: 1, op: 'draw' }).state
+    expect(s.players[1].zones.hand.length).toBe(handBefore + 1)
+    s = reduce(s, { type: 'OVERRIDE', player: 1, op: 'banish', iid: u.iid }).state
+    expect(s.battlefields[0].units.length).toBe(0)
+    expect(s.players[1].banished.some((x) => x.iid === u.iid)).toBe(true)
+  })
+})
