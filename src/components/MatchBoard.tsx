@@ -8,7 +8,7 @@ import {
   type Action,
   type GameEvent,
 } from '../engine/types'
-import { canPlay, combatMight, matchUsesXp } from '../engine/engine'
+import { canPlay, combatMight, matchUsesXp, grantedAbilityFor } from '../engine/engine'
 import { parseKeywords } from '../engine/keywords'
 import { RULES } from '../engine/setup'
 import MechanicTooltip from './MechanicTooltip'
@@ -231,6 +231,9 @@ export default function MatchBoard({
       items.push({ label: '⊗ Banish', action: { type: 'BANISH', player: perspective, iid: ci.iid } })
     }
     if (ci.owner === perspective) {
+      // Battlefield-granted activated ability (Gardens of Becoming → gain XP).
+      const ga = grantedAbilityFor(match, perspective, ci.iid)
+      if (ga) items.push({ label: `⚡ ${ga.label}`, action: { type: 'ACTIVATE_ABILITY', player: perspective, iid: ci.iid } })
       if (card?.type === 'rune' && zone === 'runePool')
         items.push({ label: '♺ Recycle rune', action: { type: 'RECYCLE_RUNE', player: perspective, iid: ci.iid } })
       if (card?.type === 'unit')
@@ -525,6 +528,12 @@ export default function MatchBoard({
         canPlayIid={(iid) => canPlay(match, perspective, iid)}
         fx={fx}
         usesXp={usesXp}
+        activateLegendLabel={me.legend ? grantedAbilityFor(match, perspective, me.legend.iid)?.label : undefined}
+        onActivateLegend={
+          onCardAction && me.legend && grantedAbilityFor(match, perspective, me.legend.iid)
+            ? () => onCardAction({ type: 'ACTIVATE_ABILITY', player: perspective, iid: me.legend!.iid })
+            : undefined
+        }
       />
 
       {/* Log */}
@@ -869,6 +878,8 @@ function PlayerMat({
   canPlayIid,
   fx,
   usesXp,
+  onActivateLegend,
+  activateLegendLabel,
 }: {
   me: PlayerState
   target: number
@@ -887,6 +898,9 @@ function PlayerMat({
   canPlayIid: (iid: string) => { valid: boolean; reason?: string }
   fx: Fx
   usesXp: boolean
+  /** Forge of the Fluft: activate the legend's granted ability (or undefined). */
+  onActivateLegend?: () => void
+  activateLegendLabel?: string
 }) {
   const domains = playerDomains(me)
   const readyRunes = me.zones.runePool.filter((r) => !r.exhausted).length
@@ -1012,6 +1026,15 @@ function PlayerMat({
                   {me.legend.exhausted ? '○ ability used' : '● ability ready'}
                 </span>
               </MechanicTooltip>
+              {/* Battlefield-granted legend ability (Forge of the Fluft). */}
+              {onActivateLegend && activateLegendLabel && (
+                <button
+                  onClick={onActivateLegend}
+                  className="rounded bg-amber-500/30 px-1 text-[8px] font-bold text-amber-100 hover:bg-amber-500/50"
+                >
+                  ⚡ {activateLegendLabel}
+                </button>
+              )}
             </>
           ) : (
             <Empty />

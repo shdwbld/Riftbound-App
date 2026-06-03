@@ -699,6 +699,43 @@ function offerChoice(s: MatchState, spec: NonNullable<MatchState['pendingChoice'
   s.pendingChoice = spec
 }
 
+/** A gear instance that is an Equipment (has [Equip]) sitting unattached in a
+ *  player's base — a valid Forge of the Fluft attach source. */
+function isEquipment(c: EngineCard): boolean {
+  const d = getCard(c.cardId)
+  return d?.type === 'gear' && parseKeywords(d).equip
+}
+
+/** Units a player controls (base + battlefields). */
+function unitsControlledBy(s: MatchState, player: PlayerId): EngineCard[] {
+  return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+    (u) => u.owner === player && getCard(u.cardId)?.type === 'unit',
+  )
+}
+
+export type GrantedAbility = { kind: 'gainXP' | 'forgeAttach'; label: string }
+
+/** The battlefield-granted activated ability available on a unit/legend right
+ *  now, or null. Pure function of state — the UI uses it to show an Activate
+ *  affordance; the reducer uses it to validate ACTIVATE_ABILITY. */
+export function grantedAbilityFor(s: MatchState, player: PlayerId, iid: string): GrantedAbility | null {
+  const p = s.players[player]
+  if (!p) return null
+  // Forge of the Fluft: your legend gains ":exhaust: attach an Equipment you
+  // control to a unit you control."
+  if (p.legend && p.legend.iid === iid && !p.legend.exhausted && controlsBFNamed(s, player, 'Forge of the Fluft')) {
+    if (p.zones.base.some(isEquipment) && unitsControlledBy(s, player).length > 0)
+      return { kind: 'forgeAttach', label: 'Attach an Equipment to a unit' }
+  }
+  // Gardens of Becoming: a unit here (yours, unexhausted) gains ":exhaust: gain 1 XP."
+  for (let i = 0; i < s.battlefields.length; i++) {
+    if (bfBaseNameAt(s, i) !== 'Gardens of Becoming') continue
+    if (s.battlefields[i].units.some((x) => x.iid === iid && x.owner === player && !x.exhausted))
+      return { kind: 'gainXP', label: 'Gain 1 XP' }
+  }
+  return null
+}
+
 /** LeBlanc - Deceiver: on conquer/hold, offer to discard 1 + exhaust LeBlanc to
  *  play a Reflection copy of a unit at the battlefield (Temporary). */
 function offerLeblanc(s: MatchState, player: PlayerId, bfIndex: number): void {
@@ -2403,8 +2440,43 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           recomputeControllers(s)
           return ok(log(s, action.player, `Emperor's Dais â€” returned ${name} to hand and played a Sand Soldier.`))
         }
+        case 'forgePickEquip': {
+          // Stored the chosen Equipment; now prompt for the target unit.
+          const units = unitsControlledBy(s, action.player).map((u) => unitOpt(u))
+          s.pendingChoice = { player: action.player, kind: 'forgePickTarget', bfIndex: -1, prompt: 'Forge of the Fluft — choose a unit to attach it to.', options: units, payload: action.iid }
+          return ok(s)
+        }
+        case 'forgePickTarget': {
+          // Attach the carried Equipment to the chosen unit.
+          const equipIid = pc.payload
+          const target = findUnitAnywhere(s, action.iid)
+          if (!equipIid || !target || target.owner !== action.player) return fail(state, 'Invalid attach target.')
+          const gi = s.players[action.player].zones.base.findIndex((c) => c.iid === equipIid)
+          if (gi < 0) return fail(state, 'That Equipment is no longer available.')
+          const [gear] = s.players[action.player].zones.base.splice(gi, 1)
+          target.attached = [...target.attached, `${gear.cardId}|${gear.iid}`]
+          return ok(log(s, action.player, `Forge of the Fluft: attached ${getCard(gear.cardId)?.name} to ${getCard(target.cardId)?.name}.`))
+        }
       }
       return ok(s)
+    }
+
+    case 'ACTIVATE_ABILITY': {
+      const ga = grantedAbilityFor(state, action.player, action.iid)
+      if (!ga) return fail(state, 'No activated ability available there.')
+      const s = clone(state)
+      const p = s.players[action.player]
+      if (ga.kind === 'gainXP') {
+        const u = findUnitAnywhere(s, action.iid)!
+        u.exhausted = true
+        p.xp += 1
+        return ok(log(s, action.player, `${getCard(u.cardId)?.name}: exhausted to gain 1 XP (now ${p.xp}).`))
+      }
+      // forgeAttach: exhaust the legend, then prompt to pick an Equipment.
+      p.legend!.exhausted = true
+      const equips = p.zones.base.filter(isEquipment).map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid }))
+      offerChoice(s, { player: action.player, kind: 'forgePickEquip', bfIndex: -1, prompt: 'Forge of the Fluft — choose an Equipment to attach.', options: equips })
+      return ok(log(s, action.player, `Forge of the Fluft: exhausted your legend to attach an Equipment.`))
     }
 
     case 'ASSIGN_DAMAGE': {

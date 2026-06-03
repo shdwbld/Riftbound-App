@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, beginTurn, canPlay, repeatCostFor } from './engine'
+import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME } from './setup'
 import type { Deck } from '../types/deck'
@@ -1271,6 +1271,48 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
     expect(effectiveCostOf(s, 0, CARD_INDEX[gearId]).energy).toBe(2)
     s.battlefields[0] = { cardId: forge.id, units: [], controller: 0 }
     expect(effectiveCostOf(s, 0, CARD_INDEX[gearId]).energy).toBe(1)
+  })
+})
+
+describe('Granted activated abilities (Gardens of Becoming / Forge of the Fluft)', () => {
+  const bfByName = (name: string) => CARDS.find((c) => c.type === 'battlefield' && c.name === name)
+
+  it('Gardens of Becoming: a unit here can exhaust to gain 1 XP', () => {
+    const g = bfByName('Gardens of Becoming')
+    if (!g) return
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: g.id, units: [u], controller: 0 }
+    expect(grantedAbilityFor(s, 0, u.iid)?.kind).toBe('gainXP')
+    const r = reduce(s, { type: 'ACTIVATE_ABILITY', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].xp).toBe(1)
+    expect(r.state.battlefields[0].units.find((x) => x.iid === u.iid)?.exhausted).toBe(true)
+    // No longer activatable once exhausted.
+    expect(grantedAbilityFor(r.state, 0, u.iid)).toBeNull()
+  })
+
+  it('Forge of the Fluft: legend exhausts to attach an Equipment via a 2-step prompt', () => {
+    const f = bfByName('Forge of the Fluft')
+    const legend = CARDS.find((c) => c.type === 'legend')
+    if (!f || !legend) return
+    const equipId = injectCard('fg-equip', '[Equip] (Gear that attaches to a unit.) +1 :rb_might:', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].legend = mk(legend.id, 0)
+    s.battlefields[0] = { cardId: f.id, units: [mk(furyUnit.id, 0)], controller: 0 } // control Forge
+    const equip = mk(equipId, 0)
+    const target = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(equip, target)
+    expect(grantedAbilityFor(s, 0, s.players[0].legend.iid)?.kind).toBe('forgeAttach')
+    let r = reduce(s, { type: 'ACTIVATE_ABILITY', player: 0, iid: s.players[0].legend!.iid })
+    expect(r.state.players[0].legend?.exhausted).toBe(true)
+    expect(r.state.pendingChoice?.kind).toBe('forgePickEquip')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: equip.iid })
+    expect(r.state.pendingChoice?.kind).toBe('forgePickTarget')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: target.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === target.iid)?.attached.some((a) => a.startsWith(equipId))).toBe(true)
+    expect(r.state.players[0].zones.base.some((c) => c.iid === equip.iid)).toBe(false) // gear moved out of base
   })
 })
 

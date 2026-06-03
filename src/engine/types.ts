@@ -184,10 +184,12 @@ export interface MatchState {
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {
     player: PlayerId
-    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy'
+    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]
+    /** Carries state between multi-step choices (e.g. the Forge equipment iid). */
+    payload?: string
   }
   /** Pre-game setup state (turn-order roll, first-player choice, champion +
    *  battlefield selection). Present only while phase === 'setup'. */
@@ -261,6 +263,9 @@ export type Action =
   /** Resolve a pending optional battlefield choice — `iid` is the chosen unit,
    *  or null to decline the "you may" effect. */
   | { type: 'RESOLVE_CHOICE'; player: PlayerId; iid: string | null }
+  /** Activate a battlefield-granted activated ability on a unit/legend (Gardens
+   *  of Becoming, Forge of the Fluft). */
+  | { type: 'ACTIVATE_ABILITY'; player: PlayerId; iid: string }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number }
   | {
       type: 'PLAY_SPELL'
