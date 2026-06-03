@@ -1,1 +1,444 @@
-[{"id":"featured-jinx","name":"Jinx — Loose Cannon","champion":"Jinx","group":"Starter Deck","archetype":"Aggro · direct damage","legendId":"ogn-251-298","championId":"ogn-030-298","main":{"ogn-170-298":1,"ogn-252-298":1,"ogn-204-298":3,"ogn-195-298":1,"ogn-185-298":3,"ogn-183-298":3,"ogn-180-298":2,"ogn-178-298":1,"ogn-172-298":1,"ogn-001-298":2,"ogn-169-298":3,"ogn-165-298":2,"ogn-036-298":1,"ogn-030-298":1,"ogn-024-298":2,"ogn-019-298":3,"ogn-008-298":2,"ogn-006-298":3,"ogn-003-298":3,"ogn-002-298":2},"runes":{"ogn-166-298":6,"ogn-007-298":6},"battlefields":["ogn-298-298","ogn-291-298","ogn-289-298"],"mainCount":40,"runeCount":12},{"id":"featured-lee-sin","name":"Lee Sin — Blind Monk","champion":"Lee Sin","group":"Starter Deck","archetype":"Tempo · combat tricks","legendId":"ogn-257-298","championId":"ogn-151-298","main":{"ogn-135-298":2,"ogn-157-298":1,"ogn-152-298":1,"ogn-151-298":1,"ogn-147-298":3,"ogn-142-298":2,"ogn-137-298":2,"ogn-136-298":3,"ogn-132-298":3,"ogn-128-298":3,"ogn-125-298":2,"ogn-065-298":3,"ogn-060-298":1,"ogn-058-298":3,"ogn-055-298":3,"ogn-053-298":2,"ogn-052-298":3,"ogn-043-298":2},"runes":{"ogn-042-298":6,"ogn-126-298":6},"battlefields":["ogn-289-298","ogn-282-298","ogn-280-298"],"mainCount":40,"runeCount":12},{"id":"featured-master-yi","name":"Master Yi — Wuju Master","champion":"Master Yi","group":"Starter Deck","archetype":"Tempo · precision","legendId":"unl-191-219","championId":"unl-113-219","main":{"unl-034-219":2,"unl-113-219":1,"unl-100-219":3,"unl-096-219":2,"unl-094-219":3,"unl-091-219":3,"unl-059-219":3,"unl-053-219":2,"unl-042-219":2,"unl-040-219":3,"unl-038-219":2,"ogn-045-298":3,"sfd-097-221":3,"sfd-043-221":2,"ogn-077-298":3,"ogn-058-298":3},"runes":{"ogn-126-298":7,"ogn-042-298":5},"battlefields":["unl-213-219","ogn-289-298","ogn-286-298"],"mainCount":40,"runeCount":12},{"id":"featured-annie","name":"Annie — Dark Child","champion":"Annie","group":"Starter Deck","archetype":"Aggro · burn","legendId":"ogs-017-024","championId":"ogs-010-024","main":{"sfd-013-221":3,"unl-149-219":2,"unl-146-219":3,"unl-025-219":3,"unl-007-219":3,"unl-003-219":3,"sfd-140-221":3,"sfd-136-221":3,"ogn-005-298":3,"sfd-012-221":2,"ogs-018-024":3,"ogs-010-024":2,"ogs-002-024":3,"ogs-001-024":1,"ogn-017-298":3},"runes":{"ogn-166-298":6,"ogn-007-298":6},"battlefields":["unl-205-219","sfd-215-221","ogn-296-298"],"mainCount":40,"runeCount":12},{"id":"featured-lillia","name":"Lillia — Bashful Bloom","champion":"Lillia","group":"Starter Deck","archetype":"Midrange · sprites","legendId":"unl-189-219","championId":"unl-082-219","main":{"unl-075-219":3,"unl-190-219":1,"unl-087a-219":1,"unl-087-219":1,"unl-084-219":3,"unl-083-219":3,"unl-082-219":2,"unl-078-219":3,"unl-077-219":2,"unl-074-219":2,"unl-069-219":3,"unl-058a-219":1,"unl-058-219":1,"unl-053-219":1,"unl-051-219":2,"unl-048-219":3,"unl-045-219":2,"sfd-069-221":3,"ogn-103-298":1,"ogn-094-298":2},"runes":{"ogn-042-298":6,"ogn-089-298":6},"battlefields":["unl-t03-219","unl-t01-219","unl-208-219"],"mainCount":40,"runeCount":12},{"id":"featured-vex","name":"Vex — Gloomist","champion":"Vex","group":"Starter Deck","archetype":"Control · gloom","legendId":"unl-193-219","championId":"unl-150-219","main":{"unl-055-219":2,"unl-194-219":1,"unl-150-219":1,"unl-141-219":1,"unl-136-219":1,"unl-134-219":2,"unl-133-219":2,"unl-127-219":2,"unl-126-219":1,"sfd-146-221":1,"unl-052-219":1,"unl-050-219":1,"unl-048-219":2,"unl-047-219":2,"unl-043-219":1,"unl-042-219":3,"unl-041-219":2,"unl-040-219":3,"unl-039-219":2,"unl-038-219":2,"unl-036-219":2,"unl-035-219":1,"unl-034-219":2,"unl-031-219":2},"runes":{"ogn-166-298":6,"ogn-042-298":6},"battlefields":["unl-214-219","unl-213-219","unl-207-219"],"mainCount":40,"runeCount":12},{"id":"featured-garen","name":"Garen — Might of Demacia","champion":"Garen","group":"Starter Deck","archetype":"Midrange · board control","legendId":"ogs-023-024","championId":"ogs-007-024","main":{"ogn-215-298":2,"ogs-024-024":2,"ogs-016-024":3,"ogs-015-024":3,"ogs-013-024":2,"ogs-007-024":2,"ogn-222-298":3,"ogn-219-298":3,"ogn-211-298":3,"ogn-210-298":3,"ogn-206-298":3,"ogn-132-298":3,"ogn-131-298":2,"ogn-130-298":3,"ogn-129-298":3},"runes":{"ogn-126-298":6,"ogn-214-298":6},"battlefields":["ogn-294-298"],"mainCount":40,"runeCount":12},{"id":"featured-lux","name":"Lux — Lady of Luminosity","champion":"Lux","group":"Starter Deck","archetype":"Spells · light control","legendId":"ogs-021-024","championId":"ogs-014-024","main":{"ogs-006-024":3,"ogs-014-024":3,"ogs-022-024":3,"opp-006-024":3,"opp-014-024":3,"opp-022-024":3,"sfd-063-221":3,"opp-064-221":3,"sfd-064-221":3,"sfd-073-221":3,"opp-153-221":3,"sfd-153-221":3,"ogn-090-298":3,"ogn-104-298":1},"runes":{"ogn-089-298":6,"ogn-214-298":6},"battlefields":["unl-205-219","unl-206-219","ogn-275-298"],"mainCount":40,"runeCount":12},{"id":"featured-viktor","name":"Viktor — Herald of the Arcane","champion":"Viktor","group":"Featured Deck","archetype":"Control · value engine","legendId":"ogn-265-298","championId":"ogn-246-298","main":{"ogn-246-298":1,"ogn-239-298":2,"ogn-233-298":2,"ogn-221-298":2,"ogn-220-298":1,"ogn-218-298":3,"ogn-216-298":3,"ogn-083-298":2,"ogn-213-298":3,"ogn-211-298":3,"ogn-210-298":2,"ogn-209-298":3,"ogn-106-298":3,"ogn-105-298":2,"ogn-097-298":1,"ogn-095-298":3,"ogn-093-298":2,"ogn-088-298":2},"runes":{"ogn-214-298":7,"ogn-089-298":5},"battlefields":["ogn-295-298","ogn-294-298","ogn-290-298"],"mainCount":40,"runeCount":12},{"id":"featured-fiora","name":"Fiora — Grand Duelist","champion":"Fiora","group":"Featured Deck","archetype":"Aggro · duelist","legendId":"sfd-205-221","championId":"sfd-110-221","main":{"ogn-128-298":3,"sfd-206-221":3,"sfd-180-221":1,"sfd-167-221":3,"sfd-161-221":3,"sfd-116-221":1,"sfd-113-221":3,"sfd-110-221":1,"sfd-109-221":2,"sfd-108-221":1,"sfd-098-221":1,"sfd-097-221":3,"sfd-095-221":3,"ogn-226-298":2,"ogn-213-298":2,"ogn-207-298":2,"ogn-136-298":3,"ogn-132-298":3},"runes":{"ogn-214-298":6,"ogn-126-298":6},"battlefields":["sfd-218-221","ogn-294-298","ogn-282-298"],"mainCount":40,"runeCount":12}]
+[
+ {
+  "id": "featured-jinx",
+  "name": "Jinx — Loose Cannon",
+  "champion": "Jinx",
+  "group": "Starter Deck",
+  "archetype": "Aggro · direct damage",
+  "legendId": "ogn-251-298",
+  "championId": "ogn-030-298",
+  "main": {
+   "ogn-170-298": 1,
+   "ogn-252-298": 1,
+   "ogn-204-298": 3,
+   "ogn-195-298": 1,
+   "ogn-185-298": 3,
+   "ogn-183-298": 3,
+   "ogn-180-298": 2,
+   "ogn-178-298": 1,
+   "ogn-172-298": 1,
+   "ogn-001-298": 2,
+   "ogn-169-298": 3,
+   "ogn-165-298": 2,
+   "ogn-036-298": 1,
+   "ogn-030-298": 1,
+   "ogn-024-298": 2,
+   "ogn-019-298": 3,
+   "ogn-008-298": 2,
+   "ogn-006-298": 3,
+   "ogn-003-298": 3,
+   "ogn-002-298": 2
+  },
+  "runes": {
+   "ogn-166-298": 6,
+   "ogn-007-298": 6
+  },
+  "battlefields": [
+   "ogn-298-298",
+   "ogn-291-298",
+   "ogn-289-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-lee-sin",
+  "name": "Lee Sin — Blind Monk",
+  "champion": "Lee Sin",
+  "group": "Starter Deck",
+  "archetype": "Tempo · combat tricks",
+  "legendId": "ogn-257-298",
+  "championId": "ogn-151-298",
+  "main": {
+   "ogn-135-298": 2,
+   "ogn-157-298": 1,
+   "ogn-152-298": 1,
+   "ogn-151-298": 1,
+   "ogn-147-298": 3,
+   "ogn-142-298": 2,
+   "ogn-137-298": 2,
+   "ogn-136-298": 3,
+   "ogn-132-298": 3,
+   "ogn-128-298": 3,
+   "ogn-125-298": 2,
+   "ogn-065-298": 3,
+   "ogn-060-298": 1,
+   "ogn-058-298": 3,
+   "ogn-055-298": 3,
+   "ogn-053-298": 2,
+   "ogn-052-298": 3,
+   "ogn-043-298": 2
+  },
+  "runes": {
+   "ogn-042-298": 6,
+   "ogn-126-298": 6
+  },
+  "battlefields": [
+   "ogn-289-298",
+   "ogn-282-298",
+   "ogn-280-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-master-yi",
+  "name": "Master Yi — Wuju Master",
+  "champion": "Master Yi",
+  "group": "Starter Deck",
+  "archetype": "Tempo · precision",
+  "legendId": "unl-191-219",
+  "championId": "unl-113-219",
+  "main": {
+   "unl-034-219": 2,
+   "unl-113-219": 1,
+   "unl-100-219": 3,
+   "unl-096-219": 2,
+   "unl-094-219": 3,
+   "unl-091-219": 3,
+   "unl-059-219": 3,
+   "unl-053-219": 2,
+   "unl-042-219": 2,
+   "unl-040-219": 3,
+   "unl-038-219": 2,
+   "ogn-045-298": 3,
+   "sfd-097-221": 3,
+   "sfd-043-221": 2,
+   "ogn-077-298": 3,
+   "ogn-058-298": 3
+  },
+  "runes": {
+   "ogn-126-298": 7,
+   "ogn-042-298": 5
+  },
+  "battlefields": [
+   "unl-213-219",
+   "ogn-289-298",
+   "ogn-286-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-annie",
+  "name": "Annie — Dark Child",
+  "champion": "Annie",
+  "group": "Starter Deck",
+  "archetype": "Aggro · burn",
+  "legendId": "ogs-017-024",
+  "championId": "ogs-010-024",
+  "main": {
+   "sfd-013-221": 3,
+   "unl-149-219": 2,
+   "unl-146-219": 3,
+   "unl-025-219": 3,
+   "unl-007-219": 3,
+   "unl-003-219": 3,
+   "sfd-140-221": 3,
+   "sfd-136-221": 3,
+   "ogn-005-298": 3,
+   "sfd-012-221": 2,
+   "ogs-018-024": 3,
+   "ogs-010-024": 2,
+   "ogs-002-024": 3,
+   "ogs-001-024": 1,
+   "ogn-017-298": 3
+  },
+  "runes": {
+   "ogn-166-298": 6,
+   "ogn-007-298": 6
+  },
+  "battlefields": [
+   "unl-205-219",
+   "sfd-215-221",
+   "ogn-296-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-lillia",
+  "name": "Lillia — Bashful Bloom",
+  "champion": "Lillia",
+  "group": "Starter Deck",
+  "archetype": "Midrange · sprites",
+  "legendId": "unl-189-219",
+  "championId": "unl-082-219",
+  "main": {
+   "unl-075-219": 3,
+   "unl-190-219": 1,
+   "unl-087a-219": 1,
+   "unl-087-219": 1,
+   "unl-084-219": 3,
+   "unl-083-219": 3,
+   "unl-082-219": 2,
+   "unl-078-219": 3,
+   "unl-077-219": 2,
+   "unl-074-219": 2,
+   "unl-069-219": 3,
+   "unl-058a-219": 1,
+   "unl-058-219": 1,
+   "unl-053-219": 1,
+   "unl-051-219": 2,
+   "unl-048-219": 3,
+   "unl-045-219": 2,
+   "sfd-069-221": 3,
+   "ogn-103-298": 1,
+   "ogn-094-298": 2
+  },
+  "runes": {
+   "ogn-042-298": 6,
+   "ogn-089-298": 6
+  },
+  "battlefields": [
+   "unl-t03-219",
+   "unl-t01-219",
+   "unl-208-219"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-vex",
+  "name": "Vex — Gloomist",
+  "champion": "Vex",
+  "group": "Starter Deck",
+  "archetype": "Control · gloom",
+  "legendId": "unl-193-219",
+  "championId": "unl-150-219",
+  "main": {
+   "unl-055-219": 2,
+   "unl-194-219": 1,
+   "unl-150-219": 1,
+   "unl-141-219": 1,
+   "unl-136-219": 1,
+   "unl-134-219": 2,
+   "unl-133-219": 2,
+   "unl-127-219": 2,
+   "unl-126-219": 1,
+   "sfd-146-221": 1,
+   "unl-052-219": 1,
+   "unl-050-219": 1,
+   "unl-048-219": 2,
+   "unl-047-219": 2,
+   "unl-043-219": 1,
+   "unl-042-219": 3,
+   "unl-041-219": 2,
+   "unl-040-219": 3,
+   "unl-039-219": 2,
+   "unl-038-219": 2,
+   "unl-036-219": 2,
+   "unl-035-219": 1,
+   "unl-034-219": 2,
+   "unl-031-219": 2
+  },
+  "runes": {
+   "ogn-166-298": 6,
+   "ogn-042-298": 6
+  },
+  "battlefields": [
+   "unl-214-219",
+   "unl-213-219",
+   "unl-207-219"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-garen",
+  "name": "Garen — Might of Demacia",
+  "champion": "Garen",
+  "group": "Starter Deck",
+  "archetype": "Midrange · board control",
+  "legendId": "ogs-023-024",
+  "championId": "ogs-007-024",
+  "main": {
+   "ogn-215-298": 2,
+   "ogs-024-024": 2,
+   "ogs-016-024": 3,
+   "ogs-015-024": 3,
+   "ogs-013-024": 2,
+   "ogs-007-024": 2,
+   "ogn-222-298": 3,
+   "ogn-219-298": 3,
+   "ogn-211-298": 3,
+   "ogn-210-298": 3,
+   "ogn-206-298": 3,
+   "ogn-132-298": 3,
+   "ogn-131-298": 2,
+   "ogn-130-298": 3,
+   "ogn-129-298": 3
+  },
+  "runes": {
+   "ogn-126-298": 6,
+   "ogn-214-298": 6
+  },
+  "battlefields": [
+   "ogn-294-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-lux",
+  "name": "Lux — Lady of Luminosity",
+  "champion": "Lux",
+  "group": "Starter Deck",
+  "archetype": "Spells · light control",
+  "legendId": "ogs-021-024",
+  "championId": "ogs-014-024",
+  "main": {
+   "ogs-006-024": 3,
+   "ogs-014-024": 3,
+   "ogs-022-024": 3,
+   "opp-006-024": 3,
+   "opp-014-024": 3,
+   "opp-022-024": 3,
+   "sfd-063-221": 3,
+   "opp-064-221": 3,
+   "sfd-064-221": 3,
+   "sfd-073-221": 3,
+   "opp-153-221": 3,
+   "sfd-153-221": 3,
+   "ogn-090-298": 3,
+   "ogn-104-298": 1
+  },
+  "runes": {
+   "ogn-089-298": 6,
+   "ogn-214-298": 6
+  },
+  "battlefields": [
+   "unl-205-219",
+   "unl-206-219",
+   "ogn-275-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-viktor",
+  "name": "Viktor — Herald of the Arcane",
+  "champion": "Viktor",
+  "group": "Featured Deck",
+  "archetype": "Control · value engine",
+  "legendId": "ogn-265-298",
+  "championId": "ogn-246-298",
+  "main": {
+   "ogn-246-298": 1,
+   "ogn-239-298": 2,
+   "ogn-233-298": 2,
+   "ogn-221-298": 2,
+   "ogn-220-298": 1,
+   "ogn-218-298": 3,
+   "ogn-216-298": 3,
+   "ogn-083-298": 2,
+   "ogn-213-298": 3,
+   "ogn-211-298": 3,
+   "ogn-210-298": 2,
+   "ogn-209-298": 3,
+   "ogn-106-298": 3,
+   "ogn-105-298": 2,
+   "ogn-097-298": 1,
+   "ogn-095-298": 3,
+   "ogn-093-298": 2,
+   "ogn-088-298": 2
+  },
+  "runes": {
+   "ogn-214-298": 7,
+   "ogn-089-298": 5
+  },
+  "battlefields": [
+   "ogn-295-298",
+   "ogn-294-298",
+   "ogn-290-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-fiora",
+  "name": "Fiora — Grand Duelist",
+  "champion": "Fiora",
+  "group": "Featured Deck",
+  "archetype": "Aggro · duelist",
+  "legendId": "sfd-205-221",
+  "championId": "sfd-110-221",
+  "main": {
+   "ogn-128-298": 3,
+   "sfd-206-221": 3,
+   "sfd-180-221": 1,
+   "sfd-167-221": 3,
+   "sfd-161-221": 3,
+   "sfd-116-221": 1,
+   "sfd-113-221": 3,
+   "sfd-110-221": 1,
+   "sfd-109-221": 2,
+   "sfd-108-221": 1,
+   "sfd-098-221": 1,
+   "sfd-097-221": 3,
+   "sfd-095-221": 3,
+   "ogn-226-298": 2,
+   "ogn-213-298": 2,
+   "ogn-207-298": 2,
+   "ogn-136-298": 3,
+   "ogn-132-298": 3
+  },
+  "runes": {
+   "ogn-214-298": 6,
+   "ogn-126-298": 6
+  },
+  "battlefields": [
+   "sfd-218-221",
+   "ogn-294-298",
+   "ogn-282-298"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ },
+ {
+  "id": "featured-vi",
+  "name": "Vi — Piltover Enforcer",
+  "champion": "Vi",
+  "group": "Featured Deck",
+  "archetype": "Aggro · excess-damage brawl",
+  "legendId": "unl-187-219",
+  "championId": "unl-176-219",
+  "main": {
+   "unl-153-219": 2,
+   "unl-188-219": 1,
+   "unl-176-219": 2,
+   "unl-175-219": 1,
+   "unl-163-219": 2,
+   "unl-161-219": 2,
+   "unl-159-219": 1,
+   "unl-156-219": 2,
+   "unl-154-219": 2,
+   "ogn-036-298": 1,
+   "unl-030-219": 1,
+   "unl-026-219": 1,
+   "unl-024-219": 1,
+   "unl-018-219": 2,
+   "unl-017-219": 1,
+   "unl-015-219": 2,
+   "unl-012-219": 2,
+   "unl-010-219": 2,
+   "unl-009-219": 1,
+   "unl-008-219": 2,
+   "unl-006-219": 2,
+   "unl-002-219": 4,
+   "unl-001-219": 1,
+   "sfd-009-221": 2
+  },
+  "runes": {
+   "ogn-214-298": 5,
+   "ogn-007-298": 7
+  },
+  "battlefields": [
+   "unl-218-219",
+   "unl-217-219",
+   "unl-215-219"
+  ],
+  "mainCount": 40,
+  "runeCount": 12
+ }
+]

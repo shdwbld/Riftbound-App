@@ -6,9 +6,9 @@ const sum = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a +
 
 describe('featured decks', () => {
   it('ships the starter + featured roster', () => {
-    expect(FEATURED_DECKS.length).toBe(10)
+    expect(FEATURED_DECKS.length).toBe(11)
     expect(FEATURED_DECKS.filter((d) => d.group === 'Starter Deck').length).toBe(8)
-    expect(FEATURED_DECKS.filter((d) => d.group === 'Featured Deck').length).toBe(2)
+    expect(FEATURED_DECKS.filter((d) => d.group === 'Featured Deck').length).toBe(3)
   })
 
   it('each deck has a valid legend, champion, and only resolvable cards', () => {
