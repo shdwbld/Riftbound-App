@@ -1763,26 +1763,35 @@ describe('Viktor deck — core engine', () => {
   const recruit = TOKEN_PILE_IDS[0]
   const recruitCount = (st: MatchState, pl: number) => st.players[pl].zones.base.filter((u) => u.cardId === recruit).length
 
-  it('Viktor - Herald (legend): auto-recruits but PAYS its 1 Energy (not free)', () => {
+  it('Viktor - Herald (legend): does NOT auto-recruit (exhaust ability is optional); manual activation recruits + pays 1 Energy', () => {
     const herald = CARDS.find((c) => c.type === 'legend' && c.name === 'Viktor - Herald of the Arcane')
     if (!herald || !recruit) return
     const s = baseState()
     s.players[0].legend = mk(herald.id, 0)
-    s.players[0].zones.runeDeck = [mk(furyRune.id, 0), mk(furyRune.id, 0)] // channels 2 → can pay 1
+    s.players[0].zones.runeDeck = [mk(furyRune.id, 0), mk(furyRune.id, 0)] // channels → can pay 1
     for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
-    const r = beginTurn(s)
-    expect(recruitCount(r, 0)).toBe(1) // fired
-    expect(r.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(1) // paid 1
+    const r0 = beginTurn(s)
+    // Optional activated ability → it must NOT fire on its own.
+    expect(recruitCount(r0, 0)).toBe(0)
+    expect(r0.players[0].legend!.exhausted).toBe(false)
+    // The player chooses to activate it.
+    const ab = canActivateUnit(r0, 0, r0.players[0].legend!.iid)
+    expect(ab).toBeTruthy()
+    const r = reduce(r0, { type: 'ACTIVATE_UNIT', player: 0, iid: r0.players[0].legend!.iid })
+    expect(r.error).toBeFalsy()
+    expect(recruitCount(r.state, 0)).toBe(1)
+    expect(r.state.players[0].legend!.exhausted).toBe(true)
   })
 
-  it('Viktor - Herald: does NOT fire when it can\'t pay the Energy', () => {
+  it('Viktor - Herald: not activatable when it can\'t pay the Energy', () => {
     const herald = CARDS.find((c) => c.type === 'legend' && c.name === 'Viktor - Herald of the Arcane')
     if (!herald || !recruit) return
     const s = baseState()
     s.players[0].legend = mk(herald.id, 0)
     s.players[0].zones.runeDeck = [] // nothing to channel → no Energy
-    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
-    expect(recruitCount(beginTurn(s), 0)).toBe(0)
+    const r0 = beginTurn(s)
+    expect(recruitCount(r0, 0)).toBe(0) // never auto-fires
+    expect(canActivateUnit(r0, 0, r0.players[0].legend!.iid)).toBeNull() // can't pay → not offered
   })
 
   it('Viktor - Leader: a non-Recruit ally dying makes a Recruit; a Recruit dying does not', () => {

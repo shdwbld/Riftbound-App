@@ -1695,15 +1695,15 @@ function finishBeginning(s: MatchState): MatchState {
     const legendCard = getCard(p.legend.cardId)
     if (legendCard && parseTriggers(legendCard).length === 0 && abilityUsableNow(legendCard, p)) {
       const e = spellEffect(legendCard)
-      if (e.draw || e.channel || e.recruits || e.goldTokens || e.namedToken) {
-        // Costed activated abilities (":rb_energy_N:, :rb_exhaust:: â€¦", e.g. Viktor
-        // - Herald of the Arcane) must pay their Energy cost â€” fire only when the
-        // player can afford it (auto-pay), never for free.
-        const act = legendActivationCost(legendCard, s, ap)
-        if (!act || act.energy === 0 || makeBfApi(s).payEnergy(ap, act.energy)) {
-          p.legend.exhausted = true
-          for (const line of applyParsed(s, p, e)) s = log(s, ap, `${legendCard.name} (auto): ${line}`)
-        }
+      // An ability with an :rb_exhaust: cost is an ACTIVATED ability — optional,
+      // the player chooses if/when to use it (via the ⚡ Activate button). Never
+      // auto-fire those (e.g. Viktor's Recruit, Lillia's Sprite drained resources
+      // every turn unprompted). Only a legend ability with NO exhaust cost (a free
+      // passive start-of-turn effect) auto-resolves.
+      const isActivated = !!legendActivationCost(legendCard)
+      if (!isActivated && (e.draw || e.channel || e.recruits || e.goldTokens || e.namedToken)) {
+        p.legend.exhausted = true
+        for (const line of applyParsed(s, p, e)) s = log(s, ap, `${legendCard.name} (auto): ${line}`)
       }
     }
   }
@@ -3326,6 +3326,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)
+      // Recruit token(s) (Viktor - Herald of the Arcane: "Play a 1 Might Recruit").
+      if (ab.effect.recruits) {
+        spawnRecruits(p, ab.effect.recruits, s1.turn)
+        s1 = fireTokenPlay(s1, action.player, ab.effect.recruits) // Lillia-style synergy
+      }
       // Named unit token (Azir: "Play a 2 Might Sand Soldier unit token to your
       // base"). For an unscoped "here" we default to the player's base.
       if (ab.effect.namedToken) {
@@ -3333,6 +3338,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const bfHere = nt.here ? battlefieldOf(s1, u.iid) : -1
         const dest = bfHere >= 0 ? s1.battlefields[bfHere].units : p.zones.base
         spawnNamedToken(p, nt.name, nt.count, s1.turn, nt.exhausted, nt.temporary, dest)
+        s1 = fireTokenPlay(s1, action.player, nt.count)
       }
       // Pyke - Bloodharbor Ripper: "… Play a Gold gear token exhausted." (the
       // second sentence isn't captured in effectText, so read the source text).
