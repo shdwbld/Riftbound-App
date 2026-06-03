@@ -2448,6 +2448,30 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.players[0].zones.base.some((c) => c.cardId === GOLD_TOKEN_ID && c.exhausted)).toBe(true)
   })
 
+  it('Jax - Grandmaster At Arms: 1,exhaust → attach a detached Equipment to a unit (2-step)', () => {
+    const s = baseState()
+    s.players[0].legend = mk('sfd-193-221', 0)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const equip = mk('opp-009-221', 0) // Serrated Dirk [Equip]
+    s.players[0].zones.base.push(equip)
+    const unit = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(unit)
+    // Activate → prompts which Equipment.
+    let r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('forgePickEquip')
+    expect(r.state.players[0].legend!.exhausted).toBe(true)
+    // Pick the Equipment → prompts which unit.
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: equip.iid })
+    expect(r.state.pendingChoice?.kind).toBe('forgePickTarget')
+    // Pick the unit → it's now attached.
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: unit.iid })
+    expect(r.error).toBeFalsy()
+    const u = r.state.battlefields[0].units.find((x) => x.iid === unit.iid)!
+    expect(u.attached.some((a) => a.startsWith(equip.cardId))).toBe(true)
+    expect(r.state.players[0].zones.base.some((c) => c.iid === equip.iid)).toBe(false) // left base
+  })
+
   it('Garbage Grabber (gear): Recycle 3, 1, exhaust → Draw 1', () => {
     const s = baseState()
     const grab = mk('ogn-099-298', 0)

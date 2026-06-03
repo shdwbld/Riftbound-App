@@ -3274,6 +3274,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       for (let i = 0; i < ab.recycleTrash && p.zones.trash.length > 0; i++) p.zones.mainDeck.push(p.zones.trash.shift()!)
       if (ab.exhaust && !ab.killThis) u.exhausted = true
       let s1 = log(s, action.player, `${name}: activated — ${ab.effectText}.`)
+      // "Attach an Equipment you control to a unit you control" (Jax) — a
+      // two-step pick-equip → pick-target, reusing the Forge choice flow.
+      if (/attach\b[^.]*\bequipment\b[^.]*\bto a unit/i.test(ab.effectText)) {
+        const equips = p.zones.base.filter(isEquipment).map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid }))
+        if (!equips.length) return fail(state, 'No detached Equipment you control to attach.')
+        offerChoice(s1, { player: action.player, kind: 'forgePickEquip', bfIndex: -1, prompt: `${name} — choose an Equipment to attach.`, options: equips })
+        return ok(s1)
+      }
       // Resolve the effect.
       if (ab.doubleMight) {
         u.tempMight = (u.tempMight ?? 0) + mightNow
