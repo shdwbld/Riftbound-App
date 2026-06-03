@@ -1274,6 +1274,39 @@ describe('cost modifiers (state-aware effectiveCostOf)', () => {
   })
 })
 
+describe("Jinx - Loose Cannon legend (conditional, no double-draw)", () => {
+  const legendText = 'At start of your Beginning Phase, draw 1 if you have one or fewer cards in your hand.'
+  const legendId = injectCard('jinx-loose-cannon', legendText, { type: 'legend' })
+
+  // Cards gained over a turn for a given starting hand size, isolating the
+  // legend's conditional draw from the constant regular draw.
+  function gain(startHand: number): number {
+    const s = baseState()
+    s.players[0].legend = mk(legendId, 0)
+    for (let i = 0; i < startHand; i++) s.players[0].zones.hand.push(mk(furyUnit.id, 0))
+    for (let i = 0; i < 12; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    return beginTurn(s).players[0].zones.hand.length - startHand
+  }
+
+  it('draws its bonus card only when at one or fewer cards in hand', () => {
+    // The only difference between the two runs is Jinx's conditional draw: it
+    // fires from an empty hand, and is skipped from a full one. Exactly +1.
+    expect(gain(0) - gain(3)).toBe(1)
+  })
+
+  it('does not double-fire (trigger + auto-activation)', () => {
+    // With the bug, an empty hand drew 3 (regular + trigger + auto). The bonus
+    // over the no-Jinx baseline must be exactly 1.
+    const baselineId = injectCard('plain-legend', 'A legend with no beginning-phase ability.', { type: 'legend' })
+    const withJinx = gain(0)
+    const s = baseState()
+    s.players[0].legend = mk(baselineId, 0)
+    for (let i = 0; i < 12; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const baseline = beginTurn(s).players[0].zones.hand.length
+    expect(withJinx - baseline).toBe(1)
+  })
+})
+
 describe('battlefield choice prompts (Emperor\'s Dais / move-to-base)', () => {
   it("Emperor's Dais: conquering offers return-a-unit, which plays a Sand Soldier", () => {
     const dais = CARDS.find((c) => c.type === 'battlefield' && c.name === "Emperor's Dais")

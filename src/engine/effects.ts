@@ -42,6 +42,10 @@ export interface ParsedEffect {
   targetCount: number
   /** A target must be on a battlefield (not at base). */
   battlefieldOnly: boolean
+  /** A gating condition the effect's controller must meet for it to apply
+   *  (e.g. Jinx — "draw 1 if you have one or fewer cards in your hand"). The
+   *  caller (applyParsed) evaluates it against game state. Null = unconditional. */
+  condition: { kind: 'handAtMost' | 'handAtLeast'; value: number } | null
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
@@ -62,6 +66,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   targetScope: null,
   targetCount: 0,
   battlefieldOnly: false,
+  condition: null,
   manual: false,
 })
 
@@ -97,6 +102,14 @@ function parse(text: string): ParsedEffect {
   const t = text.toLowerCase()
   const eff = EMPTY_EFFECT()
   let hit = false
+
+  // Hand-size gate ("draw 1 if you have one or fewer cards in your hand" — Jinx).
+  // Recorded on the effect; applyParsed checks it against state before applying.
+  // Not counted as a `hit` on its own (a bare condition with no action is inert).
+  const condAtMost = t.match(new RegExp(`if you have ${NUM} or fewer cards? in your hand`))
+  if (condAtMost) eff.condition = { kind: 'handAtMost', value: num(condAtMost[1]) }
+  const condAtLeast = t.match(new RegExp(`if you have ${NUM} or more cards? in your hand`))
+  if (condAtLeast) eff.condition = { kind: 'handAtLeast', value: num(condAtLeast[1]) }
 
   // Conditional draw on a kill ("if this kills it … draw 1"); detected first so
   // its "draw N" isn't also counted as an unconditional draw.

@@ -309,9 +309,19 @@ function spawnNamedToken(p: PlayerState, name: string, n: number, turn: number, 
   return n
 }
 
+/** Whether a parsed effect's gating condition (if any) is satisfied for `p`. */
+function conditionMet(p: PlayerState, e: ParsedEffect): boolean {
+  if (!e.condition) return true
+  const hand = p.zones.hand.length
+  return e.condition.kind === 'handAtMost' ? hand <= e.condition.value : hand >= e.condition.value
+}
+
 /** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text. */
 function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect): string[] {
   const lines: string[] = []
+  // A gated effect ("… if you have one or fewer cards in your hand") does
+  // nothing when its condition isn't met.
+  if (!conditionMet(p, e)) return lines
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
   if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
@@ -989,9 +999,12 @@ export function beginTurn(state: MatchState): MatchState {
 
   // Auto-activate the Legend's ability once per turn (its auto-resolvable parts:
   // draw / channel / recruit). No manual button â€” abilities resolve themselves.
+  // Skip legends whose ability is a "start of your Beginning Phase" trigger:
+  // those already fired via the trigger system above, so re-running them here
+  // would double-apply (e.g. Jinx - Loose Cannon drawing twice).
   if (p.legend && !p.legend.exhausted) {
     const legendCard = getCard(p.legend.cardId)
-    if (legendCard) {
+    if (legendCard && triggersFor(legendCard, 'startOfTurn').length === 0) {
       const e = spellEffect(legendCard)
       if (e.draw || e.channel || e.recruits || e.goldTokens || e.namedToken) {
         p.legend.exhausted = true
