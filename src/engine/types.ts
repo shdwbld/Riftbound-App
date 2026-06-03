@@ -49,6 +49,9 @@ export interface EngineCard {
   /** A one-shot "the next time it would die this turn, heal/exhaust/recall it
    *  instead" shield (Highlander, Tactical Retreat). Consumed on the next death. */
   deathShield?: boolean
+  /** A one-shot "if it would die this turn, banish it instead" replacement
+   *  (Smite). Banished instead of trashed; the death is replaced (no Deathknell). */
+  banishShield?: boolean
   /** This instance is a token (ceases to exist instead of going to the Trash),
    *  even if its `cardId` points at a normal card — e.g. a Reflection copy. */
   token?: boolean

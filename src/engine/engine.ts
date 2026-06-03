@@ -1367,10 +1367,12 @@ function grantHunt(s: MatchState, player: PlayerId, bfIndex: number): MatchState
 /** Deal `amount` damage to a target unit anywhere; defeat it if lethal. Returns
  *  the defeated units (so the caller can fire their death triggers). */
 /** A "if a friendly unit would die, … instead" replacement for `u`: a one-shot
- *  deathShield, or an attached Zhonya's Hourglass ("kill this instead"). Consumes
- *  the source and returns true → the caller recalls the unit (heal + exhaust → base)
- *  instead of trashing it. */
-function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard): boolean {
+ *  deathShield, an attached Zhonya's Hourglass ("kill this instead"), a Soraka -
+ *  Wanderer aura, or a Sett - The Boss pay-to-save. Consumes the source and
+ *  returns true → the caller recalls the unit (heal + exhaust → base) instead of
+ *  trashing it. `bfIndex` (the dying unit's battlefield, when it died at one)
+ *  scopes the location-bound saves ("…you control here"). */
+function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard, bfIndex?: number): boolean {
   if (u.deathShield) { u.deathShield = false; return true }
   const zh = u.attached.find((ref) => /if a friendly unit would die, kill this/i.test(getCard(ref.split('|')[0])?.text ?? ''))
   if (zh) {
@@ -1379,6 +1381,40 @@ function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard): boolean {
     s.players[u.owner].zones.trash.push({ iid: giid || `${u.owner}:gear:${gid}`, cardId: gid, owner: u.owner, exhausted: false, damage: 0, attached: [] })
     return true
   }
+  // Soraka - Wanderer: "If another unit you control here would die, if it has less
+  // Might than me, instead heal it, exhaust it, and recall it." A free rescue,
+  // scoped to her battlefield. (mightOf is post-damage, but combat — the common
+  // case — kills by assignment, not damage counters, so the comparison is intact.)
+  if (bfIndex != null) {
+    const soraka = s.battlefields[bfIndex]?.units.find(
+      (x) => x.owner === u.owner && x.iid !== u.iid &&
+        /if another unit you control here would die/i.test(getCard(x.cardId)?.text ?? ''),
+    )
+    if (soraka && mightOf(u) < mightOf(soraka)) return true
+  }
+  // Sett - The Boss: "If a buffed unit you control would die, you may pay
+  // [rainbow], exhaust me, and spend its buff to heal it, exhaust it, and recall
+  // it instead." Pure rescue → auto-paid when ready and affordable (like Altar).
+  if ((u.buffs ?? 0) > 0) {
+    const sett = controlledPermanents(s, u.owner).find(
+      (x) => x.iid !== u.iid && !x.exhausted &&
+        /if a buffed unit you control would die/i.test(getCard(x.cardId)?.text ?? ''),
+    )
+    if (sett && makeBfApi(s).payPowerAny(u.owner, 1)) {
+      sett.exhausted = true
+      u.buffs = (u.buffs ?? 0) - 1 // spend its buff
+      return true
+    }
+  }
+  return false
+}
+
+/** Trash a defeated unit — or banish it instead when it carries a one-shot
+ *  banish-instead replacement (Smite). Returns true if it was banished (the
+ *  death is replaced, so no Deathknell / death-trigger should fire). */
+function trashOrBanish(s: MatchState, u: EngineCard): boolean {
+  if (u.banishShield) { banishCard(s.players[u.owner], u); return true }
+  sendToTrash(s.players[u.owner], u)
   return false
 }
 
@@ -1404,10 +1440,11 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
       if (mightOf(u) <= 0) {
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
-        if (tryRecallInsteadOfDeath(s, u)) {
+        if (tryRecallInsteadOfDeath(s, u, i)) {
           recallToBase(s, u)
+        } else if (trashOrBanish(s, u)) {
+          // Banished instead of dying — death replaced, no death trigger.
         } else {
-          sendToTrash(s.players[u.owner], u)
           emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
           dead = [u]
         }
@@ -1424,7 +1461,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       if (mightOf(u) <= 0) {
         p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
-        sendToTrash(p, u)
+        if (trashOrBanish(s, u)) return []
         emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
         return [u]
       }
@@ -2386,8 +2423,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     const dead =
       (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
       (u.owner === moverOwner && attackersDefeated.has(u.iid))
-    if (dead && tryRecallInsteadOfDeath(s, u)) {
-      // Zhonya's Hourglass / one-shot shield: heal, exhaust, recall to base.
+    if (dead && tryRecallInsteadOfDeath(s, u, bfIndex)) {
+      // Zhonya's / shield / Soraka / Sett: heal, exhaust, recall to base.
       recallToBase(s, u)
       rescued.add(u.iid)
       s = log(s, u.owner, `${getCard(u.cardId)?.name} was saved — healed, exhausted, recalled to base.`)
@@ -2396,8 +2433,11 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
       emit({ kind: 'buff', iid: u.iid, player: u.owner })
       rescued.add(u.iid)
       s = log(s, u.owner, `Altar of Blood: paid 3 to heal, exhaust, and recall ${getCard(u.cardId)?.name} to base.`)
+    } else if (dead && trashOrBanish(s, u)) {
+      // Smite: banished instead of dying — death replaced, no death trigger.
+      rescued.add(u.iid) // not a death for trigger purposes
+      s = log(s, u.owner, `${getCard(u.cardId)?.name} was banished instead of dying.`)
     } else if (dead) {
-      sendToTrash(s.players[u.owner], u)
       emit({ kind: 'defeat', iid: u.iid, cardId: u.cardId })
       defeated.push(u)
     } else survivors.push({ ...u, damage: 0 })
@@ -2506,6 +2546,11 @@ function resolveSpellEffects(
       s = log(s, controller, `${card.name} fizzled â€” no valid target.`)
     for (const t of tgts) {
       let dead: EngineCard[] = []
+      // Smite: mark the target so a death from this damage banishes it instead.
+      if (e.banishOnDeath) {
+        const tu = findUnitAnywhere(s, t)
+        if (tu) tu.banishShield = true
+      }
       if (e.damage) {
         dead = applyTargetDamage(s, t, e.damage, true)
         s = log(s, controller, `${card.name} dealt ${e.damage}.`)
@@ -2575,12 +2620,13 @@ function resolveSpellEffects(
 /** Outright kill a unit anywhere by iid (no damage roll). Returns it for death
  *  triggers. */
 function killTarget(s: MatchState, iid: string): EngineCard[] {
-  for (const bf of s.battlefields) {
+  for (let bi = 0; bi < s.battlefields.length; bi++) {
+    const bf = s.battlefields[bi]
     const idx = bf.units.findIndex((u) => u.iid === iid)
     if (idx >= 0) {
       const [u] = bf.units.splice(idx, 1)
-      if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); recomputeControllers(s); return [] }
-      sendToTrash(s.players[u.owner], u)
+      if (tryRecallInsteadOfDeath(s, u, bi)) { recallToBase(s, u); recomputeControllers(s); return [] }
+      if (trashOrBanish(s, u)) { recomputeControllers(s); return [] }
       emit({ kind: 'defeat', iid, cardId: u.cardId })
       recomputeControllers(s)
       return [u]
@@ -2591,7 +2637,7 @@ function killTarget(s: MatchState, iid: string): EngineCard[] {
     if (idx >= 0) {
       const [u] = p.zones.base.splice(idx, 1)
       if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
-      sendToTrash(p, u)
+      if (trashOrBanish(s, u)) return []
       emit({ kind: 'defeat', iid, cardId: u.cardId })
       return [u]
     }
@@ -3631,13 +3677,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
       let s = clone(state)
-      // End-of-turn cleanup: clear "this turn" Might modifiers and Stun.
+      // End-of-turn cleanup: clear "this turn" Might modifiers, Stun, and the
+      // one-shot "would die this turn" death/banish replacements (Highlander, Smite).
       for (const pl of s.players) {
         for (const z of Object.keys(pl.zones) as ZoneId[])
-          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false }))
+          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, deathShield: false, banishShield: false }))
       }
       for (const bf of s.battlefields)
-        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false }))
+        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, deathShield: false, banishShield: false }))
       // "At the end of your turn, …" effects for the ending player's permanents
       // (Dazzling Aurora's free-unit engine). Base gear + units + battlefield units.
       const ender = state.activePlayer

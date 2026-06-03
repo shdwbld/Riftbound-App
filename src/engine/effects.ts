@@ -75,6 +75,9 @@ export interface ParsedEffect {
    *  would die this turn, heal it, exhaust it, and recall it instead" —
    *  Highlander, Tactical Retreat). */
   deathShield: boolean
+  /** Replace the damaged target's next death with a banish ("if it would die this
+   *  turn, banish it instead" — Smite). Set on the target before damage resolves. */
+  banishOnDeath: boolean
   /** Return a card from YOUR TRASH to your hand ("return a unit from your trash
    *  to your hand" — Morbid Return, Cemetery Attendant). `type` filters the trash
    *  by card type ('card' = any). Resolves by returning the highest-cost match. */
@@ -140,6 +143,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   tempMight: 0,
   bounce: null,
   deathShield: false,
+  banishOnDeath: false,
   returnFromTrash: null,
   playUnitFromTrash: null,
   revealPlayFromDeck: false,
@@ -320,6 +324,9 @@ function parse(text: string): ParsedEffect {
     if (!eff.targetCount) eff.targetCount = 1
     hit = true
   }
+  // Banish-instead-of-death: "if it would die this turn, banish it instead"
+  // (Smite — paired with a "deal N to a unit" part that supplies the target).
+  if (/if it would die[^.]*?banish it instead/.test(t)) { eff.banishOnDeath = true; hit = true }
   // Return a card from your TRASH to your hand ("return a unit/spell/gear from
   // your trash to your hand" — Morbid Return, Annie, Aspiring Engineer, …). The
   // type word filters the trash; "or"/named-subtypes fall back to any card.

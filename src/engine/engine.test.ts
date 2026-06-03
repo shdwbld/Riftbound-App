@@ -650,6 +650,71 @@ describe('tokens (Recruit)', () => {
     expect(recalled?.deathShield).toBeFalsy() // consumed
   })
 
+  it('Soraka - Wanderer: a lesser-Might ally here recalls instead of dying', () => {
+    const soraka = injectCard('soraka-test', 'If another unit you control here would die, if it has less Might than me, instead heal it, exhaust it, and recall it.', { might: 7 })
+    const allyId = injectCard('soraka-ally', 'A unit.', { might: 3 })
+    const s = baseState()
+    s.sandbox = true
+    const sk = mk(soraka, 0)
+    const al = mk(allyId, 0)
+    s.battlefields[0].units.push(sk, al)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: al.iid })
+    expect(r.error).toBeFalsy()
+    // The ally is recalled to base (exhausted), not sent to trash.
+    expect(r.state.players[0].zones.base.some((x) => x.iid === al.iid && x.exhausted)).toBe(true)
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === al.iid)).toBe(false)
+  })
+
+  it('Soraka - Wanderer: an ally with >= her Might still dies normally', () => {
+    const soraka = injectCard('soraka-test2', 'If another unit you control here would die, if it has less Might than me, instead heal it, exhaust it, and recall it.', { might: 4 })
+    const bigId = injectCard('soraka-big', 'A unit.', { might: 9 })
+    const s = baseState()
+    s.sandbox = true
+    s.battlefields[0].units.push(mk(soraka, 0))
+    const big = mk(bigId, 0)
+    s.battlefields[0].units.push(big)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: big.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === big.iid)).toBe(true)
+    expect(r.state.players[0].zones.base.some((x) => x.iid === big.iid)).toBe(false)
+  })
+
+  it('Sett - The Boss: pays a rune + exhausts to recall a buffed unit, spending its buff', () => {
+    const sett = injectCard('sett-test', 'If a buffed unit you control would die, you may pay :rb_rune_rainbow:, exhaust me, and spend its buff to heal it, exhaust it, and recall it instead.', { type: 'legend' })
+    const s = baseState()
+    s.sandbox = true
+    s.players[0].legend = mk(sett, 0)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // a ready rune to pay
+    const u = mk(furyUnit.id, 0, { buffs: 1 })
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    const recalled = r.state.players[0].zones.base.find((x) => x.iid === u.iid)
+    expect(recalled).toBeTruthy()
+    expect(recalled?.buffs).toBe(0) // buff spent
+    expect(r.state.players[0].legend?.exhausted).toBe(true) // Sett exhausted
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === u.iid)).toBe(false)
+  })
+
+  it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
+    const { spellEffect } = await import('./effects')
+    const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
+    expect(spellEffect(mkCard('Deal 3 to a unit at a battlefield. If it would die this turn, banish it instead.')).banishOnDeath).toBe(true)
+    const smite = injectCard('smite-test', 'Deal 3 to a unit at a battlefield. If it would die this turn, banish it instead.', { type: 'spell', energy: 0, power: {} })
+    const targetId = injectCard('smite-target', 'A unit.', { might: 2 })
+    const s = baseState()
+    const enemy = mk(targetId, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const sp = mk(smite, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemy.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(false)
+    expect(r.state.players[1].banished.some((x) => x.iid === enemy.iid)).toBe(true)
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === enemy.iid)).toBe(false)
+  })
+
   it('auto-parses named token creation (Sand Soldier / Bird / Mech)', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) =>
