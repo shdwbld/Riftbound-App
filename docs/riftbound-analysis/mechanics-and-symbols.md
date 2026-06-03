@@ -1,0 +1,78 @@
+# Riftbound Mechanics & Symbol Atlas
+
+A reference atlas for every symbol, icon, and keyword mechanic in the Riftbound TCG, drawn from the official symbol-reference page, the engine's keyword parser, and the effect parser. Intended for simulator developers.
+
+---
+
+## A. Symbols & icons
+
+| Symbol / icon | Glyph token (`:rb_*:`) | Meaning | Where on the card | Engine handling |
+|---|---|---|---|---|
+| **Wild Power** (rainbow swirl) | `:rb_rune_rainbow:` | A Power pip of any domain — can satisfy a Power requirement of any single domain. | Play-cost line (below the energy number); also appears in ability costs in the text box | Recognized: `accelerateCost()` and `repeatCost()` parse `:rb_rune_<domain>:` tokens including `rainbow` and record them in `KeywordCost.power` |
+| **Energy cost** (numeral in circle) | `:rb_energy_0:` … `:rb_energy_7:` | The Energy component of a card's play cost. Energy is domain-neutral; exhausting any rune contributes 1 Energy. | Top-right of the cost block on every non-Legend card | Recognized: stored in `Card.energy`; `accelerateCost()` / `repeatCost()` also parse `:rb_energy_N:` out of ability text |
+| **Might** (sword/shield glyph) | `:rb_might:` | A unit's combat stat — how much damage it deals and how hard it is to kill. Higher = stronger. | Left side of the unit stat block; also used inline in card text for "+N Might" modifiers | Recognized: `effects.ts` uses `(?::rb_might:\|might)` as the `MIGHT` regex constant; `levelBonus()` reads `+N :rb_might:` from the Level clause; `onPlayEffect()` / `spellEffect()` parse `tempMight`, `tempMightSelf`, `tempMightAll`, `buff` |
+| **Exhaust** (sideways-arrow / tap symbol) | `:rb_exhaust:` | Rotate this card 90° as a cost or trigger. An exhausted card cannot be exhausted again until it readies at the start of the controller's next turn. Sometimes called "Tap." | Inline in ability costs in the card text box; occasionally in card names for flavor | Recognized: the engine tracks ready/exhausted state on every permanent; `:rb_exhaust:` is a cost token parsed out of ability lines by the engine |
+| **Domain Power glyph — Fury** (flame) | `:rb_rune_fury:` | One Power pip of the Fury domain. | Play-cost line; inline in ability costs | Recognized: domain key `"fury"` in `Card.power` and in `KeywordCost.power`; parsed by `accelerateCost()` / `repeatCost()` |
+| **Domain Power glyph — Calm** (water drop) | `:rb_rune_calm:` | One Power pip of the Calm domain. | Play-cost line; inline in ability costs | Recognized: domain key `"calm"` — same handling as Fury |
+| **Domain Power glyph — Mind** (eye / spark) | `:rb_rune_mind:` | One Power pip of the Mind domain. | Play-cost line; inline in ability costs | Recognized: domain key `"mind"` — same handling as Fury |
+| **Domain Power glyph — Body** (fist / leaf) | `:rb_rune_body:` | One Power pip of the Body domain. | Play-cost line; inline in ability costs | Recognized: domain key `"body"` — same handling as Fury |
+| **Domain Power glyph — Order** (shield / crest) | `:rb_rune_order:` | One Power pip of the Order domain. | Play-cost line; inline in ability costs | Recognized: domain key `"order"` — same handling as Fury |
+| **Domain Power glyph — Chaos** (lightning bolt / chaos star) | `:rb_rune_chaos:` | One Power pip of the Chaos domain. | Play-cost line; inline in ability costs | Recognized: domain key `"chaos"` — same handling as Fury |
+| **Stacked domain glyphs** (two identical glyphs vertically) | Two consecutive `:rb_rune_<domain>:` tokens | Pay one Power of that domain per symbol shown. Two stacked Fury glyphs = pay 2 Fury. | Play-cost block | Recognized: `KeywordCost.power[domain]` stores the count; cost check loops over the map |
+| **Dividing line** (horizontal rule between two domain glyphs) | Rendered visually; no dedicated token — card data uses two separate cost entries or OR notation | Choose one option or the other; you do not pay both domain costs. | Play-cost block on cards that accept multiple domain alternatives | Partial: `autopay.ts` and cost-resolution logic may handle alternates; no single regex in `effects.ts` for this |
+| **Power Activation marker** (domain glyph + colon) | `:rb_rune_<domain>:` followed by `:` in text | Exhaust one rune of the specified domain to activate the ability. Unlike Energy, only a rune of the matching domain can pay it. | Ability text box, as part of an activation cost line | Recognized: activation costs parsed at the ability-trigger site in `engine.ts` |
+| **Recycle symbol** (circular arrow) | No dedicated `:rb_*:` token — the word "recycle" is used in card text | Put a rune or card from your board to the bottom of its deck as a cost. A recycled rune generates 1 Power of its domain. Unlike exhausting, the card physically leaves the board. | Inline in ability costs and reminder text | Partial: `effects.ts` detects "channel N runes" (channeling = drawing runes); the recycle-as-cost mechanic is understood structurally but not fully auto-resolved for all card types |
+| **Legend domain-identity icons** (domain glyphs in the top-left zone) | `:rb_rune_<domain>:` (displayed in legend zone) | Defines the deck's domain identity — every card in the main deck and rune deck must belong to at least one of those domains. The Legend cannot be killed or moved; it stays in the Legend Zone the whole game. | Top-left corner of Legend cards only | Recognized: `Card.domains[]` array; deck-validation uses this; engine stores Legend separately in `PlayerState` |
+| **Might Bonus box** (gear stat box on equipment cards) | `:rb_might:` used inline | Shows how much Might the gear adds to the attached unit. Applies only while the equipment remains attached. | Lower section of Gear / Equipment cards | Recognized: `Card.might` field on gear is read as an attach-bonus by the engine's equip logic |
+| **Gold gear token** | No `:rb_*:` token — produced by text like "play a Gold gear token" | A gear token worth 1 Power (any domain) when destroyed as a Reaction ability. The token must be ready. | Token card created by specific card effects | Recognized: `ParsedEffect.goldTokens` counter; `hasUntargetedPart()` includes it; engine spawns token objects |
+| **Recruit unit token** | No `:rb_*:` token — produced by text like "play N Recruit unit tokens" | A vanilla unit token (standard Might, no abilities) placed at a battlefield. | Token produced by unit/spell text | Recognized: `ParsedEffect.recruits` counter; spawned automatically |
+| **Named unit tokens** (Sprite, Sand Soldier, Bird, Mech) | No `:rb_*:` token — identified by name in text | Specific unit tokens with defined Might values; "here" variants enter at the source unit's battlefield. | Produced by specific card effects | Recognized: `ParsedEffect.namedToken` object with `name`, `count`, `exhausted`, `temporary`, `here` fields |
+| **[>] activated-ability marker** | `[>]` bracket token | Separates a cost from its effect in an activated ability line; reads "pay the cost to the left, get the effect to the right." | Ability text box, in activation lines | Recognized: `effects.ts` uses a `[>]` regex (`\[(?:&gt;\|>)\]`) to detect gated `[Level N][>]` clauses |
+| **Buff counter (+1 Might token)** | Text-only — described as "buff" in card text | A +1 Might permanent counter placed on a unit; max one per unit. Can be spent as a resource on some cards. | Not a glyph — tracked as a state counter on unit objects | Recognized: `ParsedEffect.buff`, `buffSelf`, `buffExcludesSelf`, `spendBuff` fields all handled |
+
+---
+
+## B. Keywords & mechanics
+
+| Keyword `[X]` | Plain-English rule | Where shown | Engine handling (`keywords.ts` field) |
+|---|---|---|---|
+| `[Tank]` | Must be assigned lethal damage before any non-Tank defenders at the same battlefield. Acts as a mandatory damage sink. | Ability text box (keyword line) | `Keywords.tank: boolean` — parsed; engine routes damage assignment to Tank units first |
+| `[Shield N]` | +N Might while defending in a showdown. Does not help when attacking. | Ability text box | `Keywords.shield: number` — parsed; combat resolver adds shield value to Might when the unit is a defender |
+| `[Assault N]` | +N Might while attacking in a showdown. Does not apply while defending. | Ability text box; also inline from `[Repeat]` example card | `Keywords.assault: number` — parsed; combat resolver adds assault value to Might when unit is attacker; `ParsedEffect.grantAssault` / `grantAssaultHere` for temporary grants |
+| `[Deflect N]` | Opponents must pay N additional Power to target this unit with a spell or ability. If they cannot or choose not to, they cannot target it. | Ability text box | `Keywords.deflect: number` — parsed; targeting checks add the deflect surcharge |
+| `[Accelerate]` | Optional additional cost. If paid, the unit enters play ready instead of exhausted, allowing it to act on the same turn it arrives. | Ability text box + reminder text with extra cost tokens | `Keywords.accelerate: boolean` — parsed; `accelerateCost()` extracts the cost from the reminder parenthetical; engine respects the ready-on-entry flag |
+| `[Repeat]` | Spell keyword. You may pay the additional cost (shown in parentheses or inline tokens) to resolve the spell's effect again. Some `[Repeat]` variants allow multiple repetitions declared upfront. | Ability text box on spell cards | `Keywords.repeat: boolean` — parsed; `repeatCost()` extracts the per-repeat cost; engine offers repeat-resolution loop |
+| `[Ambush]` | May be played at Reaction speed to a battlefield where you already have units (you contest it). Individual cards may explicitly extend this to any battlefield. | Ability text box | `Keywords.ambush: boolean` — parsed; play-speed and destination checks consult this flag |
+| `[Ganking]` | May move directly from one battlefield to another (not just to/from base). | Ability text box | `Keywords.ganking: boolean` — parsed; movement phase allows gank-moves for units with this flag; `ParsedEffect.grantGanking` handles temporary grants |
+| `[Hidden]` | May be placed facedown at a battlefield the controller controls. | Ability text box | `Keywords.hidden: boolean` — parsed; engine tracks facedown state and flips on reveal |
+| `[Hunt N]` | This unit grants N XP to its controller when it conquers or holds a battlefield. XP accumulates on the Legend throughout the game. | Ability text box (often on unit stat line) | `Keywords.hunt: number` — parsed; conquer/hold resolution adds `hunt` value to `PlayerState.xp` |
+| `[Legion]` | Gains a bonus if you have already played another card this turn. | Ability text box | `Keywords.legion: boolean` — parsed; engine checks `turnCardsPlayed > 0` to activate bonus |
+| `[Level N]` | The unit (or spell effect) gains a stated buff/upgrade while its controller has ≥ N XP. No spending required — it's always active once the threshold is met. Keywords appearing after a `[Level N]` marker are gated to that XP threshold. | Ability text box; often followed by "+N Might" or "enters ready" | `Keywords.level: number` — parsed; `keywordsAt(card, xp)` gates post-level keywords; `levelBonus()` reads the +Might / enters-ready bonus; `ParsedEffect.condition.kind = 'xpAtLeast'` gates resource effects |
+| `[Quick-Draw]` | Reaction-speed gear. Attaches to a unit the moment it is played, before opponents can respond. | Ability text box on Gear cards | `Keywords.quickDraw: boolean` — parsed; play-speed resolver uses Reaction timing for Quick-Draw gear |
+| `[Reaction]` | May be played during a Closed State — i.e., in response to an opponent's play or while a chain is forming. | Ability text box (speed line) | `Keywords.reaction: boolean` — parsed; play-permission checks consult this to allow closed-state plays |
+| `[Action]` | May be played during an Open State, such as inside a showdown. | Ability text box (speed line) | `Keywords.action: boolean` — parsed; play-permission checks consult this to allow open-state / showdown plays |
+| `[Vision]` | Look at (and optionally filter) the top card(s) of your deck when this card is played. | Ability text box | `Keywords.vision: boolean` — parsed; engine auto-triggers a deck-look on play |
+| `[Predict]` | Look at the top card of your Main Deck; you may recycle it. Reached from different triggers than Vision but the look effect is similar. | Ability text box | `Keywords.predict: boolean` — parsed; engine auto-triggers deck-look + optional recycle |
+| `[Weaponmaster]` | Automatically attaches an equipment card when this unit enters play. | Ability text box | `Keywords.weaponmaster: boolean` — parsed; enter-play hook searches for and attaches the specified gear |
+| `[Backline]` | Does not participate as a normal frontline combatant — deals no showdown damage and takes none. | Ability text box | `Keywords.backline: boolean` — parsed; combat resolver excludes Backline units from damage assignment |
+| `[Temporary]` | Defeated at the start of its controller's next turn. | Ability text box; also granted to tokens by other cards | `Keywords.temporary: boolean` — parsed with a guard: if `[Temporary]` only appears in a "give/with [Temporary]" grant context, it is NOT set on the source card (prevents Sprite-makers from flagging themselves); beginning-phase hook destroys Temporary units |
+| `[Equip]` | Gear keyword. This card can be attached to a unit you control, granting its bonuses while attached. Its base rules text goes inactive after attaching; its lower Effect Text becomes active. | Ability text box on Gear cards | `Keywords.equip: boolean` — parsed; engine handles attach/detach state and swaps active text section |
+| `[Deathknell]` | Triggers an effect when this unit is defeated. | Ability text box | `Keywords.deathknell: boolean` — parsed; defeat-resolution checks for the Deathknell flag and fires the on-death trigger |
+| `[Stun]` | A targeted removal of a unit's readied state — the stunned unit is exhausted and cannot ready at the start of its controller's next turn (misses a turn of activations). | Inline in ability text (not a top-line keyword chip) | Partial: `ParsedEffect.stun: number` — detected by regex in `effects.ts`; effect resolver applies exhausted state; the "skip-ready" penalty is handled by the engine's beginning-phase logic |
+
+---
+
+## Sources
+
+1. **HTML symbol reference** — `C:\Users\bisma\Downloads\Riftbound Icons_ Every Card Symbol Explained.html`  
+   (archived from `https://riftboundsymbols.com/riftbound-icons/`, captured 2026-04-10)  
+   Sections used: "Card Cost Symbols" table, "In-Text Symbols" table and paragraphs, "Reading the Effect Box" example card captions, and the Mosstomper / Rengar card captions.
+
+2. **Keyword parser** — `C:\Users\bisma\Downloads\Riftbound App\src\engine\keywords.ts`  
+   `parseKeywords()` and `applyKeywordToken()` define every recognized `[Keyword]` token; `keywordsAt()` handles level-gated keywords; `accelerateCost()` and `repeatCost()` extract keyword-linked costs.
+
+3. **Effect parser** — `C:\Users\bisma\Downloads\Riftbound App\src\engine\effects.ts`  
+   `ParsedEffect` interface lists every auto-resolvable effect field; `parse()` contains all glyph/phrase regexes including the `MIGHT` constant `(?::rb_might:|might)`, the `[>]` level-gate pattern, and all buff / damage / bounce / token patterns.
+
+4. **Card data token inventory** — `C:\Users\bisma\Downloads\Riftbound App\src\data\cards.generated.json`  
+   All unique `:rb_*:` glyph tokens found: `:rb_energy_0:` through `:rb_energy_7:`, `:rb_exhaust:`, `:rb_might:`, `:rb_rune_body:`, `:rb_rune_calm:`, `:rb_rune_chaos:`, `:rb_rune_fury:`, `:rb_rune_mind:`, `:rb_rune_order:`, `:rb_rune_rainbow:`.
