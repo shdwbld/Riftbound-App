@@ -495,6 +495,25 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     }
     if (n) lines.push(`Returned ${n} ${type === 'card' ? 'card' : type}(s) from trash to hand.`)
   }
+  if (e.playUnitFromTrash) {
+    // Play a unit from your trash into base, ignoring its cost (Soulgorger,
+    // Glasc Mixologist, …). Auto-picks the highest-cost qualifier.
+    const { maxEnergy, maxPower } = e.playUnitFromTrash
+    const stats = (c: EngineCard) => {
+      const d = getCard(c.cardId) as { type?: string; energy?: number; power?: Record<string, number> } | undefined
+      const pw = d?.power ? Object.values(d.power).reduce((a, b) => a + (b || 0), 0) : 0
+      return { isUnit: d?.type === 'unit', energy: d?.energy ?? 0, power: pw }
+    }
+    const pick = p.zones.trash
+      .filter((c) => { const st = stats(c); return st.isUnit && (maxEnergy == null || st.energy <= maxEnergy) && (maxPower == null || st.power <= maxPower) })
+      .sort((a, b) => (stats(b).energy + stats(b).power) - (stats(a).energy + stats(a).power))[0]
+    if (pick) {
+      const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
+      const [card] = p.zones.trash.splice(i, 1)
+      p.zones.base.push({ ...card, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+      lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (ignoring cost).`)
+    }
+  }
   if (e.tempMightAll) {
     // Board-wide temp Might to all the controller's units (Grand Strategem).
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(

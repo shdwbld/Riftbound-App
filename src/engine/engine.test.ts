@@ -583,6 +583,28 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.hand.some((x) => x.iid === a.iid || x.iid === b.iid)).toBe(true)
   })
 
+  it('auto-parses "play a unit from your trash, ignoring its cost" (+ cost cap)', async () => {
+    const { spellEffect } = await import('./effects')
+    const mkCard = (text: string) =>
+      ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
+    expect(spellEffect(mkCard('Play a unit from your trash, ignoring its Energy cost.')).playUnitFromTrash).toEqual({ maxEnergy: null, maxPower: null })
+    expect(spellEffect(mkCard('Play a unit costing no more than :rb_energy_3: and no more than :rb_rune_rainbow: from your trash, ignoring its cost.')).playUnitFromTrash).toEqual({ maxEnergy: 3, maxPower: 1 })
+  })
+
+  it('playUnitFromTrash: a played unit brings a qualifying trash unit into base', () => {
+    const uid = injectCard('put-soulgorger', 'When you play me, play a unit from your trash, ignoring its Energy cost.', { type: 'unit', might: 1, energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(uid, 0)
+    s.players[0].zones.hand.push(u)
+    const dead = mk(furyUnit.id, 0)
+    s.players[0].zones.trash.push(dead)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    // The trash unit is now in base (exhausted), no longer in trash.
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === dead.iid)).toBe(false)
+    expect(r.state.players[0].zones.base.some((x) => x.iid === dead.iid && x.exhausted)).toBe(true)
+  })
+
   it('auto-parses named token creation (Sand Soldier / Bird / Mech)', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) =>
