@@ -47,7 +47,8 @@ const PATTERNS: Pattern[] = [
   { event: 'death', scope: 'self', re: /when(?:ever)?\s+(?:i['’]?m|i am|this(?:\s+unit)?\s+is|this(?:\s+unit)?)\s+(?:defeated|killed|destroyed|dies)/i },
   { event: 'conquer', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+conquers?/i },
   { event: 'conquer', scope: 'global', re: /when(?:ever)?\s+you\s+conquer/i },
-  { event: 'hold', scope: 'global', re: /when(?:ever)?\s+you\s+hold/i },
+  // "When you hold", "When you or an ally hold", "When an ally holds" (Vex - Gloomist).
+  { event: 'hold', scope: 'global', re: /when(?:ever)?\s+(?:you|an? ally)(?:\s+or\s+(?:you|an? ally))?\s+holds?/i },
   { event: 'startOfTurn', scope: 'global', re: /(?:at\s+the\s+)?(?:start|beginning)\s+of\s+(?:your|the|each)\s+(?:turn|beginning\s+phase)/i },
   { event: 'attack', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+attacks?/i },
   { event: 'defend', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+defends?/i },

@@ -53,10 +53,38 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
   // Flat unconditional "I cost N less" — but not the for-each / conditional /
   // play-from-elsewhere variants handled above. [Legion] gates it on having
   // already played a card this turn (Noxus Hopeful).
+  // Allow optional bracket markers (e.g. the "[>]" activation arrow, stored as
+  // "[&gt;]") between a [Level N] tag and "I cost".
+  const LVL_COST = /\[level\s*\d+\](?:\[[^\]]*\]|\s)*i cost/
   m = t.match(/i cost :rb_energy_(\d+): less\b/)
-  if (m && !/less for|less if|less to play from/.test(t)) {
+  if (m && !/less for|less if|less to play from/.test(t) && !LVL_COST.test(t)) {
     const legionGated = /\[legion\]/.test(t)
     if (!legionGated || (p.cardsPlayedThisTurn ?? 0) >= 1) energy -= Number(m[1])
+  }
+
+  // Level-gated cost reductions ("[Level N] I cost <cost> less[ instead]" —
+  // Master Yi - Unstoppable). Higher tiers REPLACE lower; use the best tier the
+  // controller's XP has reached. Reduces Energy and colored Power.
+  let powerCut: Partial<Record<Domain, number>> | null = null
+  if (LVL_COST.test(t)) {
+    const xp = p.xp ?? 0
+    let bestLvl = -1
+    const reLvl = /\[level\s*(\d+)\](?:\[[^\]]*\]|\s)*i cost ([^.]*?)\s*less/gi
+    let lm: RegExpExecArray | null
+    while ((lm = reLvl.exec(t))) {
+      const lvl = parseInt(lm[1], 10)
+      if (lvl > xp || lvl <= bestLvl) continue
+      bestLvl = lvl
+      const seg = lm[2]
+      const eM = seg.match(/:rb_energy_(\d+):/)
+      const redP: Partial<Record<Domain, number>> = {}
+      for (const rm of seg.matchAll(/:rb_rune_([a-z]+):/gi)) {
+        const dd = rm[1].toLowerCase() as Domain
+        redP[dd] = (redP[dd] ?? 0) + 1
+      }
+      energy = base.energy - (eM ? parseInt(eM[1], 10) : 0) // tiers replace, not stack
+      powerCut = redP
+    }
   }
 
   // Ornn's Forge: non-token gear you play costs 1 less while you control it.
@@ -68,7 +96,13 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
   // a reduction): Vaults of Helia bumps non-token units this turn.
   if (card.type === 'unit' && card.supertype !== 'token') energy += p.unitCostBump ?? 0
 
-  return { energy, power: base.power }
+  let power = base.power
+  if (powerCut) {
+    power = { ...base.power }
+    for (const [dd, n] of Object.entries(powerCut) as [Domain, number][])
+      power[dd] = Math.max(0, (power[dd] ?? 0) - n)
+  }
+  return { energy, power }
 }
 
 /** Auto-pay a card using its state-aware effective cost. */

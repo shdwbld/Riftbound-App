@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor } from './engine'
+import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME, GOLD_TOKEN_ID } from './setup'
 import type { Deck } from '../types/deck'
@@ -1490,6 +1490,33 @@ describe('Phase A — cost increases + Repeat grant/discount', () => {
   })
 })
 
+describe('Master Yi — Unstoppable', () => {
+  const unst = () => CARDS.find((c) => c.type === 'unit' && c.name.startsWith('Master Yi - Unstoppable'))
+
+  it('level-tier cost reductions cut Energy and Calm by the best tier reached', () => {
+    const card = unst()
+    if (!card) return
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, card)).toEqual({ energy: 12, power: { calm: 3 } }) // xp 0 — no tier
+    s.players[0].xp = 6
+    expect(effectiveCostOf(s, 0, card)).toEqual({ energy: 8, power: { calm: 1 } }) // [Level 6] −4/−2
+    s.players[0].xp = 11
+    expect(effectiveCostOf(s, 0, card)).toEqual({ energy: 6, power: { calm: 0 } }) // [Level 11] −6/−3
+  })
+
+  it('[Level 16] makes it unchoosable by enemy spells', () => {
+    const card = unst()
+    if (!card) return
+    const spellId = injectCard('uns-spell', 'Deal 3 to a unit.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(card.id, 1) // enemy unit
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 1 }
+    expect(getLegalTargets(s, CARD_INDEX[spellId], 0)).toContain(u.iid) // xp 0 → targetable
+    s.players[1].xp = 16
+    expect(getLegalTargets(s, CARD_INDEX[spellId], 0)).not.toContain(u.iid) // xp 16 → untargetable
+  })
+})
+
 describe('Master Yi — conditional + legend Might', () => {
   // Run a 1-defender showdown; return whether the defender survived.
   function defenderSurvives(s: MatchState, defIid: string, attacker: EngineCard): boolean {
@@ -1697,6 +1724,37 @@ describe("Jinx - Loose Cannon legend (conditional, no double-draw)", () => {
     for (let i = 0; i < 12; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
     const baseline = beginTurn(s).players[0].zones.hand.length
     expect(withJinx - baseline).toBe(1)
+  })
+})
+
+describe('Vex - Gloomist legend (draws only on hold, not every turn)', () => {
+  const legendText = 'When you or an ally hold, you may exhaust me to draw 1.'
+  const legendId = injectCard('vex-gloomist-test', legendText, { type: 'legend' })
+
+  // Cards gained over a Beginning Phase, with vs. without actually holding a
+  // battlefield, isolating the legend's hold-draw from the constant regular draw.
+  function gain(holding: boolean): number {
+    const s = baseState()
+    s.players[0].legend = mk(legendId, 0)
+    for (let i = 0; i < 12; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    if (holding) s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    return beginTurn(s).players[0].zones.hand.length
+  }
+
+  it('draws its bonus card only when holding a battlefield', () => {
+    expect(gain(true) - gain(false)).toBe(1)
+  })
+
+  it('does not auto-draw every turn when holding nothing', () => {
+    // Regression: "When you OR AN ALLY hold" was not recognized as a hold
+    // trigger, so the parsed "draw 1" fell through to the legend auto-activation
+    // and fired every Beginning Phase regardless of holding. Now a non-holding
+    // turn matches a no-ability legend exactly (just the one regular draw).
+    const baselineId = injectCard('vex-baseline', 'A legend with no beginning-phase ability.', { type: 'legend' })
+    const s = baseState()
+    s.players[0].legend = mk(baselineId, 0)
+    for (let i = 0; i < 12; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    expect(gain(false)).toBe(beginTurn(s).players[0].zones.hand.length)
   })
 })
 

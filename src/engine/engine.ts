@@ -2974,6 +2974,14 @@ export function isValidTarget(state: MatchState, iid: string): boolean {
   return unitsInPlay(state).some((u) => u.iid === iid)
 }
 
+/** Whether a unit can't be chosen by an enemy's spells/abilities right now —
+ *  e.g. Master Yi - Unstoppable "[Level 16] I can't be chosen by enemy spells
+ *  and abilities" while its controller has 16+ XP. */
+function untargetableByEnemy(state: MatchState, u: EngineCard): boolean {
+  const m = (getCard(u.cardId)?.text ?? '').toLowerCase().match(/\[level\s*(\d+)\][^.]*?can'?t be chosen by enemy spells/)
+  return !!m && (state.players[u.owner]?.xp ?? 0) >= parseInt(m[1], 10)
+}
+
 /** The unit iids a card may legally target right now, honoring the effect's
  *  target scope (enemy / friendly / any) and whether it must be at a
  *  battlefield. Pass `player` (the caster) to apply enemy/friendly filtering. */
@@ -2984,6 +2992,8 @@ export function getLegalTargets(state: MatchState, card: Card, player?: PlayerId
   if (player != null) {
     if (e.targetScope === 'enemy') units = units.filter((u) => u.owner !== player)
     else if (e.targetScope === 'friendly') units = units.filter((u) => u.owner === player)
+    // Enemy units that can't be chosen by enemy spells (Unstoppable [Level 16]).
+    units = units.filter((u) => u.owner === player || !untargetableByEnemy(state, u))
   }
   return units.map((u) => u.iid)
 }
