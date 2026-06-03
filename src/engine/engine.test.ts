@@ -1880,6 +1880,34 @@ describe('Vi deck — combat/targeting', () => {
     expect(effectiveCostOf(s, 0, CARD_INDEX[id]).energy).toBe(1) // −2
   })
 
+  it('parses move-to-base: scope from text, not mis-tagged on token-spawn', async () => {
+    const { spellEffect } = await import('./effects')
+    const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
+    const fof = spellEffect(mkCard('Move a unit from a battlefield to its base.'))
+    expect(fof.moveToBase).toBe(true)
+    expect(fof.battlefieldOnly).toBe(true)
+    expect(fof.targetScope).toBe('any')
+    expect(spellEffect(mkCard('Move an enemy unit from a battlefield to its base.')).targetScope).toBe('enemy')
+    // "play a … token to your base" has no "move" → must NOT be a move-to-base.
+    expect(spellEffect(mkCard('Play a 3 :rb_might: Mech unit token to your base.')).moveToBase).toBe(false)
+  })
+
+  it('Fight or Flight: moves a chosen battlefield unit to its owner base (exhausted)', () => {
+    const spellId = injectCard('fof-test', 'Move a unit from a battlefield to its base.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    // It's a targeted spell.
+    expect(getLegalTargets(s, CARD_INDEX[spellId], 0)).toContain(enemy.iid)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemy.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(false)
+    expect(r.state.players[1].zones.base.some((u) => u.iid === enemy.iid && u.exhausted)).toBe(true)
+  })
+
   it('Right of Conquest: draws 1 per battlefield you control', () => {
     const id = injectCard('roc-test', 'When you play me, draw 1 for each battlefield you control.', { energy: 0, power: {} })
     const s = baseState()

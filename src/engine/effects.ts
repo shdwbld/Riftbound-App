@@ -75,6 +75,11 @@ export interface ParsedEffect {
   tempMight: number
   /** Return a chosen unit to its owner's hand ("Retreat"). Scope: whose unit. */
   bounce: 'friendly' | 'enemy' | 'any' | null
+  /** Move a chosen unit from a battlefield to its owner's base ("move a unit from
+   *  a battlefield to its base" — Fight or Flight, Isolate, Emperor's Divide). The
+   *  target must be on a battlefield; `targetScope` says whose, `targetCount` how
+   *  many. Not a recall (keeps damage); resolved via sendUnitToBase. */
+  moveToBase: boolean
   /** Grant a chosen friendly unit a one-shot death shield ("the next time it
    *  would die this turn, heal it, exhaust it, and recall it instead" —
    *  Highlander, Tactical Retreat). */
@@ -147,6 +152,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   kill: 0,
   tempMight: 0,
   bounce: null,
+  moveToBase: false,
   deathShield: false,
   banishOnDeath: false,
   returnFromTrash: null,
@@ -165,7 +171,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.deathShield
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.moveToBase || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.deathShield
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
@@ -326,6 +332,16 @@ function parse(text: string): ParsedEffect {
     eff.bounce = bounceM[1]?.trim() === 'friendly' ? 'friendly' : bounceM[1]?.trim() === 'enemy' ? 'enemy' : 'any'
     hit = true
   }
+  // Move a unit (on a battlefield) to its base — "move a unit from a battlefield
+  // to its base" (Fight or Flight, Maddened Marauder), "move an enemy unit … to
+  // its base" (Isolate), "move … units … to their base" (Emperor's Divide). Not a
+  // recall (keeps damage). Excludes the token-spawn "play a … token to your base"
+  // (those have no "move") and the self-move "move me to your base" (no "unit").
+  if (/\bmove\b[^.]*?\bunits?\b[^.]*?\bto (?:its|their|your) base\b/.test(t)) {
+    eff.moveToBase = true
+    eff.battlefieldOnly = true // a unit at base can't be moved to base
+    hit = true
+  }
   // One-shot death shield: "the next time it would die this turn, heal it,
   // exhaust it, and recall it instead" (Highlander, Tactical Retreat).
   if (/the next time it would die this turn[^.]*?(?:heal it|recall)/.test(t)) {
@@ -437,7 +453,9 @@ function parse(text: string): ParsedEffect {
   // Resolve targeting metadata for any targeted part.
   if (hasTargetedPart(eff)) {
     eff.targetCount = multiM ? num(multiM[1]) : Math.max(1, eff.stun)
-    eff.battlefieldOnly = /at a battlefield/.test(t)
+    // A move-to-base target must be on a battlefield even when the text reads
+    // "from a battlefield" rather than "at a battlefield".
+    eff.battlefieldOnly = eff.battlefieldOnly || /at a battlefield/.test(t)
     eff.targetScope =
       eff.bounce && eff.bounce !== 'any'
         ? eff.bounce // an explicit "return a friendly/enemy unit"
@@ -447,8 +465,8 @@ function parse(text: string): ParsedEffect {
             ? 'enemy'
             : eff.tempMight > 0 || eff.buff > 0 || eff.grantAssault > 0 || eff.grantGanking
               ? 'friendly' // buffs / keyword grants help your own units
-              : eff.bounce
-                ? 'any' // a generic "return a unit" can hit either side
+              : eff.bounce || eff.moveToBase
+                ? 'any' // a generic "return / move a unit" can hit either side
                 : 'enemy' // damage / kill / debuff default to enemies
   }
 

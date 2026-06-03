@@ -2614,6 +2614,11 @@ function resolveSpellEffects(
         s = log(s, controller, `${card.name}: ${e.tempMight > 0 ? '+' : ''}${e.tempMight} Might this turn.`)
       }
       if (e.bounce) s = bounceUnitToHand(s, t, controller, card.name, e.channelExhausted)
+      if (e.moveToBase) {
+        const mu = findUnitAnywhere(s, t)
+        const nm = getCard(mu?.cardId ?? '')?.name ?? 'a unit'
+        if (mu && sendUnitToBase(s, t)) s = log(s, controller, `${card.name}: moved ${nm} to its base.`)
+      }
       if (e.deathShield) {
         const su = findUnitAnywhere(s, t)
         if (su) { su.deathShield = true; s = log(s, controller, `${card.name}: ${getCard(su.cardId)?.name} is protected from its next death this turn.`) }
