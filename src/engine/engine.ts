@@ -465,6 +465,73 @@ function makeBfApi(s: MatchState): BfApi {
         note(player, `+${n} Might this turn to ${getCard(u.cardId)?.name}.`)
       }
     },
+    payEnergy(player, n) {
+      const p = s.players[player]
+      const poolE = Math.min(n, p.pool?.energy ?? 0)
+      const need = n - poolE
+      const ready = p.zones.runePool.filter((r) => !r.exhausted)
+      if (ready.length < need) return false
+      if (p.pool) p.pool.energy -= poolE
+      for (let i = 0; i < need; i++) ready[i].exhausted = true
+      return true
+    },
+    payPowerAny(player, n) {
+      const p = s.players[player]
+      const ready = p.zones.runePool.filter((r) => !r.exhausted)
+      if (ready.length < n) return false
+      for (let i = 0; i < n; i++) {
+        const idx = p.zones.runePool.findIndex((r) => r.iid === ready[i].iid)
+        const [r] = p.zones.runePool.splice(idx, 1)
+        p.zones.runeDeck.push({ ...r, exhausted: false, damage: 0 })
+      }
+      return true
+    },
+    draw(player, n) {
+      const drew = drawN(s.players[player], n)
+      if (drew) note(player, `Drew ${drew}.`)
+    },
+    millTop(player, n) {
+      const p = s.players[player]
+      let milled = 0
+      for (let i = 0; i < n && p.zones.mainDeck.length > 0; i++) {
+        p.zones.trash.push(p.zones.mainDeck.shift()!)
+        milled++
+      }
+      if (milled) note(player, `Milled ${milled} card(s) to the trash.`)
+    },
+    drawPerOtherControlledBF(player, bfIndex) {
+      const count = s.battlefields.filter((b, i) => i !== bfIndex && b.controller === player).length
+      if (count > 0) {
+        drawN(s.players[player], count)
+        note(player, `Drew ${count} (one per other battlefield held).`)
+      }
+    },
+    readyLegend(player) {
+      const lg = s.players[player].legend
+      if (lg) {
+        lg.exhausted = false
+        note(player, `Readied legend.`)
+      }
+    },
+    playGoldToken(player) {
+      spawnGold(s.players[player], 1, s.turn)
+      note(player, `Created a Gold token.`)
+    },
+    spendBuffHere(player, bfIndex) {
+      const u = s.battlefields[bfIndex]?.units.find((x) => x.owner === player && (x.buffs ?? 0) > 0)
+      if (!u) return false
+      u.buffs = (u.buffs ?? 0) - 1
+      note(player, `Spent a buff.`)
+      return true
+    },
+    hasMightyHere(player, bfIndex) {
+      return !!s.battlefields[bfIndex]?.units.some((x) => x.owner === player && mightOf(x) >= 5)
+    },
+    score(player, n) {
+      s.players[player].points += n
+      emit({ kind: 'score', player, amount: n })
+      note(player, `Scored ${n} point(s).`)
+    },
     log: (text) => note(null, text),
   }
 }
@@ -478,20 +545,23 @@ function bfSpellPlayed(s: MatchState, player: PlayerId): MatchState {
   return s
 }
 
-/** Apply a battlefield's "when you conquer here" passive to the conqueror. */
+/** Apply a battlefield's "when you conquer here" passive to the conqueror. A
+ *  per-battlefield script (if any) takes precedence over the generic parser. */
 function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number): MatchState {
   if (s.winner !== null) return s
   const bf = s.battlefields[bfIndex]
-  const passive = battlefieldPassive(bf.cardId)
   const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
+  const script = bfScript(bf.cardId)
+  if (script?.onConquer) {
+    script.onConquer(makeBfApi(s), player, bfIndex)
+    return s
+  }
+  const passive = battlefieldPassive(bf.cardId)
   if (passive.onConquer)
     for (const line of applyParsed(s, s.players[player], passive.onConquer))
       s = log(s, player, `${bfName} (conquer): ${line}`)
   else if (passive.manualConquer)
     s = log(s, player, `${bfName} (conquer): resolve its effect manually.`)
-  // Scripted on-conquer (Sigil of the Storm, Targon's Peak).
-  const script = bfScript(bf.cardId)
-  if (script?.onConquer) script.onConquer(makeBfApi(s), player, bfIndex)
   return s
 }
 
@@ -768,9 +838,14 @@ export function beginTurn(state: MatchState): MatchState {
   for (const bf of s.battlefields) {
     if (bf.controller !== ap) continue
     // The Grand Plaza: hold with enough units here → win.
-    const win = bfScript(bf.cardId)?.winOnUnitsHere
-    if (win && bf.units.filter((u) => u.owner === ap).length >= win)
+    const script = bfScript(bf.cardId)
+    if (script?.winOnUnitsHere && bf.units.filter((u) => u.owner === ap).length >= script.winOnUnitsHere)
       return endGame(s, ap)
+    // Scripted "when you hold here" takes precedence over the generic parser.
+    if (script?.onHold) {
+      script.onHold(makeBfApi(s), ap, s.battlefields.indexOf(bf))
+      continue
+    }
     const passive = battlefieldPassive(bf.cardId)
     const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
     if (passive.onHold)

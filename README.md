@@ -1,8 +1,14 @@
-# Riftbound — Online Simulator (unofficial)
+# Riftbound — Online Simulator (unofficial, private)
 
-A free, fan-made platform to browse cards, build decks, and play **Riftbound**
-(the League of Legends TCG) online with an auto-enforcing rules engine. Not
-affiliated with or endorsed by Riot Games. **Free forever — no paywalls.**
+A fan-made platform to browse cards, build decks, and play **Riftbound** (the
+League of Legends TCG) online with an auto-enforcing rules engine.
+
+> **Private fan project.** Built purely for personal use among me and my friends —
+> not a public product, not for redistribution, and not made for general use. This
+> is unofficial and **unaffiliated with, not endorsed or sponsored by, Riot Games**.
+> *Riftbound*, *League of Legends*, all card text, and artwork are the property of
+> Riot Games, Inc., used here under Riot's “Legal Jibber Jabber” fan-content policy.
+> No money is made from this and no copyright infringement is intended.
 
 ## Features
 

@@ -75,8 +75,16 @@ export default function Layout() {
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
         <Outlet />
       </main>
-      <footer className="border-t border-white/10 px-4 py-3 text-center text-xs text-white/30">
-        Fan-made Riftbound simulator · Not affiliated with Riot Games
+      <footer className="border-t border-white/10 px-4 py-4 text-center text-[11px] leading-relaxed text-white/30">
+        <p>
+          Private, non-commercial fan project — made for personal use among friends, not a public product.
+        </p>
+        <p className="mx-auto mt-1 max-w-2xl">
+          Unofficial and unaffiliated with, and not endorsed or sponsored by, Riot Games. <em>Riftbound</em>,
+          <em> League of Legends</em>, all card text, and artwork are the property of Riot Games, Inc. Created
+          under Riot's “Legal Jibber Jabber” fan-content policy. No copyright infringement intended; no money is
+          made from this. Not for redistribution.
+        </p>
       </footer>
     </div>
   )

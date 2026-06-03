@@ -21,6 +21,26 @@ export interface BfApi {
   revealTopSpellElseRecycle(player: number): void
   /** Give +N Might this turn to one of the player's units at this battlefield. */
   tempMightToUnitHere(player: number, bfIndex: number, n: number): void
+  /** Spend N Energy (pool first, then exhaust ready runes). Returns false (and
+   *  spends nothing) if the player can't afford it. */
+  payEnergy(player: number, n: number): boolean
+  /** Spend N Power by recycling N ready runes of any domain. */
+  payPowerAny(player: number, n: number): boolean
+  draw(player: number, n: number): void
+  /** Mill the top N cards of the player's Main Deck to the trash. */
+  millTop(player: number, n: number): void
+  /** Draw 1 for each OTHER battlefield the player controls. */
+  drawPerOtherControlledBF(player: number, bfIndex: number): void
+  /** Ready (un-exhaust) the player's legend. */
+  readyLegend(player: number): void
+  /** Create a Gold gear token on the player's base (exhausted). */
+  playGoldToken(player: number): void
+  /** Spend a buff from one of the player's buffed units here. Returns success. */
+  spendBuffHere(player: number, bfIndex: number): boolean
+  /** Whether the player has a Mighty (≥5 Might) unit here. */
+  hasMightyHere(player: number, bfIndex: number): boolean
+  /** Add N points to the player. */
+  score(player: number, n: number): void
   log(text: string): void
 }
 
@@ -48,6 +68,8 @@ export interface BattlefieldScript {
   // --- Batch 2: trigger events --------------------------------------------
   /** Resolved when you conquer this battlefield (Sigil of the Storm, Targon's Peak). */
   onConquer?: (api: BfApi, player: number, bfIndex: number) => void
+  /** Resolved when you hold this battlefield at the start of your turn. */
+  onHold?: (api: BfApi, player: number, bfIndex: number) => void
   /** Resolved when you defend here in a showdown (Ravenbloom Conservatory). */
   onDefend?: (api: BfApi, player: number, bfIndex: number) => void
   /** Resolved when the controller plays a spell (Abandoned Hall). */
@@ -78,6 +100,15 @@ const SCRIPTS: Record<string, BattlefieldScript> = {
   "Targon's Peak": { onConquer: (api, p) => api.readyRunes(p, 2) },
   'Ravenbloom Conservatory': { onDefend: (api, p) => api.revealTopSpellElseRecycle(p) },
   'Abandoned Hall': { onSpellPlayed: (api, p, i) => api.tempMightToUnitHere(p, i, 1) },
+
+  // --- Batch 3a: forced/auto + optional-cost (auto-paid when affordable) ----
+  Minefield: { onConquer: (api, p) => api.millTop(p, 2) },
+  'Seat of Power': { onConquer: (api, p, i) => api.drawPerOtherControlledBF(p, i) },
+  'Hall of Legends': { onConquer: (api, p) => { if (api.payEnergy(p, 1)) api.readyLegend(p) } },
+  'Treasure Hoard': { onConquer: (api, p) => { if (api.payEnergy(p, 1)) api.playGoldToken(p) } },
+  'Sunken Temple': { onConquer: (api, p, i) => { if (api.hasMightyHere(p, i) && api.payEnergy(p, 1)) api.draw(p, 1) } },
+  'Monastery of Hirana': { onConquer: (api, p, i) => { if (api.spendBuffHere(p, i)) api.draw(p, 1) } },
+  'Power Nexus': { onHold: (api, p) => { if (api.payPowerAny(p, 4)) api.score(p, 1) } },
 }
 
 export function bfScript(cardId: string | undefined): BattlefieldScript | undefined {

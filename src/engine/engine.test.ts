@@ -1144,3 +1144,48 @@ describe('battlefield scripts (Batch 2)', () => {
     expect(r.state.players[1].zones.hand.some((c) => c.cardId === spell.id)).toBe(true)
   })
 })
+
+describe('battlefield scripts (Batch 3a)', () => {
+  const bfByName = (name: string) => CARDS.find((c) => c.type === 'battlefield' && c.name === name)
+
+  it('Minefield: conquering mills the top 2 cards', () => {
+    const v = bfByName('Minefield')
+    if (!v) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: v.id, units: [], controller: null }
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(r.state.players[0].zones.trash.length).toBe(2)
+  })
+
+  it('Seat of Power: conquering draws 1 per other battlefield held', () => {
+    const v = bfByName('Seat of Power')
+    if (!v) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: v.id, units: [], controller: null }
+    s.battlefields[1] = { cardId: battlefield.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const before = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(r.state.players[0].zones.hand.length).toBe(before + 1)
+  })
+
+  it('Hall of Legends: conquering pays 1 to ready your legend', () => {
+    const v = bfByName('Hall of Legends')
+    const legend = CARDS.find((c) => c.type === 'legend')
+    if (!v || !legend) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: v.id, units: [], controller: null }
+    s.players[0].legend = mk(legend.id, 0, { exhausted: true })
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(r.state.players[0].legend?.exhausted).toBe(false)
+    expect(r.state.players[0].zones.runePool[0].exhausted).toBe(true)
+  })
+})
