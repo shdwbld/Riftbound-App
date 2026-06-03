@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { reduce } from './engine'
 import { parseKeywords } from './keywords'
 import { autoPayForCard } from './autopay'
-import { needsTarget } from './effects'
+import { needsTarget, spellEffect } from './effects'
 import { CARDS, CARD_INDEX } from '../data/cards'
 
 // Inject deterministic synthetic cards (zero-cost so payment is trivial) for the
@@ -288,7 +288,7 @@ describe('chain (Batch A)', () => {
 
 describe('targeting (Batch B)', () => {
   it('a damage spell resolves onto its chosen target', () => {
-    const dmgSpell = CARDS.find((c) => c.type === 'spell' && !c.alternateArt && needsTarget(c))
+    const dmgSpell = CARDS.find((c) => c.type === 'spell' && !c.alternateArt && needsTarget(c) && spellEffect(c).damage > 0)
     if (!dmgSpell) return
     const s = baseState()
     const target = mk(vanilla.id, 1, { exhausted: true })

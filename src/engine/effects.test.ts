@@ -55,6 +55,15 @@ describe('effect DSL (Phase 2)', () => {
     expect(parseEffectText('The next unit you play this turn enters ready.').readyUnits).toBe(0)
   })
 
+  it('does not read a token\'s "ready" adjective as a ready-units action (Trevor)', () => {
+    // "play a ready 3 Might Sprite unit token" creates a ready token — it must
+    // NOT also ready 3 of your existing units.
+    const e = parseEffectText('Play a ready 3 :rb_might: Sprite unit token with [Temporary] here.')
+    expect(e.readyUnits).toBe(0)
+    expect(e.namedToken?.name).toBe('sprite')
+    expect(e.namedToken?.exhausted).toBe(false) // it does enter ready
+  })
+
   it('parses "play a Gold gear token"', () => {
     const e = parseEffectText('When I move, play a Gold gear token exhausted.')
     expect(e.goldTokens).toBe(1)

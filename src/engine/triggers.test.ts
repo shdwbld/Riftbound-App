@@ -70,6 +70,23 @@ describe('trigger parsing', () => {
     const abilities = parseTriggers(mkCard('When I attack, this unit gains +1 Might.'))
     expect(abilities.find((a) => a.event === 'attack')!.effect.buff).toBe(1)
   })
+
+  it('recognizes a global hold trigger, incl. "you or an ally" (Vex - Gloomist)', () => {
+    const plain = triggersFor(mkCard('When you hold, draw 1.'), 'hold')
+    expect(plain.length).toBe(1)
+    expect(plain[0].scope).toBe('global')
+    const ally = triggersFor(mkCard('When you or an ally hold, you may exhaust me to draw 1.'), 'hold')
+    expect(ally.length).toBe(1)
+    expect(ally[0].scope).toBe('global')
+    expect(ally[0].effect.draw).toBe(1)
+  })
+
+  it('recognizes a self "When I hold" trigger (Trevor / Dunebreaker)', () => {
+    const abilities = triggersFor(mkCard('When I hold, draw 2.'), 'hold')
+    expect(abilities.length).toBe(1)
+    expect(abilities[0].scope).toBe('self')
+    expect(abilities[0].effect.draw).toBe(2)
+  })
 })
 
 describe('trigger ordering (T10)', () => {
