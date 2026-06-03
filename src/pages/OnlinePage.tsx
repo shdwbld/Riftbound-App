@@ -46,6 +46,7 @@ import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
 import { MulliganView } from './MatchPage'
 import SetupScreen from '../components/SetupScreen'
+import { saveSession, loadSession, clearSession, saveHostState, loadHostState } from '../lib/onlineSession'
 
 type Role = 'host' | 'guest'
 type Status = 'lobby' | 'waiting' | 'connected'
@@ -98,13 +99,101 @@ export default function OnlinePage() {
   const joinsRef = useRef<JoinRecord[]>([])
   const startedRef = useRef(false)
   const joinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const seatsRef = useRef<Record<string, number>>({})
+  const roomCodeRef = useRef('')
+  const graceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // An opponent dropped out of presence (not a clean leave) — waiting to reconnect.
+  const [disconnected, setDisconnected] = useState(false)
 
   const flash = (m: string) => {
     setToast(m)
     setTimeout(() => setToast(null), 2600)
   }
 
+  // Persist the session so a refresh can rejoin the same match.
+  const persistSession = (role: Role, seat: number) => {
+    if (!roomCodeRef.current) return
+    saveSession({ roomCode: roomCodeRef.current, role, seat, clientId: clientIdRef.current, count: countRef.current })
+  }
+  const hostPersist = (state: MatchState) => saveHostState({ state, seats: seatsRef.current })
+
+  // Presence: detect an opponent dropping out (not a clean leave) once the match
+  // is live, and clear the banner when they reconnect.
+  const onPresence = (ids: string[]) => {
+    if (!matchRef.current) return // still in lobby — ignore
+    const peers = ids.filter((id) => id !== clientIdRef.current).length
+    const expected = Math.max(1, countRef.current - 1)
+    if (peers >= expected) {
+      setDisconnected(false)
+      if (graceRef.current) {
+        clearTimeout(graceRef.current)
+        graceRef.current = null
+      }
+    } else {
+      setDisconnected(true)
+      if (!graceRef.current)
+        graceRef.current = setTimeout(() => {
+          graceRef.current = null
+          flash('Opponent did not reconnect — you can end the match from the room bar.')
+        }, 45000)
+    }
+  }
+  /** Wire a transport's message + presence handlers. */
+  const connect = (t: Transport) => {
+    wire(t)
+    t.onPresence(onPresence)
+  }
+
   useEffect(() => () => transportRef.current?.close(), [])
+
+  // Reconnect after a refresh: if a session was persisted, rejoin the same room.
+  // Host restores its canonical state and re-broadcasts; guest rejoins and asks
+  // the host to resync. Runs once on mount.
+  useEffect(() => {
+    const s = loadSession()
+    if (!s || transportRef.current) return
+    clientIdRef.current = s.clientId
+    countRef.current = s.count
+    roomCodeRef.current = s.roomCode
+    roleRef.current = s.role
+    seatRef.current = s.seat as PlayerId
+    setRole(s.role)
+    setSeat(s.seat as PlayerId)
+    setRoomCode(s.roomCode)
+    const t = createTransport(s.roomCode, s.clientId)
+    transportRef.current = t
+    connect(t)
+    if (s.role === 'host') {
+      const snap = loadHostState()
+      if (snap) {
+        startedRef.current = true
+        seatsRef.current = snap.seats
+        matchRef.current = snap.state
+        setMatch(snap.state)
+        setStatus('connected')
+        // Re-broadcast so any still-connected guest resyncs.
+        setTimeout(() => t.send({ kind: 'state', state: snap.state }), 300)
+      } else {
+        clearSession() // host had no match yet — nothing to resume
+      }
+    } else {
+      // Guest: rejoin and request the current match from the host.
+      setStatus('waiting')
+      t.send({ kind: 'resync', clientId: s.clientId })
+      if (joinTimeoutRef.current) clearTimeout(joinTimeoutRef.current)
+      joinTimeoutRef.current = setTimeout(() => {
+        flash('Could not reconnect to the room.')
+        leave()
+      }, 9000)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Clear the persisted session once the match is over.
+  useEffect(() => {
+    if (match?.winner != null) clearSession()
+  }, [match?.winner])
+
   // Replay combat/chain resolutions (host, guest, or local all flow through lastEvents).
   useEffect(() => {
     if (worthSummarizing(lastEvents)) setSummary({ events: lastEvents!, token: matchRef.current?.seq ?? 0 })
@@ -120,9 +209,12 @@ export default function OnlinePage() {
     const seats: Record<string, number> = {}
     guests.forEach((g, i) => (seats[g.clientId] = i + 1))
     startedRef.current = true
+    seatsRef.current = seats
     matchRef.current = m
     setMatch(m)
     setStatus('connected')
+    persistSession('host', 0)
+    hostPersist(m)
     t.send({ kind: 'start', state: m, seats })
   }
 
@@ -149,7 +241,14 @@ export default function OnlinePage() {
           matchRef.current = state
           setLastEvents(events)
           setMatch(state)
+          hostPersist(state)
           t.send({ kind: 'state', state, events })
+        } else if (msg.kind === 'resync') {
+          // A reconnecting guest asks for the current match — re-send start + state.
+          if (matchRef.current) {
+            t.send({ kind: 'start', state: matchRef.current, seats: seatsRef.current })
+            t.send({ kind: 'state', state: matchRef.current })
+          }
         } else if (msg.kind === 'leave') {
           flash('A player left the room.')
         }
@@ -169,9 +268,11 @@ export default function OnlinePage() {
           }
           seatRef.current = mySeat as PlayerId
           setSeat(mySeat as PlayerId)
+          countRef.current = msg.state.players.length
           matchRef.current = msg.state
           setMatch(msg.state)
           setStatus('connected')
+          persistSession('guest', mySeat) // remember our seat for a refresh
         } else if (msg.kind === 'state') {
           matchRef.current = msg.state
           setLastEvents(msg.events)
@@ -195,12 +296,14 @@ export default function OnlinePage() {
     startedRef.current = false
     setRole('host')
     setSeat(0)
+    roomCodeRef.current = code
     setRoomCode(code)
     setLobbyInfo({ joined: 1, needed: count })
-    const t = createTransport(code)
+    const t = createTransport(code, clientIdRef.current)
     transportRef.current = t
-    wire(t)
+    connect(t)
     setStatus('waiting')
+    persistSession('host', 0)
   }
 
   const joinRoom = (code: string) => {
@@ -210,11 +313,13 @@ export default function OnlinePage() {
     roleRef.current = 'guest'
     myDeckRef.current = deck
     setRole('guest')
+    roomCodeRef.current = code.toUpperCase()
     setRoomCode(code.toUpperCase())
-    const t = createTransport(code.toUpperCase())
+    const t = createTransport(code.toUpperCase(), clientIdRef.current)
     transportRef.current = t
-    wire(t)
+    connect(t)
     setStatus('waiting')
+    persistSession('guest', 0)
     t.send({ kind: 'join', name: deck.name, deck, clientId: clientIdRef.current })
     // No host responds to an invalid/expired code — give feedback instead of
     // hanging in "waiting" forever.
@@ -230,6 +335,12 @@ export default function OnlinePage() {
       clearTimeout(joinTimeoutRef.current)
       joinTimeoutRef.current = null
     }
+    if (graceRef.current) {
+      clearTimeout(graceRef.current)
+      graceRef.current = null
+    }
+    clearSession()
+    setDisconnected(false)
     transportRef.current?.close()
     transportRef.current = null
     matchRef.current = null
@@ -450,6 +561,14 @@ export default function OnlinePage() {
           </span>
         }
       />
+      {disconnected && (
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 text-sm text-amber-100">
+          <span className="fx-ready">⚠ Opponent disconnected — waiting for them to reconnect…</span>
+          <button onClick={leave} className="rounded bg-rose-500/30 px-3 py-1 text-xs font-semibold text-rose-100 hover:bg-rose-500/50">
+            End match
+          </button>
+        </div>
+      )}
       <MatchBoard
         match={match}
         perspective={seat}

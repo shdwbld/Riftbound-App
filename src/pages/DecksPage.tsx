@@ -9,6 +9,7 @@ import {
   importDeck,
   cloneIntoLibrary,
 } from '../lib/deckStorage'
+import { loadSharedDeck, deckShareEnabled } from '../lib/deckShare'
 import { getCard } from '../data/cards'
 import { pileSize } from '../types/deck'
 import { validateDeck } from '../lib/deckValidation'
@@ -20,6 +21,24 @@ export default function DecksPage() {
   const [decks, setDecks] = useState(() => listDecks())
   const [importing, setImporting] = useState(false)
   const [importText, setImportText] = useState('')
+  const [codeOpen, setCodeOpen] = useState(false)
+  const [code, setCode] = useState('')
+  const [codeBusy, setCodeBusy] = useState(false)
+  const [codeErr, setCodeErr] = useState<string | null>(null)
+
+  const onLoadCode = async () => {
+    if (!code.trim()) return
+    setCodeBusy(true)
+    setCodeErr(null)
+    try {
+      const deck = await loadSharedDeck(code)
+      navigate(`/decks/${deck.id}`)
+    } catch (e) {
+      setCodeErr(e instanceof Error ? e.message : 'Could not load that code.')
+    } finally {
+      setCodeBusy(false)
+    }
+  }
 
   const refresh = () => setDecks(listDecks())
 
@@ -46,6 +65,14 @@ export default function DecksPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {deckShareEnabled && (
+            <button
+              onClick={() => setCodeOpen((v) => !v)}
+              className="rounded-lg border border-white/15 px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/5"
+            >
+              🔗 Load by code
+            </button>
+          )}
           <button
             onClick={() => setImporting((v) => !v)}
             className="rounded-lg border border-white/15 px-3 py-2 text-sm font-medium text-white/80 hover:bg-white/5"
@@ -60,6 +87,30 @@ export default function DecksPage() {
           </button>
         </div>
       </div>
+
+      {codeOpen && deckShareEnabled && (
+        <div className="space-y-2 rounded-xl border border-sky-400/30 bg-sky-500/10 p-4">
+          <p className="text-sm text-white/70">Enter a deck share-code to copy it into your library:</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === 'Enter' && onLoadCode()}
+              placeholder="e.g. 7F3K9P"
+              maxLength={12}
+              className="w-40 rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-lg tracking-widest outline-none focus:border-sky-400"
+            />
+            <button
+              onClick={onLoadCode}
+              disabled={codeBusy || !code.trim()}
+              className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400 disabled:opacity-40"
+            >
+              {codeBusy ? 'Loading…' : 'Load'}
+            </button>
+            {codeErr && <span className="text-sm text-rose-300">⚠ {codeErr}</span>}
+          </div>
+        </div>
+      )}
 
       {importing && (
         <div className="space-y-2 rounded-xl border border-white/10 bg-[#15151f] p-4">

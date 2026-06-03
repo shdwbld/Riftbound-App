@@ -58,6 +58,12 @@ Use only the **anon (publishable)** key — it is safe to ship to the browser.
 Never add the `service_role` / secret key. The app builds and runs without
 these (online play just falls back to same-device).
 
+With Supabase configured, online play also gains **reconnect-after-refresh**,
+**opponent-disconnect detection**, and **deck share-codes** (publish a deck →
+short code → load it on any device). Share-codes need one table — apply
+`supabase/migrations/0001_shared_decks.sql` in the Supabase SQL editor (it
+creates `shared_decks` with anon insert/select RLS; no other tables required).
+
 ## Project layout
 
 ```

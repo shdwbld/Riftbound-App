@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { getCard } from '../data/cards'
 import { getDeck, duplicateDeck, exportDeck } from '../lib/deckStorage'
+import { shareDeck, deckShareEnabled } from '../lib/deckShare'
 import { validateDeck } from '../lib/deckValidation'
 import { computeStats, CURVE_MAX } from '../lib/deckStats'
 import { type Card, DOMAIN_META, DOMAINS, totalCost } from '../types/cards'
@@ -26,6 +27,7 @@ export default function DeckOverviewPage() {
   const [tab, setTab] = useState<'list' | 'stats'>('list')
   const [exporting, setExporting] = useState(false)
   const [inspect, setInspect] = useState<Card | null>(null)
+  const [share, setShare] = useState<{ loading: boolean; code?: string; error?: string } | null>(null)
 
   if (!deck) {
     return (
@@ -120,10 +122,50 @@ export default function DeckOverviewPage() {
           >
             Export
           </button>
+          {deckShareEnabled && (
+            <button
+              onClick={async () => {
+                setShare({ loading: true })
+                try {
+                  const code = await shareDeck(deck)
+                  setShare({ loading: false, code })
+                } catch (e) {
+                  setShare({ loading: false, error: e instanceof Error ? e.message : 'Share failed.' })
+                }
+              }}
+              className="rounded-lg border border-white/15 px-3 py-1.5 text-sm hover:bg-white/5"
+            >
+              🔗 Share
+            </button>
+          )}
         </div>
       </div>
 
       {exporting && <ExportPanel text={exportDeck(deck)} onClose={() => setExporting(false)} />}
+      {share && (
+        <div className="rounded-xl border border-sky-400/30 bg-sky-500/10 p-3 text-sm">
+          {share.loading ? (
+            <span className="text-white/60">Publishing deck…</span>
+          ) : share.error ? (
+            <span className="text-rose-300">⚠ {share.error}</span>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-white/70">Share code:</span>
+              <code className="rounded bg-black/40 px-2 py-1 font-mono text-lg font-bold tracking-widest text-sky-200">{share.code}</code>
+              <button
+                onClick={() => share.code && navigator.clipboard?.writeText(share.code)}
+                className="rounded bg-white/10 px-2 py-1 text-xs hover:bg-white/20"
+              >
+                Copy
+              </button>
+              <span className="text-xs text-white/40">Enter this on another device under “Load by code”.</span>
+              <button onClick={() => setShare(null)} className="ml-auto rounded px-2 py-1 text-xs text-white/40 hover:bg-white/10">
+                ✕
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Checklist (only when issues) */}
       {v.issues.length > 0 && (
