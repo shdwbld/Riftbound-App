@@ -303,12 +303,16 @@ export default function MatchBoard({
       if (zone === 'battlefield' && ci.facedown)
         items.push({ label: '👁 Reveal', action: { type: 'REVEAL', player: perspective, iid: ci.iid } })
       // Hide a [Hidden] card from your HAND facedown at a battlefield you control
-      // (empty slot), paying 1 Wild Power (recycle a ready rune).
+      // (empty slot), paying 1 Wild Power (recycle a ready rune). One entry per legal
+      // battlefield so you can choose where to hide it when you control more than one.
       if (zone === 'hand' && card && parseKeywords(card).hidden) {
-        const bfIdx = match.battlefields.findIndex((b) => b.controller === perspective && !b.facedown)
         const rune = me.zones.runePool.find((r) => !r.exhausted)
-        if (bfIdx >= 0 && rune)
-          items.push({ label: '🙈 Hide (facedown)', action: { type: 'HIDE', player: perspective, iid: ci.iid, toBattlefield: bfIdx, runeIid: rune.iid } })
+        const legalBfs = match.battlefields.map((b, i) => ({ b, i })).filter((x) => x.b.controller === perspective && !x.b.facedown)
+        if (rune && legalBfs.length === 1)
+          items.push({ label: '🙈 Hide (facedown)', action: { type: 'HIDE', player: perspective, iid: ci.iid, toBattlefield: legalBfs[0].i, runeIid: rune.iid } })
+        else if (rune)
+          for (const x of legalBfs)
+            items.push({ label: `🙈 Hide at ${getCard(x.b.cardId)?.name ?? `Battlefield ${x.i + 1}`}`, action: { type: 'HIDE', player: perspective, iid: ci.iid, toBattlefield: x.i, runeIid: rune.iid } })
       }
       items.push({ label: '🗑 Trash', action: { type: 'TRASH_CARD', player: perspective, iid: ci.iid } })
     }
