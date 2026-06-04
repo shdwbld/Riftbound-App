@@ -50,6 +50,39 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
   m = t.match(/costs? :rb_energy_(\d+): less if you control an? ([a-z' -]+?)[.)]/)
   if (m && controlsTag(m[2].trim())) energy -= Number(m[1])
 
+  // Owner-wide "Your <tag>s' Energy costs are reduced by N (min M)" aura (Herald of
+  // Scales → Dragons). Applies when the card being costed carries that tag.
+  const cardTags = (card.tags ?? []).map((x) => x.toLowerCase())
+  if (cardTags.length) {
+    const perms = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units.filter((u) => u.owner === player)), ...(p.legend ? [p.legend] : [])]
+    for (const perm of perms) {
+      const pt = (getCard(perm.cardId)?.text ?? '').toLowerCase()
+      const am = pt.match(/your ([a-z' -]+?)s'? energy costs? (?:are )?reduced by :rb_energy_(\d+):(?:[^.]*?minimum of :rb_energy_(\d+):)?/)
+      if (am && cardTags.includes(am[1].trim())) {
+        energy -= Number(am[2])
+        if (am[3]) floor = Math.max(floor, Number(am[3]))
+      }
+    }
+  }
+
+  // "This costs N less if you choose a <tribe>" (Undying Loyalty). The chosen target
+  // is the unit it plays from trash; approximate by checking the trash holds one.
+  const chooseM = t.match(/costs? :rb_energy_(\d+): less if you choose an? (bird|cat|dog|poro)/)
+  if (chooseM && p.zones.trash.some((c) => { const d = getCard(c.cardId); return d?.type === 'unit' && (d.tags ?? []).some((x) => ['bird', 'cat', 'dog', 'poro'].includes(x.toLowerCase())) }))
+    energy -= Number(chooseM[1])
+
+  // "Reduce my cost by N for each of the following tags … Bird … Poro" (Daisy!).
+  const perTagM = t.match(/reduce my cost by :rb_energy_(\d+): for each of the following tags/)
+  if (perTagM) {
+    const TRIBES = ['bird', 'cat', 'dog', 'poro']
+    const present = new Set<string>()
+    for (const u of [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)]) {
+      if (u.owner !== player) continue
+      for (const x of getCard(u.cardId)?.tags ?? []) if (TRIBES.includes(x.toLowerCase())) present.add(x.toLowerCase())
+    }
+    energy -= Number(perTagM[1]) * present.size
+  }
+
   // "If an opponent controls a stunned unit, I cost N less [and enter ready]"
   // (Monch) — conditional on any opponent controlling a stunned unit.
   const monchM = t.match(/if an opponent controls a stunned unit, i cost :rb_energy_(\d+): less/)

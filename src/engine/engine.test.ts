@@ -1543,6 +1543,37 @@ describe('tokens (Recruit)', () => {
     expect(run(true) - run(false)).toBe(1) // the all-4-tags score adds exactly 1
   })
 
+  // --- Gap 3: effectiveCostOf cost-reduction shapes ---
+  it('Herald of Scales: your Dragons cost 2 less (minimum 1)', () => {
+    const herald = injectCard('hs-test', "Your Dragons' Energy costs are reduced by :rb_energy_2:, to a minimum of :rb_energy_1:.", { tags: ['Mount Targon'] })
+    const d4 = injectCard('hs-d4', 'A unit.', { energy: 4, tags: ['Dragon'] })
+    const d2 = injectCard('hs-d2', 'A unit.', { energy: 2, tags: ['Dragon'] })
+    const nd = injectCard('hs-nd', 'A unit.', { energy: 4, tags: [] })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(herald, 0))
+    expect(effectiveCostOf(s, 0, CARD_INDEX[d4]).energy).toBe(2) // 4 - 2
+    expect(effectiveCostOf(s, 0, CARD_INDEX[d2]).energy).toBe(1) // 2 - 2, floored at 1
+    expect(effectiveCostOf(s, 0, CARD_INDEX[nd]).energy).toBe(4) // non-Dragon unaffected
+  })
+
+  it('Undying Loyalty: costs 2 less if a tribe unit is in your trash', () => {
+    const ul = injectCard('ul-test', 'This costs :rb_energy_2: less if you choose a Bird, Cat, Dog, or Poro. Play a unit with cost no more than :rb_energy_2: from your trash, ignoring its cost.', { type: 'spell', energy: 2, power: {} })
+    let s = baseState()
+    s.players[0].zones.trash.push(mk(injectCard('ul-bird', 'A unit.', { tags: ['Bird'] }), 0))
+    expect(effectiveCostOf(s, 0, CARD_INDEX[ul]).energy).toBe(0) // 2 - 2
+    s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[ul]).energy).toBe(2) // no tribe unit in trash
+  })
+
+  it('Daisy!: cost reduced by 1 per distinct tribe tag among your units', () => {
+    const daisy = injectCard('dz-daisy', 'I enter ready. Reduce my cost by :rb_energy_1: for each of the following tags among your units — Bird, Cat, Dog, and Poro.', { energy: 9 })
+    let s = baseState()
+    s.players[0].zones.base.push(mk(injectCard('dz-b', 'A unit.', { tags: ['Bird'] }), 0), mk(injectCard('dz-c', 'A unit.', { tags: ['Cat'] }), 0))
+    expect(effectiveCostOf(s, 0, CARD_INDEX[daisy]).energy).toBe(7) // 9 - 2
+    s = baseState()
+    expect(effectiveCostOf(s, 0, CARD_INDEX[daisy]).energy).toBe(9)
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
