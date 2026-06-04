@@ -5120,7 +5120,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         case 'unbuff': if (u) u.buffs = Math.max(0, (u.buffs ?? 0) - (action.amount ?? 1)); break
         case 'mightUp': if (u) u.tempMight = (u.tempMight ?? 0) + (action.amount ?? 1); break
         case 'mightDown': if (u) u.tempMight = (u.tempMight ?? 0) - (action.amount ?? 1); break
+        case 'setTempMight': if (u) u.tempMight = action.value ?? 0; break
         case 'kill': if (action.iid) s = fireDeaths(s, killTarget(s, action.iid)); break
+        // Force-kill that bypasses death/banish shields (a true sacrifice) by clearing
+        // them first, then routing through the normal death path.
+        case 'sacrifice': { if (u) { u.deathShield = false; u.banishShield = false } if (action.iid) s = fireDeaths(s, killTarget(s, action.iid)) } break
         case 'toBase': if (action.iid) sendUnitToBase(s, action.iid); break
         case 'banish':
         case 'trash': {
@@ -5138,6 +5142,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         case 'draw': drawN(s.players[action.player], action.amount ?? 1); break
         case 'channel': channelN(s.players[action.player], action.amount ?? 1); break
+        case 'channelExhausted': channelN(s.players[action.player], action.amount ?? 1, true); break
         case 'move': {
           if (!action.iid) break
           const card = pluckCardAnywhere(s, action.iid)
@@ -5153,9 +5158,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           } else if (action.toZone === 'champion') {
             s.players[card.owner].champion = card
           } else if (action.toZone === 'mainDeck' || action.toZone === 'runeDeck') {
-            // Decks draw from the front: "to deck" puts on top, unless `bottom`.
-            if (action.bottom) s.players[card.owner].zones[action.toZone].push(card)
-            else s.players[card.owner].zones[action.toZone].unshift(card)
+            // Decks draw from the front: "to deck" puts on top, unless `bottom`, or an
+            // explicit insert index (`value` = X from top — used to reorder top cards).
+            const deck = s.players[card.owner].zones[action.toZone]
+            if (action.value != null) deck.splice(Math.max(0, Math.min(action.value, deck.length)), 0, card)
+            else if (action.bottom) deck.push(card)
+            else deck.unshift(card)
           } else if (action.toZone) {
             s.players[card.owner].zones[action.toZone as ZoneId].push(card)
           } else {
@@ -5258,6 +5266,60 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
           break
         }
+        // Tutor: fetch a specific card (e.g. from the deck) to hand/base, then shuffle
+        // its owner's deck so the order isn't leaked (CardSearchOverlay deck search).
+        case 'tutorShuffle': {
+          if (!action.iid) break
+          const card = pluckCardAnywhere(s, action.iid)
+          if (card) {
+            const z: ZoneId = action.toZone === 'base' ? 'base' : 'hand'
+            s.players[card.owner].zones[z].push({ ...card, exhausted: false, facedown: false })
+            s.players[card.owner].zones.mainDeck = shuffle(s.players[card.owner].zones.mainDeck)
+          }
+          break
+        }
+        // Reveal / remove a battlefield's face-down [Hidden] card (the only place such a
+        // card lives is bf.facedown). Reveal → owner's hand; remove → trash (or banish).
+        case 'revealFacedown':
+        case 'removeFacedown': {
+          if (!action.iid) break
+          for (const bf of s.battlefields) {
+            const fd = bf.facedown
+            if (fd && fd.iid === action.iid) {
+              bf.facedown = null
+              if (action.op === 'revealFacedown') s.players[fd.owner].zones.hand.push({ ...fd, facedown: false })
+              else if (action.flag === 'banish') banishCard(s.players[fd.owner], fd)
+              else sendToTrash(s.players[fd.owner], fd)
+              break
+            }
+          }
+          break
+        }
+        // Move ALL cards of one zone to another (optionally another player's zone).
+        case 'bulkMove': {
+          const from = action.fromZone
+          const to = action.toZone
+          if (from && to && to !== 'banished' && to !== 'legend' && to !== 'champion') {
+            const destPlayer = action.targetPlayer ?? action.player
+            const moved = s.players[action.player].zones[from].splice(0)
+            s.players[destPlayer].zones[to as ZoneId].push(...moved.map((c) => ({ ...c, owner: destPlayer })))
+          }
+          break
+        }
+        // Swap a whole zone between two players (e.g. swap hands).
+        case 'swapZone': {
+          const z = action.fromZone
+          const other = action.targetPlayer
+          if (z && other != null && s.players[other]) {
+            const a = s.players[action.player].zones[z]
+            const b = s.players[other].zones[z]
+            s.players[action.player].zones[z] = b.map((c) => ({ ...c, owner: action.player }))
+            s.players[other].zones[z] = a.map((c) => ({ ...c, owner: other }))
+          }
+          break
+        }
+        // Force a battlefield-control recompute (the trailing recomputeControllers does it).
+        case 'recomputeControllers': break
       }
       recomputeControllers(s)
       return ok(log(s, action.player, `Override: ${action.op}${nm ? ` ${nm}` : ''}.`))

@@ -5297,4 +5297,88 @@ describe('Manual override — grant flags / setDamage / readyAll', () => {
     r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'marker', iid: u.iid, value: -1 })
     expect(r.state.battlefields[0].units[0].marker).toBeUndefined()
   })
+
+  it('channelExhausted channels runes entered exhausted', () => {
+    const s = baseState(); s.sandbox = true
+    s.players[0].zones.runeDeck.push(mk(furyRune.id, 0), mk(furyRune.id, 0))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'channelExhausted', amount: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.runePool.length).toBe(1)
+    expect(r.state.players[0].zones.runePool[0].exhausted).toBe(true)
+  })
+
+  it('setTempMight sets an exact temp Might', () => {
+    const s = baseState(); s.sandbox = true
+    const u = mk(furyUnit.id, 0, { tempMight: 1 })
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'setTempMight', iid: u.iid, value: 4 })
+    expect(r.state.battlefields[0].units[0].tempMight).toBe(4)
+  })
+
+  it('sacrifice kills through a death-shield (plain kill would not)', () => {
+    const base = baseState(); base.sandbox = true
+    const mkShielded = () => mk(furyUnit.id, 0, { deathShield: true })
+    // kill: the death-shield recalls/heals it instead of dying → still alive on board or base
+    const sa = baseState(); sa.sandbox = true
+    const ua = mkShielded()
+    sa.battlefields[0] = { cardId: battlefield.id, units: [ua], controller: 0 }
+    const killed = reduce(sa, { type: 'OVERRIDE', player: 0, op: 'kill', iid: ua.iid })
+    expect(killed.state.players[0].zones.trash.some((c) => c.iid === ua.iid)).toBe(false)
+    // sacrifice: bypasses the shield → it actually dies (in trash, off the battlefield)
+    const sb = baseState(); sb.sandbox = true
+    const ub = mkShielded()
+    sb.battlefields[0] = { cardId: battlefield.id, units: [ub], controller: 0 }
+    const sac = reduce(sb, { type: 'OVERRIDE', player: 0, op: 'sacrifice', iid: ub.iid })
+    expect(sac.state.battlefields[0].units.some((c) => c.iid === ub.iid)).toBe(false)
+    expect(sac.state.players[0].zones.trash.some((c) => c.iid === ub.iid)).toBe(true)
+    void base
+  })
+
+  it('tutorShuffle fetches a deck card to hand and shrinks the deck', () => {
+    const s = baseState(); s.sandbox = true
+    const target = mk(furyUnit.id, 0)
+    s.players[0].zones.mainDeck.push(mk(furyRune.id, 0), target, mk(furyRune.id, 0))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'tutorShuffle', iid: target.iid, toZone: 'hand' })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === target.iid)).toBe(true)
+    expect(r.state.players[0].zones.mainDeck.length).toBe(2)
+  })
+
+  it('move with value inserts at an index in the deck (X from top)', () => {
+    const s = baseState(); s.sandbox = true
+    s.players[0].zones.mainDeck.push(mk(furyRune.id, 0), mk(furyRune.id, 0), mk(furyRune.id, 0))
+    const card = mk(furyUnit.id, 0)
+    s.players[0].zones.hand.push(card)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'move', iid: card.iid, toZone: 'mainDeck', value: 1 })
+    expect(r.state.players[0].zones.mainDeck[1].iid).toBe(card.iid)
+  })
+
+  it('revealFacedown → owner hand; removeFacedown → trash', () => {
+    const s1 = baseState(); s1.sandbox = true
+    const fd1 = mk(furyUnit.id, 0, { facedown: true })
+    s1.battlefields[0] = { cardId: battlefield.id, units: [], controller: null, facedown: fd1 }
+    const rev = reduce(s1, { type: 'OVERRIDE', player: 0, op: 'revealFacedown', iid: fd1.iid })
+    expect(rev.state.battlefields[0].facedown).toBeNull()
+    expect(rev.state.players[0].zones.hand.some((c) => c.iid === fd1.iid)).toBe(true)
+    const s2 = baseState(); s2.sandbox = true
+    const fd2 = mk(furyUnit.id, 0, { facedown: true })
+    s2.battlefields[0] = { cardId: battlefield.id, units: [], controller: null, facedown: fd2 }
+    const rem = reduce(s2, { type: 'OVERRIDE', player: 0, op: 'removeFacedown', iid: fd2.iid })
+    expect(rem.state.battlefields[0].facedown).toBeNull()
+    expect(rem.state.players[0].zones.trash.some((c) => c.iid === fd2.iid)).toBe(true)
+  })
+
+  it('bulkMove moves a whole zone; swapZone swaps zones between players', () => {
+    const s = baseState(); s.sandbox = true
+    s.players[0].zones.hand.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const bulk = reduce(s, { type: 'OVERRIDE', player: 0, op: 'bulkMove', fromZone: 'hand', toZone: 'mainDeck' })
+    expect(bulk.state.players[0].zones.hand.length).toBe(0)
+    expect(bulk.state.players[0].zones.mainDeck.length).toBe(2)
+    const s2 = baseState(); s2.sandbox = true
+    const a = mk(furyUnit.id, 0); const b = mk(furyUnit.id, 1)
+    s2.players[0].zones.hand.push(a); s2.players[1].zones.hand.push(b)
+    const swap = reduce(s2, { type: 'OVERRIDE', player: 0, op: 'swapZone', fromZone: 'hand', targetPlayer: 1 })
+    expect(swap.state.players[0].zones.hand.some((c) => c.iid === b.iid)).toBe(true)
+    expect(swap.state.players[1].zones.hand.some((c) => c.iid === a.iid)).toBe(true)
+  })
 })
