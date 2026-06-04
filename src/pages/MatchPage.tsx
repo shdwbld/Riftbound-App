@@ -51,18 +51,26 @@ export function accumulateTurnRecap(
   let exhausted = 0
   let recycled = 0
   let points = 0
+  const played: string[] = [] // card ids played this turn, for the thumbnail strip
+  const scoreByPlayer = new Map<PlayerId, number>()
   for (const e of ended) {
     if (e.kind === 'play' && e.cardId) {
       const t = getCard(e.cardId)?.type
       if (t === 'spell') spells++
       else if (t === 'unit') units++
+      if (t === 'unit' || t === 'spell' || t === 'gear') played.push(e.cardId)
     } else if (e.kind === 'payment') {
       exhausted += e.exhaust ?? 0
       recycled += e.recycle ?? 0
     } else if (e.kind === 'score') {
       points += e.amount ?? 0
+      if (e.player != null) scoreByPlayer.set(e.player, (scoreByPlayer.get(e.player) ?? 0) + (e.amount ?? 0))
     }
   }
+  const bare = (s: string) => s.replace(/\s*\([^)]*\)\s*$/, '')
+  const scorers = [...scoreByPlayer.entries()]
+    .filter(([, n]) => n > 0)
+    .map(([pid, amount]) => ({ name: bare(match.players[pid]?.name ?? `P${pid + 1}`), amount }))
   const recapKey = buf.turn
   // Reset the buffer to the new turn, seeding it with this action's events.
   buf.turn = match.turn
@@ -75,6 +83,8 @@ export function accumulateTurnRecap(
     exhausted,
     recycled,
     points,
+    played,
+    scorers,
   }
 }
 
