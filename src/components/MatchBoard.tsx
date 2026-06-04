@@ -22,6 +22,7 @@ import BoardCard from './BoardCard'
 import CardBack from './CardBack'
 import CardPreview from './CardPreview'
 import CardText, { DomainIcon } from './CardText'
+import PlayedCardSpotlight from './PlayedCardSpotlight'
 import FeedbackLayer from './FeedbackLayer'
 
 /** Name of a unit anywhere on the board, by iid (for combat banners). */
@@ -226,6 +227,18 @@ export default function MatchBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
 
+  // Track the most recently played card for the right-rail spotlight (persists
+  // between actions; the chain itself drives the stacked reaction view).
+  const [lastPlayed, setLastPlayed] = useState<{ cardId: string; player: PlayerId } | null>(null)
+  useEffect(() => {
+    const plays = (events ?? []).filter((e) => e.kind === 'play' && e.cardId)
+    if (plays.length) {
+      const last = plays[plays.length - 1]
+      setLastPlayed({ cardId: last.cardId!, player: last.player ?? perspective })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.seq])
+
   // Sound effects for this action's events (deduped per batch).
   useEffect(() => {
     if (!events?.length) return
@@ -421,7 +434,9 @@ export default function MatchBoard({
               : { text: `${activeName}'s turn`, cls: 'border-white/15 bg-white/5 text-white/60' }
 
   return (
-    <div ref={rootRef} className={`space-y-3 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+    {/* LEFT — the board */}
+    <div ref={rootRef} className={`min-w-0 flex-1 space-y-3 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
       {/* Turn / priority banner */}
       {banner && (
         <div
@@ -677,19 +692,6 @@ export default function MatchBoard({
         }
       />
 
-      {/* Log */}
-      <div className="rounded-xl border border-white/10 bg-[#15151f] p-2">
-        <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">Log</div>
-        <div className="flex max-h-36 flex-col-reverse gap-0.5 overflow-y-auto text-[11px] text-white/60">
-          {[...match.log].reverse().map((l, i) => (
-            <div key={i}>
-              <span className="text-white/30">T{l.turn} </span>
-              {l.text}
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Right-click context menu */}
       {menu && (
         <>
@@ -721,6 +723,24 @@ export default function MatchBoard({
 
       {/* Transient combat banner (chain link / showdown / react window) */}
       <CombatBanner data={combatBanner} />
+    </div>
+
+    {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
+        panel lands here in Stage 2. On < xl this stacks below the board. */}
+    <aside className="space-y-3 xl:w-[340px] xl:shrink-0">
+      <PlayedCardSpotlight match={match} perspective={perspective} lastPlayed={lastPlayed} />
+      <div className="rounded-xl border border-white/10 bg-[#15151f] p-2">
+        <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">Log</div>
+        <div className="flex max-h-[55vh] flex-col-reverse gap-0.5 overflow-y-auto text-[11px] text-white/60">
+          {[...match.log].reverse().map((l, i) => (
+            <div key={i}>
+              <span className="text-white/30">T{l.turn} </span>
+              {l.text}
+            </div>
+          ))}
+        </div>
+      </div>
+    </aside>
     </div>
   )
 }
