@@ -68,6 +68,12 @@ export interface ParsedEffect {
   readyUnits: number
   /** Ready ALL your units, no choice ("ready your units" — Shurelya's Requiem). */
   readyAllUnits: boolean
+  /** "ready or exhaust a legend" (Royal Entourage) — auto-resolved (exhaust an
+   *  opponent's ready legend if any, else ready your own exhausted legend). */
+  readyOrExhaustLegend: boolean
+  /** Strike Down: a chosen equipped friendly unit deals damage equal to its Might
+   *  to an enemy, then detaches an Equipment. Hand-resolved with auto-targets. */
+  strikeDown: boolean
   /** Number of your runes to ready (un-exhaust) — "ready up to N (friendly) runes"
    *  (Sona - Harmonious, Annie - Dark Child). */
   readyRunes: number
@@ -208,6 +214,8 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   recruits: 0,
   recruitsHere: false,
   readyAllUnits: false,
+  readyOrExhaustLegend: false,
+  strikeDown: false,
   goldTokens: 0,
   namedToken: null,
   readyUnits: 0,
@@ -393,6 +401,11 @@ function parse(text: string): ParsedEffect {
   // "ready your units" / "ready all (your/friendly) units" with no count — readies
   // every friendly unit (Shurelya's Requiem). Distinct from the counted form below.
   if (/\bready (?:all (?:your |friendly )?|your )units\b/.test(t)) { eff.readyAllUnits = true; hit = true }
+  // "ready or exhaust a legend" (Royal Entourage).
+  if (/\bready or exhaust an? legend\b/.test(t)) { eff.readyOrExhaustLegend = true; hit = true }
+  // Strike Down: "choose an equipped friendly unit. It deals damage equal to its
+  // Might to an enemy unit. Then detach an Equipment from it."
+  if (/choose an equipped friendly unit\.[\s\S]*deals damage equal to its might[\s\S]*then detach/.test(t)) { eff.strikeDown = true; hit = true }
   const readyM = t.match(/\bready (?:up to )?(a|an|another|target|one|two|three|\d+)\b[^.]*?\bunits?\b/i)
   if (readyM && !/\b(?:a|an) ready\b/.test(t)) {
     const w = readyM[1].toLowerCase()

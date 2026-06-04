@@ -738,6 +738,13 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       if (u.owner === p.id && u.exhausted && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
     if (n > 0) lines.push(`Readied ${n} unit(s).`)
   }
+  if (e.readyOrExhaustLegend) {
+    // Royal Entourage: "ready or exhaust a legend." Auto — exhaust an opponent's
+    // ready legend (deny their ability); else ready your own exhausted legend.
+    const foe = s.players.find((pl) => pl.id !== p.id && !pl.out && pl.legend && !pl.legend.exhausted)
+    if (foe?.legend) { foe.legend.exhausted = true; lines.push(`Exhausted an opponent's legend.`) }
+    else if (p.legend?.exhausted) { p.legend.exhausted = false; lines.push(`Readied your legend.`) }
+  }
   if (e.readyUnits) {
     // Surface a "choose which unit(s) to ready" prompt for the player.
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
@@ -1092,6 +1099,20 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if (ability.event === 'hold' && srcName === 'Blitzcrank - Impassive' && sourceIid) {
       s = bounceUnitToHand(s, sourceIid, player, 'Blitzcrank - Impassive', 0)
       s = log(s, player, `${label}: Blitzcrank returned to hand (held).`)
+      handled = true
+    }
+    // Rell - Magnetic: "When I attack, you may play an Equipment (Energy ≤ 2),
+    // ignoring its cost. If you do, attach it to me." Auto-played (pure benefit).
+    if (ability.event === 'attack' && srcName === 'Rell - Magnetic' && sourceIid) {
+      const self = findUnitAnywhere(s, sourceIid)
+      const gearCi = p.zones.hand.find((c) => getCard(c.cardId)?.type === 'gear' && ((getCard(c.cardId) as { energy?: number } | undefined)?.energy ?? 0) <= 2)
+      if (self && gearCi) {
+        removeFromZone(p, 'hand', gearCi.iid)
+        self.attached = [...self.attached, `${gearCi.cardId}|${gearCi.iid}`]
+        emit({ kind: 'buff', iid: self.iid, player, cardId: gearCi.cardId })
+        s = fireAttachEquip(s, player, self)
+        s = log(s, player, `${label}: Rell played & attached ${getCard(gearCi.cardId)?.name} (free).`)
+      }
       handled = true
     }
     // Rumble - Hotheaded: "When I conquer, you may recycle another friendly unit to
@@ -1959,7 +1980,14 @@ function returnUnitToHand(s: MatchState, bfIndex: number, iid: string): EngineCa
  *  that owner channel `channelExhausted` runes exhausted (Retreat). Tokens cease
  *  to exist rather than return. Returns the updated state. */
 function bounceUnitToHand(s: MatchState, iid: string, by: PlayerId, spellName: string, channelExhausted: number): MatchState {
-  const u = findUnitAnywhere(s, iid)
+  let u = findUnitAnywhere(s, iid)
+  // Champion Zone: a unit may sit in a player's Champion Zone (Teemo - Swift Scout
+  // can return a Teemo from there to hand).
+  let fromChampion = -1
+  if (!u) {
+    fromChampion = s.players.findIndex((pl) => pl.champion?.iid === iid)
+    if (fromChampion >= 0) u = s.players[fromChampion].champion!
+  }
   if (!u) return s
   const owner = u.owner
   const isToken = getCard(u.cardId)?.supertype === 'token' || u.token
@@ -1979,6 +2007,9 @@ function bounceUnitToHand(s: MatchState, iid: string, by: PlayerId, spellName: s
     } else {
       returnUnitToHand(s, bfi, iid)
     }
+  } else if (fromChampion >= 0) {
+    s.players[fromChampion].champion = null
+    if (!isToken) s.players[owner].zones.hand.push({ iid: u.iid, cardId: u.cardId, owner, exhausted: false, damage: 0, attached: [] })
   } else {
     const base = s.players[owner].zones.base
     const idx = base.findIndex((x) => x.iid === iid)
@@ -2754,11 +2785,15 @@ function gearMight(unit: EngineCard): number {
   for (const gid of unit.attached) {
     const g = getCard(gid.split('|')[0]) // attached stored as "cardId|iid"
     const t = g?.text ?? ''
-    // Match a flat "+N Might" whether written as the word or the :rb_might: icon,
-    // but only when it's a static grant (not a conditional "this turn" pump).
-    const m = t.match(/\+(\d+)\s*(?::rb_might:|might)\b/i)
-    if (m && !/this turn/i.test(t)) bonus += parseInt(m[1], 10)
+    // A flat static "+N Might" — word or :rb_might: icon (the `\b` sits on the WORD
+    // only; the icon ends in ':' so a trailing `\b` would never match). Excludes
+    // "+Might" that's actually a granted buff / temporary / handed-out pump
+    // (Spirit's Refuge "+1 :rb_might: buff", Mask of Foresight "give it +1 … this turn").
+    const m = t.match(/\+(\d+)\s*(?::rb_might:|might\b)/i)
+    if (m && !/this turn|buff|give|gets|gains/i.test(t)) bonus += parseInt(m[1], 10)
   }
+  // Gearhead: "Each Equipment attached to me gives double its base Might bonus."
+  if (/each equipment attached to me gives double its base might/i.test(getCard(unit.cardId)?.text ?? '')) bonus *= 2
   return bonus
 }
 
@@ -3336,6 +3371,30 @@ function resolveSpellEffects(
       return log(s, controller, `${card.name}: played a Reflection copy of ${getCard(src.cardId)?.name}.`)
     }
     return log(s, controller, `${card.name} fizzled — no unit to copy.`)
+  }
+
+  // Strike Down: a chosen equipped friendly unit deals its Might to an enemy, then
+  // detaches an Equipment. Auto-picks the strongest equipped friendly + strongest enemy.
+  if (e.strikeDown) {
+    const dealer = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+      .filter((u) => u.owner === controller && getCard(u.cardId)?.type === 'unit' && u.attached.length > 0)
+      .sort((a, b) => mightOf(b) - mightOf(a))[0]
+    const enemy = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== controller).sort((a, b) => mightOf(b) - mightOf(a))[0]
+    if (dealer && enemy) {
+      const amt = mightOf(dealer)
+      s = log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} deals ${amt} to ${getCard(enemy.cardId)?.name}.`)
+      s = fireDeaths(s, applyTargetDamage(s, enemy.iid, amt, true, controller))
+      const d = findUnitAnywhere(s, dealer.iid)
+      if (d && d.attached.length) {
+        const [ref] = d.attached.splice(0, 1)
+        const [cid, iid] = ref.split('|')
+        if (getCard(cid)?.supertype !== 'token') s.players[controller].zones.base.push({ iid, cardId: cid, owner: controller, exhausted: false, damage: 0, attached: [] })
+        s = log(s, controller, `${card.name}: detached ${getCard(cid)?.name}.`)
+      }
+    } else {
+      s = log(s, controller, `${card.name} fizzled — need an equipped friendly unit and an enemy.`)
+    }
+    return s
   }
 
   // Untargeted parts (draw / channel / recruit) always resolve.
@@ -4507,7 +4566,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       } else {
         // Targeted parts (deal N / give a unit +N Might this turn / Buff a unit).
         for (const t of action.targets ?? []) {
-          if (!isValidTarget(s1, t)) continue
+          // Teemo - Swift Scout may target a Teemo in your Champion Zone (not "in play").
+          const championTarget = /champion zone/i.test(ab.effectText) && s1.players.some((pl) => pl.champion?.iid === t)
+          if (!isValidTarget(s1, t) && !championTarget) continue
           if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true, action.player))
           if (ab.effect.tempMight) s1 = fireDeaths(s1, applyTempMight(s1, t, ab.effect.tempMight, ab.effect.tempMightFloor))
           // "Buff a friendly unit" (Lee Sin) — a permanent +1 Might counter, capped

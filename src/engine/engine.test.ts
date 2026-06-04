@@ -1203,6 +1203,78 @@ describe('tokens (Recruit)', () => {
     expect(after.battlefields[0].units.some((x) => x.iid === b.iid)).toBe(false) // left the battlefield
   })
 
+  it('Royal Entourage: on play, exhausts an opponent legend (or readies your own) (P1)', () => {
+    const re = injectCard('royal-ent-t', 'When you play me, ready or exhaust a legend.', { type: 'unit', energy: 0, power: {}, might: 4 })
+    let s = baseState()
+    s.players[1].legend = mk(furyUnit.id, 1) // opponent's ready legend
+    let u = mk(re, 0)
+    s.players[0].zones.hand.push(u)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[1].legend?.exhausted).toBe(true) // denied the opponent's legend
+    // No opponent ready legend → ready your own exhausted legend.
+    s = baseState()
+    s.players[0].legend = mk(furyUnit.id, 0, { exhausted: true })
+    u = mk(re, 0)
+    s.players[0].zones.hand.push(u)
+    r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].legend?.exhausted).toBe(false) // readied your own
+  })
+
+  it('Strike Down: an equipped friendly unit deals its Might to an enemy, then detaches (P1)', () => {
+    const spell = injectCard('strike-down-t', 'Choose an equipped friendly unit. It deals damage equal to its Might to an enemy unit. Then detach an Equipment from it.', { type: 'spell', energy: 0, power: {} })
+    const gear = injectCard('sd-gear', 'A gear.', { type: 'gear', energy: 0, power: {} })
+    const dealerC = injectCard('sd-dealer', 'A unit.', { might: 5 })
+    const s = baseState()
+    const g = mk(gear, 0)
+    const dealer = mk(dealerC, 0, { attached: [`${gear}|${g.iid}`] })
+    s.battlefields[0] = { cardId: battlefield.id, units: [dealer, mk(injectCard('sd-enemy', 'A unit.', { might: 3 }), 1)], controller: 0 }
+    const sp = mk(spell, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.filter((x) => x.owner === 1).length).toBe(0) // enemy took 5, died
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === gear)).toBe(true) // gear detached to base
+  })
+
+  it('Teemo - Swift Scout: bounces a Teemo from the Champion Zone to hand (P1)', () => {
+    const tss = injectCard('tss-t', 'You may pay :rb_energy_1: to hide a card with [Hidden] instead of :rb_rune_rainbow:.:rb_energy_1:, :rb_exhaust:: Put a Teemo unit you own into your hand from your Champion Zone or the board.', { name: 'Teemo - Swift Scout', type: 'legend' })
+    const teemoChamp = injectCard('tss-champ', 'A unit.', { type: 'unit', supertype: 'champion', tags: ['Teemo'], might: 2 })
+    const s = baseState()
+    s.players[0].legend = mk(tss, 0)
+    s.players[0].champion = mk(teemoChamp, 0)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 Energy
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend!.iid, targets: [s.players[0].champion!.iid] })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].champion).toBeNull()
+    expect(r.state.players[0].zones.hand.some((x) => x.cardId === teemoChamp)).toBe(true)
+  })
+
+  it('Gearhead: doubles the base Might bonus of attached static Equipment (P1)', () => {
+    const gearhead = injectCard('gearhead-t', 'Each Equipment attached to me gives double its base Might bonus.', { name: 'Gearhead', type: 'unit', might: 3 })
+    const gear = injectCard('gh-gear', '+2 :rb_might:', { type: 'gear' }) // a static stat-stick
+    const s = baseState()
+    const g = mk(gear, 0)
+    const u = mk(gearhead, 0, { attached: [`${gear}|${g.iid}`] })
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    expect(combatMightAt(s, 0, u, 'defender')).toBe(7) // 3 + (2 doubled)
+  })
+
+  it('Rell - Magnetic: on attack, plays a cheap Equipment free and attaches it (P1)', () => {
+    const rell = injectCard('rell-t', '[Tank] When I attack, you may play an Equipment with Energy cost no more than :rb_energy_2:, ignoring its cost. If you do, then do this: Attach it to me.', { name: 'Rell - Magnetic', type: 'unit', might: 4 })
+    const gear = injectCard('rell-gear', 'A gear.', { type: 'gear', energy: 1, power: {} })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('rell-def', 'A unit.', { might: 1 }), 1, { stunned: true, exhausted: true })], controller: 1 }
+    const rl = mk(rell, 0)
+    s.players[0].zones.base.push(rl)
+    s.players[0].zones.hand.push(mk(gear, 0))
+    const r = openShowdown(s, rl)
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.find((x) => x.iid === rl.iid)?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true) // free-attached on attack
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return
