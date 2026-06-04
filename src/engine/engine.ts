@@ -899,7 +899,7 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
 
 /** Apply fired triggers' auto-resolvable effects (ordered turn-player first,
  *  rule 4.6); log the remainder for manual resolution. */
-function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, excess = 0): MatchState {
+function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, excess = 0, wasUncontrolled = false): MatchState {
   if (fired.length === 0) return s
   const ordered = orderTriggers(fired, s.activePlayer, s.players.length)
   for (const { player, ability, sourceIid, sourceCardId, bfIndex: deathBf } of ordered) {
@@ -908,11 +908,17 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     const e = ability.effect
     let did = false
     const isConquer = ability.event === 'conquer'
+    const srcName = (getCard(sourceCardId ?? '')?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+    // Fully hand-coded cards whose trigger CLAUSE contains parseable fragments the
+    // generic parser would mis-fire (Twisted Fate's per-domain "Draw 1 / Deal 2 /
+    // Stun"; Teemo - Strategist's "Deal 1 … for each [Hidden]"). Skip the generic
+    // apply for these — their dedicated handler below does the real work.
+    const skipGenericApply = srcName === 'Twisted Fate - Gambler' || srcName === 'Teemo - Strategist'
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
     const gated = e.condition && !conditionMet(s, p, e, isConquer ? bfIndex : undefined, isConquer ? excess : 0)
-    for (const line of applyParsed(s, p, e, isConquer ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
+    if (!skipGenericApply) for (const line of applyParsed(s, p, e, isConquer ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
       s = log(s, player, `${label}: ${line}`)
       did = true
     }
@@ -948,7 +954,6 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // --- Hand-coded champion/legend handlers (the parser can't express these
     // unique abilities; per-card code keeps the marquee cards correct). ---
     let handled = false
-    const srcName = (getCard(sourceCardId ?? '')?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
     // Combat attack triggers that modify the board pre-math (fired in
     // fireCombatTriggers before showdownSteps).
     if (ability.event === 'attack' && sourceIid && (srcName === 'Yasuo - Remorseful' || srcName === "Kha'Zix - Evolving Hunter")) {
@@ -986,6 +991,86 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       if (target) {
         applyTempMight(s, target.iid, -2, 1)
         s = log(s, player, `${label}: ${srcName} gave ${getCard(target.cardId)?.name} −2 Might this turn (min 1).`)
+      }
+      handled = true
+    }
+    // Twisted Fate - Gambler: "When I attack, reveal the top rune of your rune deck,
+    // then recycle it. Do one of the following based on its domain: Fury → 2 to an
+    // enemy here + 1 to all others; Mind → draw 1; Order → stun an enemy here."
+    if (ability.event === 'attack' && srcName === 'Twisted Fate - Gambler' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      const rune = p.zones.runeDeck.shift()
+      if (rune && bi >= 0) {
+        const domains = (getCard(rune.cardId) as { produces?: string[] } | undefined)?.produces ?? []
+        p.zones.runeDeck.push({ ...rune, exhausted: false, damage: 0 }) // recycle to bottom
+        const here = [...s.battlefields[bi].units]
+        if (domains.includes('fury')) {
+          const main = pickEnemyToDamage(here, player, 2)
+          const dead: EngineCard[] = []
+          if (main) dead.push(...applyTargetDamage(s, main.iid, 2, true, player))
+          for (const u of here) if (u.owner !== player && u.iid !== main?.iid) dead.push(...applyTargetDamage(s, u.iid, 1, true, player))
+          s = fireDeaths(s, dead)
+          s = log(s, player, `${label}: Twisted Fate (Fury) dealt 2 + 1 to enemies here.`)
+        } else if (domains.includes('mind')) {
+          drawN(p, 1)
+          s = log(s, player, `${label}: Twisted Fate (Mind) drew 1.`)
+        } else if (domains.includes('order')) {
+          const tgt = pickStrongestEnemy(here, player)
+          if (tgt && !tgt.stunned) {
+            tgt.stunned = true
+            emit({ kind: 'stun', iid: tgt.iid, player })
+            s = fireStun(s, player)
+            s = log(s, player, `${label}: Twisted Fate (Order) stunned ${getCard(tgt.cardId)?.name}.`)
+          }
+        }
+      }
+      handled = true
+    }
+    // Teemo - Strategist: "When I defend, … reveal the top 5 of your Main Deck, deal 1
+    // to an enemy unit here for each card with [Hidden], then recycle them." (Errata:
+    // defend-only — the played-from-Hidden trigger was removed.)
+    if (ability.event === 'defend' && srcName === 'Teemo - Strategist' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      const target = bi >= 0 ? pickStrongestEnemy(s.battlefields[bi].units, player) : undefined
+      const top5 = p.zones.mainDeck.slice(0, 5)
+      const hiddenCount = top5.filter((c) => /\[hidden\]/i.test(getCard(c.cardId)?.text ?? '')).length
+      const revealed = p.zones.mainDeck.splice(0, 5) // recycle the revealed 5 to the bottom
+      p.zones.mainDeck.push(...revealed.map((c) => ({ ...c, damage: 0, exhausted: false })))
+      if (target && hiddenCount > 0) {
+        s = fireDeaths(s, applyTargetDamage(s, target.iid, hiddenCount, true, player))
+        s = log(s, player, `${label}: Teemo dealt ${hiddenCount} (Hidden revealed) to ${getCard(target.cardId)?.name}.`)
+      } else {
+        s = log(s, player, `${label}: Teemo revealed ${top5.length} (${hiddenCount} Hidden).`)
+      }
+      handled = true
+    }
+    // Yone - Blademaster: "When I conquer a battlefield that was uncontrolled, deal
+    // damage equal to my Might to an enemy unit in a base."
+    if (ability.event === 'conquer' && srcName === 'Yone - Blademaster' && sourceIid && wasUncontrolled) {
+      const self = findUnitAnywhere(s, sourceIid)
+      const amt = self ? mightOf(self, null, p.xp ?? 0) : 0
+      const enemiesInBase = s.players.flatMap((pl) => pl.id !== player ? pl.zones.base.filter((u) => getCard(u.cardId)?.type === 'unit') : [])
+      const target = enemiesInBase.sort((a, b) => mightOf(b) - mightOf(a))[0]
+      if (target && amt > 0) {
+        s = fireDeaths(s, applyTargetDamage(s, target.iid, amt, true, player))
+        s = log(s, player, `${label}: Yone dealt ${amt} to ${getCard(target.cardId)?.name} in base.`)
+      }
+      handled = true
+    }
+    // Adaptatron: "When I conquer, you may kill a gear. If you do, buff me." The
+    // generic apply already placed the self-buff; keep it only if a (detached, lowest-
+    // cost) gear is sacrificed, otherwise revert it.
+    if (ability.event === 'conquer' && srcName === 'Adaptatron' && sourceIid) {
+      const self = findUnitAnywhere(s, sourceIid)
+      const gear = p.zones.base.filter((g) => getCard(g.cardId)?.type === 'gear').sort((a, b) => cardCost(a) - cardCost(b))[0]
+      if (gear && self) {
+        removeFromZone(p, 'base', gear.iid)
+        sendToTrash(p, gear)
+        if ((self.buffs ?? 0) < 1) { self.buffs = 1; emit({ kind: 'buff', iid: self.iid, player }) }
+        s = log(s, player, `${label}: Adaptatron killed ${getCard(gear.cardId)?.name} to buff itself.`)
+      } else if (self && (self.buffs ?? 0) > 0) {
+        self.buffs = 0 // no gear to pay → revert any generic self-buff
+        s = log(s, player, `${label}: Adaptatron found no gear to kill — no buff.`)
       }
       handled = true
     }
@@ -2091,9 +2176,9 @@ function moveUnits(
     s2 = awardPoints(s2, player, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
     s2 = grantHunt(s2, player, toBattlefield)
     s2 = applyConquerPassive(s2, player, toBattlefield)
-    s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'), toBattlefield)
+    s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'), toBattlefield, 0, prevController == null)
     const here = s2.battlefields[toBattlefield].units.filter((u) => u.owner === player).map((u) => u.iid)
-    s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here), toBattlefield)
+    s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here), toBattlefield, 0, prevController == null)
     offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
   }
   return ok(s2)
@@ -3201,8 +3286,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
     s = grantHunt(s, moverOwner, bfIndex)
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
-    s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex, excess)
-    s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere), bfIndex, excess)
+    s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex, excess, prevController == null)
+    s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere), bfIndex, excess, prevController == null)
     offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
   }
   return s

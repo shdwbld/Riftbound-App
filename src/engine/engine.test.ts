@@ -1084,6 +1084,85 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].units.length).toBe(1)
   })
 
+  const TF_TEXT = 'When I attack, reveal the top rune of your rune deck, then recycle it. Do one of the following based on its domain::rb_rune_fury: — Deal 2 to an enemy unit here and 1 to all other enemy units here.:rb_rune_mind: — Draw 1.:rb_rune_order: — Stun an enemy unit.'
+  it('Twisted Fate - Gambler: on attack, Mind rune → draw 1, rune recycled (P1)', () => {
+    const tf = injectCard('tf-gambler-t', TF_TEXT, { name: 'Twisted Fate - Gambler', type: 'unit', energy: 0, power: {}, might: 4 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('tf-def', 'A unit.', { might: 1 }), 1, { stunned: true, exhausted: true })], controller: 1 }
+    s.players[0].zones.runeDeck = [mk('ogn-089-298', 0)] // Mind rune on top
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)] // a card to draw
+    const t = mk(tf, 0)
+    s.players[0].zones.base.push(t)
+    const r = openShowdown(s, t)
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(1) // Mind branch drew 1
+    expect(r.state.players[0].zones.runeDeck.some((x) => x.cardId === 'ogn-089-298')).toBe(true) // recycled
+  })
+
+  it('Twisted Fate - Gambler: on attack, Fury rune → 2+1 AoE kills enemies pre-combat (P1)', () => {
+    // TF Might 1 so combat alone CANNOT kill both (2+1) — only the Fury AoE can, and
+    // it fires pre-combat so a 1-Might TF survives with no defenders left.
+    const tf = injectCard('tf-gambler-t2', TF_TEXT, { name: 'Twisted Fate - Gambler', type: 'unit', energy: 0, power: {}, might: 1 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('tf-d1', 'A unit.', { might: 2 }), 1), mk(injectCard('tf-d2', 'A unit.', { might: 1 }), 1)], controller: 1 }
+    s.players[0].zones.runeDeck = [mk('ogn-007a-298', 0)] // Fury rune on top
+    const t = mk(tf, 0)
+    s.players[0].zones.base.push(t)
+    const r = openShowdown(s, t)
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.filter((u) => u.owner === 1).length).toBe(0) // AoE killed both
+    expect(r.state.battlefields[0].units.some((u) => u.iid === t.iid)).toBe(true) // TF survived (no defenders)
+  })
+
+  it('Yone - Blademaster: conquering an uncontrolled bf deals its Might to an enemy in a base (P1)', () => {
+    const yone = injectCard('yone-t', 'When I conquer a battlefield that was uncontrolled, deal damage equal to my Might to an enemy unit in a base.', { name: 'Yone - Blademaster', type: 'unit', energy: 0, power: {}, might: 5 })
+    const enemyU = injectCard('yone-enemy', 'A unit.', { might: 3 })
+    const s = baseState()
+    const y = mk(yone, 0)
+    s.players[0].zones.base.push(y)
+    const e = mk(enemyU, 1)
+    s.players[1].zones.base.push(e)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: y.iid, toBattlefield: 0 }) // uncontested conquer
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.base.some((x) => x.iid === e.iid)).toBe(false) // took 5, died
+  })
+
+  it('Teemo - Strategist: on defend, deals 1 per [Hidden] in top 5 to an enemy here (P1)', () => {
+    // Teemo Might 2, attacker Might 3: combat alone would kill Teemo (attacker survives),
+    // so the attacker dying proves the pre-combat 3-Hidden damage did it.
+    const teemo = injectCard('teemo-strat-t', 'When I defend, choose an enemy unit here and reveal the top 5 cards of your Main Deck. Deal 1 to that unit for each card with [Hidden] revealed this way, then recycle the revealed cards.', { name: 'Teemo - Strategist', type: 'unit', energy: 0, power: {}, might: 2 })
+    const hiddenCard = injectCard('ts-hidden', '[Hidden]', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    s.activePlayer = 1
+    const tm = mk(teemo, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [tm], controller: 0 }
+    s.players[0].zones.mainDeck = [mk(hiddenCard, 0), mk(hiddenCard, 0), mk(hiddenCard, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)] // 3 Hidden in top 5
+    const atk = mk(injectCard('ts-atk', 'A unit.', { might: 3 }), 1)
+    s.players[1].zones.base.push(atk)
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 1, iids: [atk.iid], toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === atk.iid)).toBe(false) // took 3 pre-combat, died
+    expect(r.state.battlefields[0].units.some((x) => x.iid === tm.iid)).toBe(true) // Teemo survived
+  })
+
+  it('Adaptatron: conquer kills a gear to buff itself; no gear → no buff (P1)', () => {
+    const ada = injectCard('adapt-t', "When I conquer, you may kill a gear. If you do, buff me. (If I don't have a buff, I get a +1 :rb_might: buff.)", { name: 'Adaptatron', type: 'unit', energy: 0, power: {}, might: 3 })
+    const gear = injectCard('adapt-gear', 'A gear.', { type: 'gear', energy: 1, power: {} })
+    let s = baseState()
+    let a = mk(ada, 0)
+    s.players[0].zones.base.push(a, mk(gear, 0))
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: a.iid, toBattlefield: 0 }) // uncontested conquer
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === gear)).toBe(false) // gear killed
+    expect(r.state.battlefields[0].units.find((x) => x.iid === a.iid)?.buffs).toBe(1) // buffed
+    s = baseState()
+    a = mk(ada, 0)
+    s.players[0].zones.base.push(a)
+    r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: a.iid, toBattlefield: 0 })
+    expect((r.state.battlefields[0].units.find((x) => x.iid === a.iid)?.buffs) ?? 0).toBe(0) // no gear → no buff
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return
