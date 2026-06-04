@@ -1124,6 +1124,19 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.base.filter((c) => c.cardId === TOKEN_PILE_IDS[0]).length).toBe(1) // not doubled
   })
 
+  it('Leona - Zealot (champion): stunned enemy units here have -8 Might (min 1)', () => {
+    const leona = 'ogn-079-298'
+    if (!CARD_INDEX[leona]) return
+    const s = baseState()
+    const bigStunned = mk(injectCard('lz-e1', 'A unit.', { might: 10 }), 1, { stunned: true })
+    const smallStunned = mk(injectCard('lz-e2', 'A unit.', { might: 6 }), 1, { stunned: true })
+    const unstunned = mk(injectCard('lz-e3', 'A unit.', { might: 10 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(leona, 0), bigStunned, smallStunned, unstunned], controller: 0 }
+    expect(combatMightAt(s, 0, bigStunned, 'defender')).toBe(2) // 10 - 8
+    expect(combatMightAt(s, 0, smallStunned, 'defender')).toBe(1) // 6 - 8, floored at 1
+    expect(combatMightAt(s, 0, unstunned, 'defender')).toBe(10) // not stunned → unaffected
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never

@@ -2560,14 +2560,23 @@ function unitHasGanking(s: MatchState, u: EngineCard): boolean {
  *  each OTHER friendly buffed unit standing with him. */
 function auraMightHere(here: EngineCard[], u: EngineCard): number {
   let b = 0
+  let leonaApplied = false
   for (const src of here) {
-    if (src.iid === u.iid || src.owner !== u.owner) continue // OTHER friendly units only
+    if (src.iid === u.iid) continue
     const t = (def(src)?.text ?? '').toLowerCase()
-    const m = t.match(/other buffed friendly units at my battlefield have \+(\d+)\s*(?::rb_might:|might)/)
-    if (m && (u.buffs ?? 0) > 0) b += parseInt(m[1], 10)
-    // Garen - Commander: "Other friendly units have +N Might here." (no buff gate)
-    const gm = t.match(/other friendly units have \+(\d+)\s*(?::rb_might:|might) here/)
-    if (gm) b += parseInt(gm[1], 10)
+    if (src.owner === u.owner) {
+      // OTHER friendly units' positive auras.
+      const m = t.match(/other buffed friendly units at my battlefield have \+(\d+)\s*(?::rb_might:|might)/)
+      if (m && (u.buffs ?? 0) > 0) b += parseInt(m[1], 10)
+      // Garen - Commander: "Other friendly units have +N Might here." (no buff gate)
+      const gm = t.match(/other friendly units have \+(\d+)\s*(?::rb_might:|might) here/)
+      if (gm) b += parseInt(gm[1], 10)
+    } else if (!leonaApplied && u.stunned && /stunned enemy units here have -8\s*(?::rb_might:|might)/.test(t)) {
+      // Leona - Zealot: "Stunned enemy units here have -8 Might, to a minimum of 1."
+      // Floor at 1: bonus = -min(8, currentMight - 1). Applied once (no stacking).
+      b -= Math.min(8, Math.max(0, mightOf(u) - 1))
+      leonaApplied = true
+    }
   }
   return b
 }
