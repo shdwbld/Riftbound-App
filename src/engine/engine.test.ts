@@ -4980,3 +4980,43 @@ describe('Playtest Pass 2 — gear triggers', () => {
     expect(combatMightAt(s, 0, u, 'attacker')).toBe(3) // Mask only applies when alone
   })
 })
+
+describe('Playtest Pass 2 — combat/conquer detection', () => {
+  it('H: conquer is awarded when the defender is bounced mid-showdown', () => {
+    const bounce = injectCard('h-bounce', "[Action] Return a unit to its owner's hand.", { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const atk = mk(injectCard('h-atk', 'A unit.', { might: 5 }), 0)
+    s.players[0].zones.base.push(atk)
+    const def = mk(injectCard('h-def', 'A unit.', { might: 1 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [def], controller: 1 }
+    s.players[0].zones.hand.push(mk(bounce, 0))
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: atk.iid, toBattlefield: 0 })
+    expect(r.state.phase).toBe('showdown')
+    r = reduce(r.state, { type: 'PASS', player: 1 }) // defender passes → p0 priority
+    const sp = r.state.players[0].zones.hand.find((c) => c.cardId === bounce)!
+    r = reduce(r.state, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [def.iid], payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === def.iid)).toBe(false) // defender bounced
+    // resolve the now one-sided showdown
+    for (let i = 0; i < 4 && r.state.phase === 'showdown'; i++) r = reduce(r.state, { type: 'PASS', player: r.state.showdown!.priority })
+    expect(r.state.players[0].points).toBeGreaterThan(0) // p0 conquered despite no combat damage
+    expect(r.state.battlefields[0].controller).toBe(0)
+  })
+
+  it('G: an effect-move (Charm) into a contested battlefield opens a showdown', () => {
+    const charm = injectCard('charm-t', 'Move an enemy unit to a battlefield.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 0)], controller: 0 } // p0 holds bf0
+    const enemy = mk(injectCard('charm-enemy', 'A unit.', { might: 2 }), 1)
+    s.players[1].zones.base.push(enemy)
+    s.players[0].zones.hand.push(mk(charm, 0))
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: s.players[0].zones.hand[0].iid, targets: [enemy.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.pendingChoice?.kind).toBe('moveToBf')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'bf:0' })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(true) // pulled in
+    expect(r.state.phase).toBe('showdown') // combat initiated
+  })
+})

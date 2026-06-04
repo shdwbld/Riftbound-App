@@ -184,6 +184,10 @@ export interface ShowdownState {
   passes: number
   /** The unit whose move opened this showdown. */
   movedUnit: string
+  /** Who controlled the battlefield when the showdown OPENED (before any mid-
+   *  showdown board changes). Used to detect a conquer even when a reaction bounces/
+   *  kills the defender (so control flips before combat math runs). */
+  priorController?: PlayerId | null
   /** Pending manual damage assignment — combat is paused until filled. */
   assign?: { steps: DamageAssignStep[]; current: number }
   /** A pending invitation: a combatant has asked `to` to join and help, awaiting

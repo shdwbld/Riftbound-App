@@ -2354,6 +2354,7 @@ function moveUnits(
       battlefield: toBattlefield,
       priority: player, // fixed up to the first defending participant below
       passes: 0,
+      priorController: prevController, // who held it BEFORE the showdown (for conquer detection)
       movedUnit: moved[0].iid,
     }
     // Priority opens on the first combatant after the mover (skips uninvolved
@@ -2373,6 +2374,36 @@ function moveUnits(
     offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
   }
   return ok(s2)
+}
+
+/** After a card EFFECT places a unit at a battlefield (Charm's moveToBf, etc.) the
+ *  unit "becomes present" — per the rules that applies Contested status and stages a
+ *  showdown. Open one if the battlefield is now contested; otherwise, if the move
+ *  flipped control to the moved unit's owner, award the conquer. No-op if a showdown
+ *  is already open. `priorController` is the controller BEFORE the effect moved it. */
+function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedIid: string, priorController: PlayerId | null): MatchState {
+  const bf = s.battlefields[bfIndex]
+  const movedOwner = bf.units.find((u) => u.iid === movedIid)?.owner
+  if (movedOwner == null) return s
+  const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
+  if (bf.units.some((u) => u.owner !== movedOwner)) {
+    if (s.showdown) return s // already mid-showdown; don't nest
+    s.phase = 'showdown'
+    s.showdown = { battlefield: bfIndex, priority: movedOwner, passes: 0, priorController, movedUnit: movedIid }
+    s.showdown.priority = nextShowdownPriority(s, movedOwner)
+    return log(s, movedOwner, `Showdown opened at ${bfName} — opponents may respond.`)
+  }
+  // Uncontested: a conquer if the move flipped control to the moved unit's owner.
+  if (bf.controller === movedOwner && priorController !== movedOwner) {
+    s = awardPoints(s, movedOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    s = grantHunt(s, movedOwner, bfIndex)
+    s = applyConquerPassive(s, movedOwner, bfIndex)
+    const here = bf.units.filter((u) => u.owner === movedOwner).map((u) => u.iid)
+    s = fireTriggers(s, collectGlobal(s, movedOwner, 'conquer'), bfIndex, 0, priorController == null)
+    s = fireTriggers(s, collectSelf(s, movedOwner, 'conquer', here), bfIndex, 0, priorController == null)
+    offerLeblanc(s, movedOwner, bfIndex)
+  }
+  return s
 }
 
 // --- turn flow -------------------------------------------------------------
@@ -3378,7 +3409,11 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
 
   const mover = s.showdown?.movedUnit
   const moverOwner = bf.units.find((u) => u.iid === mover)?.owner ?? s.activePlayer
-  const prevController = s.battlefields[bfIndex].controller
+  // Use the controller captured when the showdown OPENED — a reaction may have
+  // bounced/killed the defender mid-showdown, flipping control to the mover before
+  // this resolves; reading it now would wrongly read "mover already held it" and
+  // skip the conquer award. Fall back to the live value for legacy showdowns.
+  const prevController = s.showdown?.priorController !== undefined ? s.showdown.priorController : s.battlefields[bfIndex].controller
 
   const xpOf = (u: EngineCard) => s.players[u.owner]?.xp ?? 0
   const attackers = bf.units.filter((u) => u.owner === moverOwner)
@@ -4688,9 +4723,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const dest = parseInt(action.iid.slice(3), 10)
           const card = pluckCardAnywhere(s, unitIid)
           if (card && s.battlefields[dest]) {
+            const priorCtrl = s.battlefields[dest].controller
             s.battlefields[dest].units.push(card)
             recomputeControllers(s)
             s = log(s, action.player, `Moved ${getCard(card.cardId)?.name ?? 'a unit'} to ${bfBaseNameAt(s, dest) || `Battlefield ${dest + 1}`}.`)
+            // The moved unit "becomes present" → contested ⇒ showdown (Charm initiates combat).
+            s = showdownOrConquerAfterEffectMove(s, dest, card.iid, priorCtrl)
           }
         } else {
           s = log(s, action.player, 'Move — declined.')
