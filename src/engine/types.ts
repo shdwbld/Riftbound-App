@@ -104,6 +104,9 @@ export interface PlayerState {
   /** How many of Aphelios - Exalted's three attach-Equipment modes have been chosen
    *  this turn (each mode used once per turn, in order). Cleared at turn start. */
   apheliosModesThisTurn?: number
+  /** Whether Azir - Ascendant's location-swap ability has been used this turn.
+   *  Cleared at turn start. */
+  azirSwappedThisTurn?: boolean
   /** Extra Energy non-token units cost to play this turn (Vaults of Helia). */
   unitCostBump?: number
   /** Set when a battlefield (The Academy) grants the next spell [Repeat] equal

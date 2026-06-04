@@ -64,6 +64,9 @@ const PATTERNS: Pattern[] = [
   { event: 'enemyDeath', scope: 'global', re: /when(?:ever)?\s+(?:one or more\s+|an?\s+)?enemy\s+units?\s+(?:dies|die|is\s+defeated|are\s+defeated)/i },
   { event: 'conquer', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+conquers?/i },
   { event: 'conquer', scope: 'global', re: /when(?:ever)?\s+you\s+conquer/i },
+  // "When you conquer or hold" (Ivern - Green Father) — also fires a hold trigger
+  // (the conquer pattern above already covers the conquer half).
+  { event: 'hold', scope: 'global', re: /when(?:ever)?\s+you\s+conquer\s+or\s+holds?/i },
   // "When you hold", "When you or an ally hold", "When an ally holds" (Vex - Gloomist).
   { event: 'hold', scope: 'global', re: /when(?:ever)?\s+(?:you|an? ally)(?:\s+or\s+(?:you|an? ally))?\s+holds?/i },
   // "When I hold" (Trevor Snoozebottom, Dunebreaker, …) — fires for the unit at a

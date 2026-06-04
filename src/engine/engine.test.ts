@@ -1373,6 +1373,26 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].controller).toBe(0) // conquered the open battlefield
   })
 
+  it('Azir - Ascendant: swap locations with a friendly unit, steal its Equipment, once per turn (P4)', () => {
+    const azirId = injectCard('azir-ascendant-t', ":rb_rune_calm:: [Action] — Choose a unit you control. Move me to its location and it to my original location. If it's equipped, you may attach one of its Equipment to me. Use only once per turn.", { name: 'Azir - Ascendant', type: 'unit', might: 6, energy: 6, power: { calm: 1 } })
+    const gearId = injectCard('azir-gear-t', '+2 :rb_might:', { type: 'gear', energy: 0, power: {} })
+    const allyId = injectCard('azir-ally-t', 'A unit.', { type: 'unit', might: 3, energy: 0, power: {} })
+    const s = baseState()
+    const calmRune = CARDS.find((c) => c.type === 'rune' && c.produces?.includes('calm'))
+    s.players[0].zones.runePool.push(mk((calmRune ?? furyRune).id, 0))
+    const azir = mk(azirId, 0)
+    s.players[0].zones.base.push(azir)
+    const gear = mk(gearId, 0)
+    const ally = mk(allyId, 0, { attached: [`${gearId}|${gear.iid}`] })
+    s.battlefields[1] = { cardId: battlefield.id, units: [ally], controller: 0 }
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: azir.iid, targets: [ally.iid] })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[1].units.some((u) => u.iid === azir.iid)).toBe(true) // Azir moved to bf1
+    expect(r.state.players[0].zones.base.some((u) => u.iid === ally.iid)).toBe(true) // ally moved to base
+    expect(r.state.battlefields[1].units.find((u) => u.iid === azir.iid)?.attached.some((a) => a.startsWith(`${gearId}|`))).toBe(true) // stole the gear
+    expect(reduce(r.state, { type: 'ACTIVATE_UNIT', player: 0, iid: azir.iid, targets: [ally.iid] }).error).toBeTruthy() // once per turn
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return
@@ -4671,5 +4691,51 @@ describe('champion suite — HIGH batch (Annie ×2, Sona, Jinx)', () => {
     expect(d).toBeTruthy()
     expect(d!.effect.readySelf).toBe(true)
     expect(d!.effect.tempMightSelf).toBe(1)
+  })
+})
+
+describe('Ivern - Green Father (legend conquer/hold → Brush token)', () => {
+  const IVERN_TEXT = 'When you conquer or hold, you may exhaust me to replace that battlefield with a Brush battlefield token.'
+  const BRUSH_ID = 'unl-t03-219'
+
+  it('conquer: ready Ivern exhausts and replaces the conquered battlefield with Brush; tribe unit +1 (P4)', () => {
+    const ivern = injectCard('ivern-gf-t', IVERN_TEXT, { name: 'Ivern - Green Father', type: 'legend', tags: ['Ivern'] })
+    const birdId = injectCard('ivern-bird', 'A unit.', { type: 'unit', might: 2, energy: 0, power: {}, tags: ['Bird'] })
+    const s = baseState()
+    s.players[0].legend = mk(ivern, 0)
+    const bird = mk(birdId, 0)
+    s.players[0].zones.base.push(bird)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: bird.iid, toBattlefield: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].cardId).toBe(BRUSH_ID)
+    expect(r.state.players[0].legend?.exhausted).toBe(true)
+    const birdUnit = r.state.battlefields[0].units.find((u) => u.iid === bird.iid)!
+    expect(combatMightAt(r.state, 0, birdUnit, 'defender')).toBe(3) // base 2 + Brush +1
+  })
+
+  it('conquer: exhausted Ivern → no swap (P4)', () => {
+    const ivern = injectCard('ivern-gf-t2', IVERN_TEXT, { name: 'Ivern - Green Father', type: 'legend', tags: ['Ivern'] })
+    const birdId = injectCard('ivern-bird2', 'A unit.', { type: 'unit', might: 2, energy: 0, power: {}, tags: ['Bird'] })
+    const s = baseState()
+    s.players[0].legend = mk(ivern, 0, { exhausted: true })
+    const bird = mk(birdId, 0)
+    s.players[0].zones.base.push(bird)
+    const orig = s.battlefields[0].cardId
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: bird.iid, toBattlefield: 0 })
+    expect(r.state.battlefields[0].cardId).toBe(orig)
+  })
+
+  it('hold: ready Ivern replaces a held battlefield with Brush (P4)', () => {
+    const ivern = injectCard('ivern-gf-t3', IVERN_TEXT, { name: 'Ivern - Green Father', type: 'legend', tags: ['Ivern'] })
+    const birdId = injectCard('ivern-bird3', 'A unit.', { type: 'unit', might: 2, energy: 0, power: {}, tags: ['Bird'] })
+    const s = baseState()
+    s.activePlayer = 0
+    s.players[0].legend = mk(ivern, 0)
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)]
+    s.players[0].zones.runeDeck = [mk(furyRune.id, 0)]
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(birdId, 0)], controller: 0 }
+    const after = beginTurn(s)
+    expect(after.battlefields[0].cardId).toBe(BRUSH_ID)
+    expect(after.players[0].legend?.exhausted).toBe(true)
   })
 })

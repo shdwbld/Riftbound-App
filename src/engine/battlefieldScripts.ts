@@ -121,6 +121,14 @@ const SCRIPTS: Record<string, BattlefieldScript> = {
   // Veiled Temple: conquering readies a friendly gear (the optional Equipment
   // detach is a player choice and left manual).
   'Veiled Temple': { onConquer: (api, p) => { api.readyGear(p) } },
+  // Brush (Ivern - Green Father's token battlefield): Bird/Cat/Dog/Poro/Ivern
+  // units here have +1 Might.
+  'Brush': {
+    mightHere: (unit) => {
+      const tags = getCard(unit.cardId)?.tags ?? []
+      return tags.some((t) => ['Bird', 'Cat', 'Dog', 'Poro', 'Ivern'].includes(t)) ? 1 : 0
+    },
+  },
 }
 
 export function bfScript(cardId: string | undefined): BattlefieldScript | undefined {

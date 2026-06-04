@@ -935,6 +935,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // apply for these — their dedicated handler below does the real work.
     const skipGenericApply = srcName === 'Twisted Fate - Gambler' || srcName === 'Teemo - Strategist'
       || (srcName === 'Sivir - Battle Mistress' && ability.event === 'recycleRune')
+      || (srcName === 'Ivern - Green Father' && (ability.event === 'conquer' || ability.event === 'hold'))
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1150,6 +1151,29 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
           p.zones.base.push({ ...m, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
           recomputeControllers(s)
           s = log(s, player, `${label}: ${srcName} recycled ${getCard(spare.cardId)?.name} to play ${getCard(m.cardId)?.name} from trash (free).`)
+        }
+      }
+      handled = true
+    }
+    // Ivern - Green Father: "When you conquer or hold, you may exhaust me to replace
+    // that battlefield with a Brush battlefield token." Auto-resolved (pure benefit):
+    // if Ivern (the legend) is ready, exhaust it and swap the battlefield. Conquer
+    // passes bfIndex; hold has none, so pick the first controlled non-Brush bf.
+    if ((ability.event === 'conquer' || ability.event === 'hold') && srcName === 'Ivern - Green Father') {
+      const legend = s.players[player].legend
+      if (legend && !legend.exhausted) {
+        const BRUSH_ID = 'unl-t03-219'
+        let targetBf: number | undefined
+        if (ability.event === 'conquer' && bfIndex != null) targetBf = bfIndex
+        else {
+          const found = s.battlefields.findIndex((b) => b.controller === player && b.cardId !== BRUSH_ID)
+          if (found >= 0) targetBf = found
+        }
+        if (targetBf != null && s.battlefields[targetBf]) {
+          legend.exhausted = true
+          s.battlefields[targetBf].cardId = BRUSH_ID
+          recomputeControllers(s)
+          s = log(s, player, `${label}: Ivern exhausted — replaced battlefield ${targetBf + 1} with Brush.`)
         }
       }
       handled = true
@@ -1904,6 +1928,10 @@ function abilityUsableNow(card: Card | undefined, p: PlayerState): boolean {
   const t = (card?.text ?? '').toLowerCase()
   if (/use only if you('ve| have) played an equipment this turn/.test(t))
     return !!p.playedEquipmentThisTurn
+  // "Use only once per turn." — Azir - Ascendant's swap ability.
+  const cardName = (card?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
+  if (/use only once per turn/.test(t) && cardName === 'Azir - Ascendant')
+    return !p.azirSwappedThisTurn
   return true
 }
 
@@ -2307,6 +2335,7 @@ export function beginTurn(state: MatchState): MatchState {
   p.xpGainedThisTurn = false
   p.zileanDoubledThisTurn = false
   p.apheliosModesThisTurn = 0
+  p.azirSwappedThisTurn = false
   p.pool = { energy: 0, power: {} }
   p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
   p.grantRepeatNextSpell = false
@@ -4632,6 +4661,36 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (!equips.length) return fail(state, 'No detached Equipment you control to attach.')
         offerChoice(s1, { player: action.player, kind: 'forgePickEquip', bfIndex: -1, prompt: `${name} — choose an Equipment to attach.`, options: equips })
         return ok(s1)
+      }
+      // Azir - Ascendant: swap Azir's location with a chosen friendly unit's location
+      // (battlefield ↔ battlefield or ↔ base), preserving ready/exhausted state, then
+      // optionally steal one Equipment from the target. Once per turn.
+      if ((getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Azir - Ascendant') {
+        const targetIid = action.targets?.[0]
+        if (!targetIid) return fail(state, 'Azir - Ascendant: choose a friendly unit to swap with.')
+        const azir = controlledInstance(s1, action.player, u.iid)
+        const tgt = findUnitAnywhere(s1, targetIid)
+        if (!azir || !tgt || tgt.owner !== action.player || tgt.iid === azir.iid) return fail(state, 'Azir - Ascendant: invalid swap target.')
+        const azirBf = battlefieldOf(s1, azir.iid)
+        const tgtBf = battlefieldOf(s1, tgt.iid)
+        // Remove both from their current zones.
+        const pullFrom = (inst: EngineCard, bi: number) => {
+          if (bi >= 0) s1.battlefields[bi].units.splice(s1.battlefields[bi].units.findIndex((x) => x.iid === inst.iid), 1)
+          else s1.players[action.player].zones.base.splice(s1.players[action.player].zones.base.findIndex((x) => x.iid === inst.iid), 1)
+        }
+        pullFrom(azir, azirBf)
+        pullFrom(tgt, tgtBf)
+        // Place each where the other was (preserving exhausted/damage/etc.).
+        ;(tgtBf >= 0 ? s1.battlefields[tgtBf].units : s1.players[action.player].zones.base).push(azir)
+        ;(azirBf >= 0 ? s1.battlefields[azirBf].units : s1.players[action.player].zones.base).push(tgt)
+        recomputeControllers(s1)
+        if (tgt.attached.length > 0) {
+          const stolen = tgt.attached.splice(0, 1)[0]
+          azir.attached.push(stolen)
+          s1 = log(s1, action.player, `${name}: stole ${getCard(stolen.split('|')[0])?.name} from ${getCard(tgt.cardId)?.name}.`)
+        }
+        s1.players[action.player].azirSwappedThisTurn = true
+        return ok(log(s1, action.player, `${name}: swapped locations with ${getCard(tgt.cardId)?.name}.`))
       }
       // Resolve the effect.
       if (ab.doubleMight) {
