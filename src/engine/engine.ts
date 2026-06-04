@@ -875,13 +875,20 @@ function countFriendlyUnitsWithKeyword(s: MatchState, player: PlayerId, kw: stri
   return n
 }
 
-/** Permanents a player controls that can carry triggered abilities. */
+/** Permanents a player controls that can carry triggered abilities. Includes gear
+ *  ATTACHED to a unit — stored as a "cardId|iid" ref on the unit, not an EngineCard
+ *  in any zone — surfaced here as a virtual permanent so its triggered/passive
+ *  abilities (Vanguard Helm, etc.) are collected, not just unattached base gear. */
 function controlledPermanents(s: MatchState, player: PlayerId): EngineCard[] {
-  const out: EngineCard[] = [
-    ...s.battlefields.flatMap((b) => b.units.filter((u) => u.owner === player)),
-    ...s.players[player].zones.base,
-  ]
+  const units = [...s.battlefields.flatMap((b) => b.units.filter((u) => u.owner === player)), ...s.players[player].zones.base]
+  const out: EngineCard[] = [...units]
   if (s.players[player].legend) out.push(s.players[player].legend!)
+  for (const u of units) {
+    for (const ref of u.attached) {
+      const [cid, iid] = ref.split('|')
+      if (cid && getCard(cid)?.type === 'gear') out.push({ iid: iid || `${player}:gear:${cid}`, cardId: cid, owner: player, exhausted: false, damage: 0, attached: [] })
+    }
+  }
   return out
 }
 
@@ -3074,7 +3081,8 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     }
     // Controller's gear: Mask of Foresight — "When a friendly unit attacks or
     // defends alone, give it +N Might this turn." Modeled as a lone-combatant aura.
-    for (const g of owner.zones.base) {
+    // Scans ALL controlled gear (base AND attached), so it works once equipped.
+    for (const g of controlledPermanents(s, u.owner)) {
       const gm = (getCard(g.cardId)?.text ?? '').toLowerCase().match(/when a friendly unit attacks or defends alone,? give it \+(\d+)\s*(?::rb_might:|might)/)
       if (gm) b += parseInt(gm[1], 10)
     }

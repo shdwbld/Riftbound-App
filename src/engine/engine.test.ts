@@ -4966,3 +4966,17 @@ describe('Playtest Pass 1 fixes', () => {
     expect(r.state.players[0].zones.hand.some((x) => x.cardId === furyUnit.id)).toBe(true) // unit returned to hand
   })
 })
+
+describe('Playtest Pass 2 — gear triggers', () => {
+  it('Mask of Foresight: gives +1 Might to a lone attacker even while ATTACHED', () => {
+    const mask = injectCard('mask-t', 'When a friendly unit attacks or defends alone, give it +1 :rb_might: this turn.', { type: 'gear', energy: 0, power: {} })
+    const vanilla = injectCard('mask-unit', 'A unit.', { might: 3 })
+    const g = mk(mask, 0)
+    const u = mk(vanilla, 0, { attached: [`${mask}|${g.iid}`] })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 } // alone
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(4) // 3 + 1 (Mask, alone) — works while attached
+    s.battlefields[0].units.push(mk(vanilla, 0)) // no longer alone
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(3) // Mask only applies when alone
+  })
+})
