@@ -52,6 +52,8 @@ export interface MatchBoardProps {
   onCardAction?: (action: Action) => void
   /** Activate a unit's own printed ability (the page handles its targeting). */
   onActivateUnit?: (iid: string) => void
+  /** Attach an unattached Equipment in base to a unit (page opens a unit picker). */
+  onAttachGear?: (gearIid: string) => void
   /** Targeting mode: clicking a legal unit picks it as a spell target. */
   targetingActive?: boolean
   /** The unit iids that are legal targets for the spell being aimed. */
@@ -138,6 +140,7 @@ export default function MatchBoard({
   onConcede,
   onCardAction,
   onActivateUnit,
+  onAttachGear,
   targetingActive,
   legalTargets,
   targetProgress,
@@ -151,7 +154,7 @@ export default function MatchBoard({
   const [selectedUnits, setSelectedUnits] = useState<string[]>([])
   const toggleSelected = (iid: string) =>
     setSelectedUnits((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : [...s, iid]))
-  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action?: Action; activateIid?: string }[] } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action?: Action; activateIid?: string; attachGearIid?: string }[] } | null>(null)
   const me = match.players[perspective]
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
@@ -257,7 +260,7 @@ export default function MatchBoard({
     e.preventDefault()
     if (!onCardAction) return
     const card = getCard(ci.cardId)
-    const items: { label: string; action?: Action; activateIid?: string }[] = []
+    const items: { label: string; action?: Action; activateIid?: string; attachGearIid?: string }[] = []
     if (card?.type === 'unit') {
       items.push({ label: '⊘ Stun', action: { type: 'STUN_UNIT', player: perspective, iid: ci.iid } })
       items.push({ label: '⊗ Banish', action: { type: 'BANISH', player: perspective, iid: ci.iid } })
@@ -280,6 +283,16 @@ export default function MatchBoard({
           const [gid, giid] = ref.split('|')
           items.push({ label: `🔓 Detach ${getCard(gid)?.name ?? 'gear'}`, action: { type: 'DETACH', player: perspective, unitIid: ci.iid, gearIid: giid } })
         }
+      }
+      // Equip an unattached piece of Equipment sitting on your Base to a unit (its
+      // [Equip] activated ability). Only for Equipment (has [Equip] / "attach … to a
+      // unit"), not Gold/standalone gear, and only if you have a unit to equip.
+      if (
+        onAttachGear && zone === 'base' && card?.type === 'gear' && card?.supertype !== 'token' &&
+        (parseKeywords(card).equip || /attach (?:this|it) to a unit/i.test(card?.text ?? '')) &&
+        [...me.zones.base, ...match.battlefields.flatMap((b) => b.units)].some((u) => u.owner === perspective && getCard(u.cardId)?.type === 'unit')
+      ) {
+        items.push({ label: '🔗 Equip to a unit', attachGearIid: ci.iid })
       }
       // Gold gear token: cash in for 1 Power of any domain (kills the token).
       if (card?.supertype === 'token' && card?.type === 'gear') {
@@ -686,6 +699,7 @@ export default function MatchBoard({
                 key={it.label}
                 onClick={() => {
                   if (it.activateIid) onActivateUnit?.(it.activateIid)
+                  else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
                   else if (it.action) onCardAction?.(it.action)
                   setMenu(null)
                 }}

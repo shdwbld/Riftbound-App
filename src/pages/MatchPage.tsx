@@ -118,6 +118,8 @@ export default function MatchPage() {
   const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
   // Pending Ambush battlefield choice.
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
+  // Pending "Equip to a unit" choice for an unattached gear in base.
+  const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
   // Pending Deflect surcharge payment (after a spell's targets are chosen).
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
 
@@ -336,9 +338,10 @@ export default function MatchPage() {
       flash(count > 1 ? `Pick up to ${count} targets.` : 'Pick a target unit.')
       return
     }
-    if (type === 'PLAY_GEAR' && friendlyUnitIids(match, controlling).length > 0) {
+    const isEquipment = parseKeywords(card).equip || /attach (?:this|it) to a unit/i.test(card.text ?? '')
+    if (type === 'PLAY_GEAR' && isEquipment && friendlyUnitIids(match, controlling).length > 0) {
       setTargeting({ iid: c.iid, cardId: card.id, payment, player: controlling, kind: 'gear', count: 1, picked: [] })
-      flash('Choose a unit to equip.')
+      flash('Choose a unit to equip (or right-click the gear later to attach).')
       return
     }
     if (type === 'PLAY_UNIT') {
@@ -453,6 +456,7 @@ export default function MatchPage() {
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
         onCardAction={(a) => act(a)}
         onActivateUnit={activateUnit}
+        onAttachGear={(gearIid) => setAttachPick({ gearIid })}
         targetingActive={!!targeting}
         legalTargets={targeting ? activeLegalTargets().filter((id) => !targeting.picked.includes(id)) : undefined}
         targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}
@@ -533,6 +537,25 @@ export default function MatchPage() {
           onCancel={() => setAmbushPick(null)}
         />
       )}
+      {attachPick && (() => {
+        const units = [...match.players[controlling].zones.base, ...match.battlefields.flatMap((b) => b.units)].filter(
+          (u) => u.owner === controlling && getCard(u.cardId)?.type === 'unit',
+        )
+        const gearName = getCard(match.players[controlling].zones.base.find((g) => g.iid === attachPick.gearIid)?.cardId ?? '')?.name ?? 'gear'
+        return (
+          <ChoiceModal
+            title="🔗 Equip"
+            subtitle={`Attach ${gearName} to which unit?`}
+            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            onPick={(uid) => {
+              const a = attachPick
+              setAttachPick(null)
+              act({ type: 'ATTACH', player: controlling, unitIid: String(uid), gearIid: a.gearIid })
+            }}
+            onCancel={() => setAttachPick(null)}
+          />
+        )
+      })()}
       {match.pendingChoice && match.pendingChoice.player === controlling && (
         <ChoiceModal
           title="✦ Battlefield"

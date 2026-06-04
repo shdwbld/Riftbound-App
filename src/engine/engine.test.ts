@@ -5069,6 +5069,34 @@ describe('Playtest Pass 2 — optional additional cost (you may pay X to play me
   })
 })
 
+describe('Playtest Pass 2 — equip an unattached gear from base (ATTACH)', () => {
+  it('attaches a base gear to a unit and grants its static Might bonus', () => {
+    const sword = injectCard('atc-sword', '[Equip] :rb_rune_fury: (:rb_rune_fury:: Attach this to a unit you control.) I have +2 :rb_might:.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(injectCard('atc-unit', 'A unit.', { type: 'unit', might: 3 }), 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    const g = mk(sword, 0)
+    s.players[0].zones.base.push(g)
+    const r = reduce(s, { type: 'ATTACH', player: 0, unitIid: u.iid, gearIid: g.iid })
+    expect(r.error).toBeUndefined()
+    const unit = r.state.battlefields[0].units.find((x) => x.iid === u.iid)!
+    expect(unit.attached.some((a) => a.split('|')[1] === g.iid)).toBe(true) // now attached
+    expect(r.state.players[0].zones.base.some((x) => x.iid === g.iid)).toBe(false) // left base
+    expect(combatMightAt(r.state, 0, unit, 'attacker')).toBe(5) // 3 base + 2 gear
+  })
+
+  it('rejects attaching to another player\'s unit', () => {
+    const sword = injectCard('atc-sword2', 'Attach this to a unit you control. I have +1 :rb_might:.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(injectCard('atc-enemy', 'A unit.', { type: 'unit', might: 2 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const g = mk(sword, 0)
+    s.players[0].zones.base.push(g)
+    const r = reduce(s, { type: 'ATTACH', player: 0, unitIid: enemy.iid, gearIid: g.iid })
+    expect(r.error).toBeTruthy()
+  })
+})
+
 describe('Playtest Pass 2 — opponent-play triggers (Vex - Apathetic)', () => {
   it('stuns and freezes a unit an opponent plays while Vex is at a battlefield', () => {
     const s = baseState()

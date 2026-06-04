@@ -86,6 +86,8 @@ export default function OnlinePage() {
   const [recap, setRecap] = useState<TurnRecapData | null>(null)
   const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
+  // Pending "Equip to a unit" choice for an unattached gear in base.
+  const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
   const [seat, setSeat] = useState<PlayerId>(0)
@@ -530,9 +532,10 @@ export default function OnlinePage() {
       flash(count > 1 ? `Pick up to ${count} targets.` : 'Pick a target unit.')
       return
     }
-    if (type === 'PLAY_GEAR' && friendlyUnitIids(match, seat).length > 0) {
+    const isEquipment = parseKeywords(card).equip || /attach (?:this|it) to a unit/i.test(card.text ?? '')
+    if (type === 'PLAY_GEAR' && isEquipment && friendlyUnitIids(match, seat).length > 0) {
       setTargeting({ iid: c.iid, cardId: card.id, payment, kind: 'gear', count: 1, picked: [] })
-      flash('Choose a unit to equip.')
+      flash('Choose a unit to equip (or right-click the gear later to attach).')
       return
     }
     if (type === 'PLAY_UNIT') {
@@ -658,6 +661,7 @@ export default function OnlinePage() {
         onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}
         onCardAction={(a) => dispatch(a)}
         onActivateUnit={activateUnit}
+        onAttachGear={(gearIid) => setAttachPick({ gearIid })}
         targetingActive={!!targeting}
         legalTargets={
           targeting
@@ -734,6 +738,25 @@ export default function OnlinePage() {
           onCancel={() => setAmbushPick(null)}
         />
       )}
+      {attachPick && (() => {
+        const units = [...match.players[seat].zones.base, ...match.battlefields.flatMap((b) => b.units)].filter(
+          (u) => u.owner === seat && getCard(u.cardId)?.type === 'unit',
+        )
+        const gearName = getCard(match.players[seat].zones.base.find((g) => g.iid === attachPick.gearIid)?.cardId ?? '')?.name ?? 'gear'
+        return (
+          <ChoiceModal
+            title="🔗 Equip"
+            subtitle={`Attach ${gearName} to which unit?`}
+            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            onPick={(uid) => {
+              const a = attachPick
+              setAttachPick(null)
+              dispatch({ type: 'ATTACH', player: seat, unitIid: String(uid), gearIid: a.gearIid })
+            }}
+            onCancel={() => setAttachPick(null)}
+          />
+        )
+      })()}
       {match.pendingChoice && match.pendingChoice.player === seat && (
         <ChoiceModal
           title="✦ Battlefield"

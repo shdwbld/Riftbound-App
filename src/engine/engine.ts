@@ -4562,6 +4562,27 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       return ok(log(s, action.player, `Detached ${getCard(cardId)?.name}.`))
     }
 
+    case 'ATTACH': {
+      // Attach an unattached piece of Equipment sitting on your Base to one of your
+      // units (the [Equip] activated ability). The equip rune cost is treated as
+      // free here, matching the play-time auto-attach simplification.
+      const guard = requireActiveAction(state, action.player)
+      if (guard) return fail(state, guard)
+      const s = clone(state)
+      const p = s.players[action.player]
+      const gIdx = p.zones.base.findIndex((g) => g.iid === action.gearIid && getCard(g.cardId)?.type === 'gear')
+      if (gIdx < 0) return fail(state, 'That gear is not on your Base.')
+      const unit = findUnitAnywhere(s, action.unitIid)
+      if (!unit || unit.owner !== action.player || getCard(unit.cardId)?.type !== 'unit')
+        return fail(state, 'Choose one of your units to equip.')
+      const [gear] = p.zones.base.splice(gIdx, 1)
+      unit.attached = [...unit.attached, `${gear.cardId}|${gear.iid}`]
+      emit({ kind: 'buff', iid: unit.iid, player: action.player, cardId: gear.cardId })
+      let sA = log(s, action.player, `Attached ${getCard(gear.cardId)?.name} to ${getCard(unit.cardId)?.name}.`)
+      sA = fireAttachEquip(sA, action.player, unit) // Aphelios - Exalted, etc.
+      return ok(sA)
+    }
+
     case 'USE_GOLD': {
       // Cash in a Gold gear token: kill it (a token, so it ceases to exist) and
       // add 1 Power of the chosen domain to your pool. Reaction-speed (the Gold
