@@ -15,6 +15,7 @@ import MulliganHand from '../components/MulliganHand'
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
 import PaymentModal from '../components/PaymentModal'
+import PromptModal from '../components/PromptModal'
 import ChoiceModal from '../components/ChoiceModal'
 import VisionPrompt from '../components/VisionPrompt'
 import SetupScreen from '../components/SetupScreen'
@@ -122,6 +123,8 @@ export default function MatchPage() {
   const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
   // Pending play destination for a unit whose rules let it enter a battlefield.
   const [destPick, setDestPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
+  // Pending optional additional-cost Pay/Skip prompt (rune-modal style).
+  const [optCostPrompt, setOptCostPrompt] = useState<{ c: EngineCard; card: Card; cost: ResolvedCost; accelerate: boolean; opt: KeywordCost | null } | null>(null)
   // Pending Deflect surcharge payment (after a spell's targets are chosen).
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
 
@@ -281,7 +284,6 @@ export default function MatchPage() {
     // unit enters READY (can act the turn it arrives).
     let accelerate = false
     let repeat = false
-    let payAdditionalCost = false
     let cost = effectiveCostOf(match, controlling, card)
     if (type === 'PLAY_UNIT') {
       const ac = accelerateCost(card)
@@ -291,15 +293,14 @@ export default function MatchPage() {
         )
         if (accelerate) cost = addCost(cost, ac)
       }
-      // Optional "you may pay X as an additional cost to play me" — Pay / Skip.
-      // Bard - Mercurial's additional cost is "exhaust your legend" (no rune cost).
+      // Optional "you may pay X as an additional cost to play me" — pause for a
+      // styled Pay/Skip prompt, then resume in finishPlay. Bard - Mercurial's cost
+      // is "exhaust your legend" (no rune cost).
       const opt = optionalPlayCost(card)
       const isBard = card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial'
       if (opt || isBard) {
-        payAdditionalCost = window.confirm(
-          `${card.name}: pay an additional cost (${opt ? costLabel(opt) : 'exhaust your legend'}) for its bonus?\n\nOK = pay · Cancel = skip.`,
-        )
-        if (payAdditionalCost && opt) cost = addCost(cost, opt)
+        setOptCostPrompt({ c, card, cost, accelerate, opt: opt ?? null })
+        return
       }
     }
     // Repeat is an OPTIONAL extra cost on spells — confirm to pay it so the
@@ -313,8 +314,11 @@ export default function MatchPage() {
         if (repeat) cost = addCost(cost, rc)
       }
     }
+    finishPlay(c, card, type, cost, accelerate, repeat, false)
+  }
 
-    // Manual rune selection: open the payment modal instead of auto-paying.
+  /** Settle payment (manual modal or auto) then hand off to proceedPlay. */
+  const finishPlay = (c: EngineCard, card: Card, type: PlayType, cost: ResolvedCost, accelerate: boolean, repeat: boolean, payAdditionalCost: boolean) => {
     if (manualPay && !costIsFree(cost)) {
       if (!autoPay(match.players[controlling], cost)) return flash('Not enough resources.')
       setPaying({ c, card, type, cost, accelerate, repeat, payAdditionalCost })
@@ -323,6 +327,15 @@ export default function MatchPage() {
     const payment = autoPay(match.players[controlling], cost)
     if (!payment) return flash('Not enough resources.')
     proceedPlay(c, card, type, payment, accelerate, repeat, payAdditionalCost)
+  }
+
+  /** Resolve the optional additional-cost Pay/Skip prompt and resume the play. */
+  const resolveOptCost = (pay: boolean) => {
+    const p = optCostPrompt
+    if (!p) return
+    setOptCostPrompt(null)
+    const cost = pay && p.opt ? addCost(p.cost, p.opt) : p.cost
+    finishPlay(p.c, p.card, 'PLAY_UNIT', cost, p.accelerate, false, pay)
   }
 
   /** Finish a play once payment is settled (auto or manual): targeting for
@@ -493,6 +506,18 @@ export default function MatchPage() {
         </button>
       </div>
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
+      {optCostPrompt && (
+        <PromptModal
+          title="Pay an additional cost?"
+          message={`${optCostPrompt.card.name}: ${optCostPrompt.opt ? `pay ${costLabel(optCostPrompt.opt)}` : 'exhaust your legend'} for its bonus.`}
+          card={optCostPrompt.card}
+          options={[
+            { label: optCostPrompt.opt ? `Pay ${costLabel(optCostPrompt.opt)}` : 'Exhaust legend', onClick: () => resolveOptCost(true), variant: 'primary' },
+            { label: 'Skip', onClick: () => resolveOptCost(false) },
+          ]}
+          onCancel={() => resolveOptCost(false)}
+        />
+      )}
       {paying && (
         <PaymentModal
           player={match.players[controlling]}

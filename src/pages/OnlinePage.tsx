@@ -20,6 +20,7 @@ import { needsTarget, spellEffect } from '../engine/effects'
 import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import PaymentModal from '../components/PaymentModal'
+import PromptModal from '../components/PromptModal'
 import ChoiceModal from '../components/ChoiceModal'
 import VisionPrompt from '../components/VisionPrompt'
 import DamageAssignModal from '../components/DamageAssignModal'
@@ -90,6 +91,8 @@ export default function OnlinePage() {
   const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
   // Pending play destination for a unit whose rules let it enter a battlefield.
   const [destPick, setDestPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
+  // Pending optional additional-cost Pay/Skip prompt (rune-modal style).
+  const [optCostPrompt, setOptCostPrompt] = useState<{ c: EngineCard; card: Card; cost: ResolvedCost; accelerate: boolean; opt: KeywordCost | null } | null>(null)
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
   const [seat, setSeat] = useState<PlayerId>(0)
@@ -480,7 +483,6 @@ export default function OnlinePage() {
     // unit enters READY (can act the turn it arrives).
     let accelerate = false
     let repeat = false
-    let payAdditionalCost = false
     let cost = effectiveCostOf(match, seat, card)
     if (type === 'PLAY_UNIT') {
       const ac = accelerateCost(card)
@@ -490,15 +492,13 @@ export default function OnlinePage() {
         )
         if (accelerate) cost = addCost(cost, ac)
       }
-      // Optional "you may pay X as an additional cost to play me" — Pay / Skip.
-      // Bard - Mercurial's additional cost is "exhaust your legend" (no rune cost).
+      // Optional "you may pay X as an additional cost to play me" — pause for a
+      // styled Pay/Skip prompt, then resume in finishPlay.
       const opt = optionalPlayCost(card)
       const isBard = card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial'
       if (opt || isBard) {
-        payAdditionalCost = window.confirm(
-          `${card.name}: pay an additional cost (${opt ? costLabel(opt) : 'exhaust your legend'}) for its bonus?\n\nOK = pay · Cancel = skip.`,
-        )
-        if (payAdditionalCost && opt) cost = addCost(cost, opt)
+        setOptCostPrompt({ c, card, cost, accelerate, opt: opt ?? null })
+        return
       }
     }
     // Repeat is an OPTIONAL extra cost on spells — confirm to resolve twice.
@@ -511,14 +511,26 @@ export default function OnlinePage() {
         if (repeat) cost = addCost(cost, rc)
       }
     }
+    finishPlay(c, card, type, cost, accelerate, repeat, false)
+  }
 
-    // Every rune-spending play opens the rune picker overlay.
+  /** Settle payment (rune picker or free) then hand off to proceedPlay. */
+  const finishPlay = (c: EngineCard, card: Card, type: PlayType, cost: ResolvedCost, accelerate: boolean, repeat: boolean, payAdditionalCost: boolean) => {
     if (!costIsFree(cost)) {
       if (!autoPay(match.players[seat], cost)) return flash('Not enough resources.')
       setPaying({ c, card, type, cost, accelerate, repeat, payAdditionalCost })
       return
     }
     proceedPlay(c, card, type, { exhaust: [], recycle: [] }, accelerate, repeat, payAdditionalCost)
+  }
+
+  /** Resolve the optional additional-cost Pay/Skip prompt and resume the play. */
+  const resolveOptCost = (pay: boolean) => {
+    const p = optCostPrompt
+    if (!p) return
+    setOptCostPrompt(null)
+    const cost = pay && p.opt ? addCost(p.cost, p.opt) : p.cost
+    finishPlay(p.c, p.card, 'PLAY_UNIT', cost, p.accelerate, false, pay)
   }
 
   const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean, repeat = false, payAdditionalCost = false) => {
@@ -693,6 +705,18 @@ export default function OnlinePage() {
         events={lastEvents}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
+      {optCostPrompt && (
+        <PromptModal
+          title="Pay an additional cost?"
+          message={`${optCostPrompt.card.name}: ${optCostPrompt.opt ? `pay ${costLabel(optCostPrompt.opt)}` : 'exhaust your legend'} for its bonus.`}
+          card={optCostPrompt.card}
+          options={[
+            { label: optCostPrompt.opt ? `Pay ${costLabel(optCostPrompt.opt)}` : 'Exhaust legend', onClick: () => resolveOptCost(true), variant: 'primary' },
+            { label: 'Skip', onClick: () => resolveOptCost(false) },
+          ]}
+          onCancel={() => resolveOptCost(false)}
+        />
+      )}
       {paying && (
         <PaymentModal
           player={match.players[seat]}
