@@ -461,6 +461,54 @@ export default function MatchBoard({
     setDrill(null)
     setMenu({ x: e.clientX, y: e.clientY, items })
   }
+
+  // Manual keyboard shortcuts (sandbox): track held letter keys, then route a
+  // modified click on any card (data-iid) to a manual op in the capture phase
+  // so the card's own onClick (inspect/play/target) is bypassed.
+  //   Z+click = toggle facedown (hide) · C+click = cycle marker ·
+  //   Ctrl+C+click = clear marker · Shift+click = recycle a rune.
+  const heldKeys = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { const k = e.key.toLowerCase(); if (k === 'z' || k === 'c') heldKeys.current.add(k) }
+    const up = (e: KeyboardEvent) => heldKeys.current.delete(e.key.toLowerCase())
+    const clear = () => heldKeys.current.clear()
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', clear)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', clear) }
+  }, [])
+  const findInstance = (iid: string): EngineCard | undefined => {
+    for (const pl of match.players) {
+      if (pl.legend?.iid === iid) return pl.legend
+      if (pl.champion?.iid === iid) return pl.champion
+      for (const z of Object.keys(pl.zones) as (keyof typeof pl.zones)[])
+        for (const c of pl.zones[z]) if (c.iid === iid) return c
+    }
+    for (const bf of match.battlefields) for (const u of bf.units) if (u.iid === iid) return u
+    return undefined
+  }
+  const onManualClickCapture = (e: React.MouseEvent) => {
+    if (!match.sandbox || !onCardAction) return
+    const z = heldKeys.current.has('z')
+    const c = heldKeys.current.has('c')
+    if (!z && !c && !e.shiftKey) return
+    const el = (e.target as HTMLElement | null)?.closest('[data-iid]') as HTMLElement | null
+    if (!el) return
+    const iid = el.getAttribute('data-iid')
+    if (!iid) return
+    const inst = findInstance(iid)
+    if (!inst) return
+    const owner = inst.owner
+    let act: Action | null = null
+    if (z) act = { type: 'OVERRIDE', player: owner, op: 'grant', iid, flag: 'facedown' } as Action
+    else if (c) act = { type: 'OVERRIDE', player: owner, op: 'marker', iid, ...(e.ctrlKey ? { value: -1 } : {}) } as Action
+    else if (e.shiftKey && getCard(inst.cardId)?.type === 'rune') act = { type: 'RECYCLE_RUNE', player: owner, iid } as Action
+    if (!act) return // no manual action for this gesture — let the normal click proceed
+    e.preventDefault()
+    e.stopPropagation()
+    onCardAction(act)
+  }
+
   // Opponents in seating order, starting just after the local player.
   const opponents: PlayerState[] = []
   for (let i = 1; i < match.players.length; i++)
@@ -534,7 +582,7 @@ export default function MatchBoard({
               : { text: `${activeName}'s turn`, cls: 'border-white/15 bg-white/5 text-white/60' }
 
   return (
-    <div className="flex flex-col gap-3 xl:flex-row xl:items-start" onContextMenu={(e) => e.preventDefault()}>
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-start" onContextMenu={(e) => e.preventDefault()} onClickCapture={onManualClickCapture}>
     {/* FAR-LEFT — manual override panel (sandbox only) */}
     {match.sandbox && onCardAction && <OverridePanel match={match} perspective={perspective} onAct={onCardAction} />}
     {/* CENTER — the board */}

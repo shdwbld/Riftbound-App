@@ -59,6 +59,9 @@ export default function OverridePanel({
       <div className="flex items-center justify-between">
         <span className="text-sm font-bold text-fuchsia-100">🛠 Manual override</span>
       </div>
+      <div className="rounded bg-black/20 px-2 py-1 text-[10px] leading-relaxed text-white/40">
+        Click-tips: <b className="text-white/60">Z</b>+click hide · <b className="text-white/60">C</b>+click marker · <b className="text-white/60">Ctrl+C</b>+click clears · <b className="text-white/60">Shift</b>+click recycle rune
+      </div>
 
       {/* Target player */}
       <div className="flex flex-wrap gap-1">

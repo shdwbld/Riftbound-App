@@ -84,6 +84,7 @@ export default function BoardCard({
     <button
       onClick={onClick}
       title={def?.name}
+      data-iid={(ci as { iid?: string }).iid}
       className={`relative ${w} shrink-0 overflow-hidden rounded-md border transition ${borderClass} ${
         ci.exhausted ? 'rotate-90' : ''
       } ${dim ? 'opacity-40 saturate-0' : ''} ${glow === 'ready' ? 'fx-ready' : ''} ${
