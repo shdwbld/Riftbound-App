@@ -1074,6 +1074,43 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].units.some((u) => u.cardId === recruit && u.owner === 0)).toBe(true) // played here
   })
 
+  it('Noxian Drummer: move-to-battlefield plays a Recruit token HERE (not base)', () => {
+    const drum = injectCard('noxian-drummer-t', 'When I move to a battlefield, play a 1 :rb_might: Recruit unit token here. (It is also at the battlefield.)', { type: 'unit', energy: 0, power: {}, might: 2 })
+    const s = baseState()
+    const u = mk(drum, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [u.iid], toBattlefield: 0 })
+    const here = r.state.battlefields[0].units.filter((x) => x.cardId === TOKEN_PILE_IDS[0] && x.owner === 0)
+    expect(here.length).toBe(1) // recruit landed at the battlefield
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === TOKEN_PILE_IDS[0])).toBe(false) // not at base
+  })
+
+  it('Corina Veraza: move-to-battlefield plays three Recruit tokens here', () => {
+    const cor = injectCard('corina-t', 'When I move to a battlefield, play three 1 :rb_might: Recruit unit tokens here.', { type: 'unit', energy: 0, power: {}, might: 3 })
+    const s = baseState()
+    const u = mk(cor, 0)
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [u.iid], toBattlefield: 1 })
+    const here = r.state.battlefields[1].units.filter((x) => x.cardId === TOKEN_PILE_IDS[0] && x.owner === 0)
+    expect(here.length).toBe(3)
+  })
+
+  it('parse: "Recruit unit token here" sets recruitsHere', async () => {
+    const { spellEffect } = await import('./effects')
+    const mkCard = (text: string) =>
+      ({ id: 'x', name: 'x', type: 'unit', domains: ['fury'], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {}, might: 3 }) as never
+    expect(spellEffect(mkCard('Play a 1 :rb_might: Recruit unit token here.')).recruitsHere).toBe(true)
+    expect(spellEffect(mkCard('Play four 1 :rb_might: Recruit unit tokens.')).recruitsHere).toBe(false)
+  })
+
+  it('Assembly Rig: "Recycle a unit from your trash" counts as a recycle cost', () => {
+    const rig = injectCard('assembly-rig-t', ':rb_energy_1::rb_rune_fury:, Recycle a unit from your trash, :rb_exhaust:: Play a 3 :rb_might: Mech unit token to your base.', { type: 'gear', energy: 2, power: {} })
+    const ab = unitActivatedAbility(CARD_INDEX[rig] as never)
+    expect(ab).not.toBeNull()
+    expect(ab!.recycleTrash).toBe(1)
+    expect(ab!.exhaust).toBe(true)
+  })
+
   // --- Token statics: Renata (enter ready) & Zilean (doubling) ---
   it('Renata Glasc - Industrialist (champion): your tokens enter ready', () => {
     const maker = injectCard('rec-maker', 'When you play me, play 2 Recruit unit tokens.', { type: 'unit', energy: 0, power: {} })

@@ -54,6 +54,9 @@ export interface ParsedEffect {
   damage: number
   /** Number of Recruit unit tokens to create. */
   recruits: number
+  /** Recruit tokens enter at the source unit's battlefield ("… token(s) here" —
+   *  Noxian Drummer, Corina Veraza), not the controller's Base. */
+  recruitsHere: boolean
   /** Number of Gold gear tokens to create. */
   goldTokens: number
   /** A named unit token to create (Sprite / Sand Soldier / Bird / Mech).
@@ -194,6 +197,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   grantAssaultHere: 0,
   damage: 0,
   recruits: 0,
+  recruitsHere: false,
   goldTokens: 0,
   namedToken: null,
   readyUnits: 0,
@@ -342,8 +346,8 @@ function parse(text: string): ParsedEffect {
   // "Each player kills one of their units" (Cull the Weak) — symmetric sacrifice.
   if (/each player kills? (?:one|1|a)\b[^.]*?units?/.test(t)) { eff.cullEachPlayer = true; hit = true }
 
-  const recM = t.match(new RegExp(`play ${NUM}[^.]*?recruit unit tokens?`))
-  if (recM) { eff.recruits += num(recM[1]); hit = true }
+  const recM = t.match(new RegExp(`play ${NUM}[^.]*?recruit unit tokens?( here)?`))
+  if (recM) { eff.recruits += num(recM[1]); if (recM[2]) eff.recruitsHere = true; hit = true }
 
   // Gold gear tokens: "play a Gold gear token", "play 2 gold gear tokens".
   const goldM = t.match(new RegExp(`play ${NUM}[^.]*?gold gear tokens?`))

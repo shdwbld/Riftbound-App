@@ -286,11 +286,12 @@ function banishCard(p: PlayerState, card: EngineCard): void {
 }
 
 /** Create N Recruit tokens onto a player's Base (from card effects). */
-function spawnRecruits(p: PlayerState, n: number, turn: number, ready = false): number {
+function spawnRecruits(p: PlayerState, n: number, turn: number, ready = false, dest?: EngineCard[]): number {
   const id = TOKEN_PILE_IDS[0]
   if (!id) return 0
+  const pile = dest ?? p.zones.base
   for (let i = 0; i < n; i++)
-    p.zones.base.push({
+    pile.push({
       iid: `${p.id}:tok:${id}#${(tokenCounter++).toString(36)}`,
       cardId: id,
       owner: p.id,
@@ -514,7 +515,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   }
   // Recruit / named tokens are token UNITS — Zilean doubles the count (once/turn)
   // and Renata makes them enter ready. Gold are gear tokens (Renata-ready only).
-  if (e.recruits) lines.push(`Created ${spawnRecruits(p, zileanDouble(s, p.id, e.recruits), s.turn, tokensEnterReady(s, p.id))} Recruit(s).`)
+  if (e.recruits) {
+    // "… Recruit token here" (Noxian Drummer, Corina Veraza) enters at the source
+    // unit's battlefield; otherwise recruits enter the controller's Base.
+    const recBf = e.recruitsHere ? bfIndexOfUnit(s, sourceIid) : -1
+    const recDest = recBf >= 0 ? s.battlefields[recBf].units : undefined
+    const madeR = spawnRecruits(p, zileanDouble(s, p.id, e.recruits), s.turn, tokensEnterReady(s, p.id), recDest)
+    if (recBf >= 0) recomputeControllers(s)
+    lines.push(`Created ${madeR} Recruit(s)${recBf >= 0 ? ' here' : ''}.`)
+  }
   if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
   if (e.namedToken) {
     // "… here" plays the token at the source unit's battlefield; otherwise base.
@@ -1641,7 +1650,7 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
     costStr = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf(')')) + 1)
   }
   const cl = costStr.toLowerCase()
-  if (!/:rb_exhaust:|:rb_energy_\d+:|:rb_rune_[a-z]+:|recycle \d+ from your trash|kill this/.test(cl)) return null
+  if (!/:rb_exhaust:|:rb_energy_\d+:|:rb_rune_[a-z]+:|recycle (?:\d+|an?) (?:\w+ )?from your trash|kill this/.test(cl)) return null
   const rest = text.slice(sepEnd).replace(/^\s+/, '')
   const pIdx = rest.indexOf('.')
   const effectText = (pIdx >= 0 ? rest.slice(0, pIdx) : rest).trim()
@@ -1651,7 +1660,12 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
     exhaust: /:rb_exhaust:/.test(cl),
     energy: parseInt((cl.match(/:rb_energy_(\d+):/) || [])[1] || '0', 10),
     power,
-    recycleTrash: parseInt((cl.match(/recycle (\d+) from your trash/) || [])[1] || '0', 10),
+    // "recycle N from your trash" (Vi) or "recycle a unit/card from your trash"
+    // (Assembly Rig → counts as 1).
+    recycleTrash: (() => {
+      const rm = cl.match(/recycle (\d+|an?) (?:\w+ )?from your trash/)
+      return rm ? (/^\d+$/.test(rm[1]) ? parseInt(rm[1], 10) : 1) : 0
+    })(),
     killThis: /\bkill this\b/.test(cl),
     requiresBattlefield: /only while (?:i'm|i am) at a battlefield/i.test(text),
     doubleMight: /double my might/i.test(effectText),
