@@ -756,6 +756,46 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // unique abilities; per-card code keeps the marquee cards correct). ---
     let handled = false
     const srcName = (getCard(sourceCardId ?? '')?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+    // Combat attack triggers that modify the board pre-math (fired in
+    // fireCombatTriggers before showdownSteps).
+    if (ability.event === 'attack' && sourceIid && (srcName === 'Yasuo - Remorseful' || srcName === "Kha'Zix - Evolving Hunter")) {
+      // "When I attack, deal damage equal to my Might to an enemy unit here."
+      // (Kha'Zix - Evolving Hunter: optional, costs 3 XP — auto-paid if affordable.)
+      const bi = battlefieldOf(s, sourceIid)
+      const self = bi >= 0 ? s.battlefields[bi].units.find((u) => u.iid === sourceIid) : undefined
+      const canPay = srcName !== "Kha'Zix - Evolving Hunter" || p.xp >= 3
+      if (self && canPay) {
+        const amt = combatMightAt(s, bi, self, 'attacker')
+        const target = pickEnemyToDamage(s.battlefields[bi].units, player, amt)
+        if (target && amt > 0) {
+          if (srcName === "Kha'Zix - Evolving Hunter") p.xp -= 3
+          const dead = applyTargetDamage(s, target.iid, amt, true, player)
+          s = log(s, player, `${label}: ${srcName} dealt ${amt} to ${getCard(target.cardId)?.name}.`)
+          s = fireDeaths(s, dead)
+        }
+      }
+      handled = true
+    }
+    if (ability.event === 'attack' && sourceIid && srcName === 'Warwick - Hunter') {
+      // "When I attack, kill all damaged enemy units here."
+      const bi = battlefieldOf(s, sourceIid)
+      const victims = bi >= 0 ? s.battlefields[bi].units.filter((u) => u.owner !== player && (u.damage ?? 0) > 0).map((u) => u.iid) : []
+      const dead: EngineCard[] = []
+      for (const iid of victims) dead.push(...killTarget(s, iid))
+      if (victims.length) s = log(s, player, `${label}: ${srcName} killed ${victims.length} damaged enemy unit(s).`)
+      s = fireDeaths(s, dead)
+      handled = true
+    }
+    if ((ability.event === 'attack' || ability.event === 'defend') && sourceIid && srcName === 'Ahri - Inquisitive') {
+      // "When I attack or defend, give an enemy unit here −2 Might this turn (min 1)."
+      const bi = battlefieldOf(s, sourceIid)
+      const target = bi >= 0 ? pickStrongestEnemy(s.battlefields[bi].units, player) : undefined
+      if (target) {
+        applyTempMight(s, target.iid, -2, 1)
+        s = log(s, player, `${label}: ${srcName} gave ${getCard(target.cardId)?.name} −2 Might this turn (min 1).`)
+      }
+      handled = true
+    }
     // Kha'Zix - Voidreaver (legend): "When you win a combat, gain 1 XP."
     if (ability.event === 'winCombat' && srcName === "Kha'Zix - Voidreaver") {
       p.xp += 1
@@ -1133,6 +1173,31 @@ function controlsUnitNamed(s: MatchState, player: PlayerId, name: string): boole
   return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
     (u) => u.owner === player && baseNm(getCard(u.cardId)?.name ?? '') === name,
   )
+}
+
+/** Whether `player`'s Legend's base name matches (art-variant suffix stripped). */
+function playerHasLegend(s: MatchState, player: PlayerId, name: string): boolean {
+  const lg = s.players[player]?.legend
+  return !!lg && (getCard(lg.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim() === name
+}
+
+/** The highest-Might enemy unit at a battlefield (for "an enemy unit here" auto-
+ *  targeting). Undefined if there are none. */
+function pickStrongestEnemy(units: EngineCard[], player: PlayerId): EngineCard | undefined {
+  const enemies = units.filter((u) => u.owner !== player)
+  if (!enemies.length) return undefined
+  return enemies.reduce((best, u) => (mightOf(u) > mightOf(best) ? u : best))
+}
+
+/** Auto-target for "deal damage to an enemy unit here": prefer the highest-Might
+ *  enemy the damage would kill (remaining Might ≤ amount); else the highest-Might
+ *  enemy (soften the biggest threat / set up Warwick). */
+function pickEnemyToDamage(units: EngineCard[], player: PlayerId, amount: number): EngineCard | undefined {
+  const enemies = units.filter((u) => u.owner !== player)
+  if (!enemies.length) return undefined
+  const killable = enemies.filter((u) => mightOf(u) <= amount)
+  const pool = killable.length ? killable : enemies
+  return pool.reduce((best, u) => (mightOf(u) > mightOf(best) ? u : best))
 }
 
 /** State-aware [Tank]: the printed keyword, or a token unit while its controller
@@ -2536,8 +2601,37 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
  * choice of distribution, combat PAUSES for that player to assign damage
  * (Tank-first); otherwise it auto-resolves in kill-order.
  */
+/** Fire the attack/defend triggers as combat begins — BEFORE the damage math, so
+ *  pre-combat board effects (Yasuo - Remorseful's damage, Warwick - Hunter's kill,
+ *  Vi - Peacekeeper's stun, Ahri - Inquisitive's −2) shape the showdown. Win-combat
+ *  and death triggers still fire afterward (in finalizeShowdown). */
+function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
+  const bf = s.battlefields[bfIndex]
+  const mover = s.showdown?.movedUnit
+  const moverOwner = bf.units.find((u) => u.iid === mover)?.owner ?? s.activePlayer
+  const attackers = bf.units.filter((u) => u.owner === moverOwner)
+  const defenders = bf.units.filter((u) => u.owner !== moverOwner)
+  // Ahri - Nine-Tailed Fox (legend): "When an enemy unit attacks a battlefield you
+  // control, give it −1 Might this turn (min 1)." Applies to each attacker when the
+  // pre-combat controller (a defender) has Ahri in play.
+  const controller = bf.controller
+  if (controller != null && controller !== moverOwner && playerHasLegend(s, controller, 'Ahri - Nine-Tailed Fox')) {
+    for (const u of [...attackers]) applyTempMight(s, u.iid, -1, 1)
+    if (attackers.length) s = log(s, controller, `Ahri - Nine-Tailed Fox: gave ${attackers.length} attacker(s) −1 Might this turn (min 1).`)
+  }
+  const combatFired: FiredTrigger[] = []
+  for (const u of attackers)
+    for (const ab of triggersFor(def(u), 'attack'))
+      combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
+  for (const u of defenders)
+    for (const ab of triggersFor(def(u), 'defend'))
+      combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
+  return fireTriggers(s, combatFired)
+}
+
 function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
-  const s = clone(state)
+  let s = clone(state)
+  s = fireCombatTriggers(s, bfIndex)
   const { steps } = showdownSteps(s, bfIndex)
   if (steps.some((st) => st.manual)) {
     const current = steps.findIndex((st) => st.manual)
@@ -2573,15 +2667,9 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const attackersDefeated = new Set<string>(steps.filter((st) => st.side === 'attackers').flatMap((st) => st.defeated))
   s.showdown!.assign = undefined
 
-  // Attack/Defend triggers fire once per combat (rule 4.7 / T11).
-  const combatFired: FiredTrigger[] = []
-  for (const u of attackers)
-    for (const ab of triggersFor(def(u), 'attack'))
-      combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
-  for (const u of defenders)
-    for (const ab of triggersFor(def(u), 'defend'))
-      combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid })
-  s = fireTriggers(s, combatFired)
+  // Attack/Defend triggers already fired in fireCombatTriggers (before the math),
+  // so pre-combat board effects could shape this showdown. Only the post-combat
+  // scripts and win/death triggers remain below.
 
   // Scripted "when you defend here" (Ravenbloom Conservatory).
   const defendScript = bfScript(bf.cardId)

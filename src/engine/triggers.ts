@@ -63,7 +63,9 @@ const PATTERNS: Pattern[] = [
   { event: 'hold', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+holds?/i },
   { event: 'startOfTurn', scope: 'global', re: /(?:at\s+the\s+)?(?:start|beginning)\s+of\s+(?:your|the|each)\s+(?:turn|beginning\s+phase)/i },
   { event: 'attack', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+attacks?/i },
-  { event: 'defend', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+defends?/i },
+  // "When I defend" and "When I attack or defend" (Ahri - Inquisitive) both fire a
+  // defend trigger; the attack pattern above already covers the "attack or" prefix.
+  { event: 'defend', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+(?:attacks?\s+or\s+)?defends?/i },
   { event: 'winCombat', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+wins?(?:\s+a)?\s+combat/i },
   // "When you win a combat" (Kha'Zix - Voidreaver, Draven - Glorious Executioner).
   { event: 'winCombat', scope: 'global', re: /when(?:ever)?\s+you\s+win(?:\s+a)?\s+combat/i },

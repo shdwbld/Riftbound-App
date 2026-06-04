@@ -815,6 +815,106 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].xp).toBe(1)
   })
 
+  // --- Combat-timing group: attack/defend triggers fire BEFORE the damage math
+  // (fireCombatTriggers), so pre-combat board effects shape the showdown. ---
+  const openShowdown = (s: MatchState, atk: EngineCard) => {
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [atk.iid], toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    return r
+  }
+
+  it('Yasuo - Remorseful (champion): on attack, deals Might to a blocker BEFORE combat (so Yasuo survives)', () => {
+    const yasuo = 'ogn-076-298' // might 6, "When I attack, deal damage equal to my Might to an enemy unit here."
+    if (!CARD_INDEX[yasuo]) return
+    const s = baseState()
+    // Equal-Might blocker (6): pre-combat kill → no defender → Yasuo wins. If the
+    // trigger fired AFTER the math, 6-vs-6 trades and Yasuo would also die.
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('yas-def', 'A unit.', { might: 6 }), 1)], controller: 1 }
+    const ya = mk(yasuo, 0)
+    s.players[0].zones.base.push(ya)
+    const r = openShowdown(s, ya)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === ya.iid)).toBe(true) // Yasuo survived
+    expect(r.state.battlefields[0].units.length).toBe(1) // the blocker is gone
+  })
+
+  it("Kha'Zix - Evolving Hunter (champion): spends 3 XP on attack to deal Might pre-combat", () => {
+    const kha = 'unl-119-219' // might 5, "may spend 3 XP to deal damage equal to my Might to an enemy unit here."
+    if (!CARD_INDEX[kha]) return
+    // With 3 XP: pre-combat kill of an equal-Might blocker → Kha'Zix survives.
+    let s = baseState()
+    s.players[0].xp = 3
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('kha-def', 'A unit.', { might: 5 }), 1)], controller: 1 }
+    let kz = mk(kha, 0)
+    s.players[0].zones.base.push(kz)
+    let r = openShowdown(s, kz)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === kz.iid)).toBe(true) // survived
+    expect(r.state.players[0].xp).toBeLessThan(3) // 3 XP spent (a conquer Hunt may add 1 back)
+    // Without the XP: no pre-combat damage → 5-vs-5 trade kills Kha'Zix.
+    s = baseState()
+    s.players[0].xp = 0
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('kha-def2', 'A unit.', { might: 5 }), 1)], controller: 1 }
+    kz = mk(kha, 0)
+    s.players[0].zones.base.push(kz)
+    r = openShowdown(s, kz)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === kz.iid)).toBe(false) // traded away
+  })
+
+  it('Warwick - Hunter (champion): on attack, kills already-damaged enemies BEFORE combat', () => {
+    const ww = 'ogn-159-298' // might 5, "When I attack, kill all damaged enemy units here."
+    if (!CARD_INDEX[ww]) return
+    const s = baseState()
+    // A big (10) but damaged blocker: combat alone wouldn't kill it (and it would
+    // kill Warwick), but the pre-combat trigger destroys it outright.
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('ww-def', 'A unit.', { might: 10 }), 1, { damage: 1 })], controller: 1 }
+    const w = mk(ww, 0)
+    s.players[0].zones.base.push(w)
+    const r = openShowdown(s, w)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === w.iid)).toBe(true) // Warwick survived
+    expect(r.state.battlefields[0].units.length).toBe(1) // the damaged blocker is gone
+  })
+
+  it('Ahri - Inquisitive (champion): on attack, applies -2 Might (min 1) BEFORE combat', () => {
+    const ahri = 'ogn-119-298' // might 3, "When I attack or defend, give an enemy unit here -2 Might this turn, min 1."
+    if (!CARD_INDEX[ahri]) return
+    const s = baseState()
+    // Blocker at 4: after -2 it's 2, so Ahri (3) wins and survives. Without the
+    // pre-combat debuff, 3-vs-4 kills Ahri.
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('ahri-def', 'A unit.', { might: 4 }), 1)], controller: 1 }
+    const a = mk(ahri, 0)
+    s.players[0].zones.base.push(a)
+    const r = openShowdown(s, a)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === a.iid)).toBe(true) // Ahri survived
+    expect(r.state.battlefields[0].units.length).toBe(1) // the blocker is gone
+  })
+
+  it('Vi - Peacekeeper (champion): on attack, stuns a blocker BEFORE combat (it deals 0)', () => {
+    const vi = 'unl-176-219' // might 5, "When I attack, [Stun] an enemy unit here."
+    if (!CARD_INDEX[vi]) return
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('vi-def', 'A unit.', { might: 5 }), 1)], controller: 1 }
+    const v = mk(vi, 0)
+    s.players[0].zones.base.push(v)
+    const r = openShowdown(s, v)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === v.iid)).toBe(true) // Vi survived (blocker stunned → dealt 0)
+    expect(r.state.battlefields[0].units.length).toBe(1)
+  })
+
+  it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
+    const ahri9 = 'ogn-255-298'
+    if (!CARD_INDEX[ahri9]) return
+    const s = baseState()
+    s.players[1].legend = mk(ahri9, 1)
+    // P1 controls bf 0 with a stunned weak defender (deals 0, auto-resolves).
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('a9-def', 'A unit.', { might: 1 }), 1, { stunned: true, exhausted: true })], controller: 1 }
+    const atk = mk(injectCard('a9-atk', 'A unit.', { might: 3 }), 0)
+    s.players[0].zones.base.push(atk)
+    const r = openShowdown(s, atk)
+    const after = r.state.battlefields[0].units.find((u) => u.iid === atk.iid)
+    expect(after).toBeTruthy() // attacker won and stayed
+    expect(after?.tempMight).toBe(-1) // got the -1 Might debuff
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
