@@ -716,6 +716,13 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     for (const u of units) u.tempMight = (u.tempMight ?? 0) + amount
     if (units.length) lines.push(`${amount > 0 ? '+' : ''}${amount} Might this turn to ${units.length} ${tag}(s).`)
   }
+  if (e.readyAllUnits) {
+    // "ready your units" (Shurelya's Requiem) — pure benefit, auto-ready them all.
+    let n = 0
+    for (const u of [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)])
+      if (u.owner === p.id && u.exhausted && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
+    if (n > 0) lines.push(`Readied ${n} unit(s).`)
+  }
   if (e.readyUnits) {
     // Surface a "choose which unit(s) to ready" prompt for the player.
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
@@ -1613,6 +1620,8 @@ export interface UnitAbility {
   power: Partial<Record<Domain, number>>
   /** Cards to recycle from your trash as a cost (Vi - Destructive). */
   recycleTrash: number
+  /** Cards to discard from hand as an additional cost (Gutter Palace). */
+  discard: number
   /** "Kill this" sacrifice cost (Divining Shells). */
   killThis: boolean
   /** Usable only while the source is at a battlefield (Xerath - Freed). */
@@ -1643,14 +1652,14 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
     const before = text.slice(0, dbl + 1) // keep the glyph's closing colon
     costStr = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf(')')) + 1)
   } else {
-    const wm = text.match(/(?:from your trash|kill this)\s*:/i)
+    const wm = text.match(/(?:from your trash|kill this|discard (?:\d+|an?)(?: cards?)?)\s*:/i)
     if (!wm) return null
     sepEnd = (wm.index ?? 0) + wm[0].length
     const before = text.slice(0, sepEnd - 1)
     costStr = before.slice(Math.max(before.lastIndexOf('.'), before.lastIndexOf(')')) + 1)
   }
   const cl = costStr.toLowerCase()
-  if (!/:rb_exhaust:|:rb_energy_\d+:|:rb_rune_[a-z]+:|recycle (?:\d+|an?) (?:\w+ )?from your trash|kill this/.test(cl)) return null
+  if (!/:rb_exhaust:|:rb_energy_\d+:|:rb_rune_[a-z]+:|recycle (?:\d+|an?) (?:\w+ )?from your trash|kill this|discard (?:\d+|an?)\b/.test(cl)) return null
   const rest = text.slice(sepEnd).replace(/^\s+/, '')
   const pIdx = rest.indexOf('.')
   const effectText = (pIdx >= 0 ? rest.slice(0, pIdx) : rest).trim()
@@ -1665,6 +1674,11 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
     recycleTrash: (() => {
       const rm = cl.match(/recycle (\d+|an?) (?:\w+ )?from your trash/)
       return rm ? (/^\d+$/.test(rm[1]) ? parseInt(rm[1], 10) : 1) : 0
+    })(),
+    // "Discard N" / "discard a card" additional cost (Gutter Palace).
+    discard: (() => {
+      const dm = cl.match(/discard (\d+|an?)\b/)
+      return dm ? (/^\d+$/.test(dm[1]) ? parseInt(dm[1], 10) : 1) : 0
     })(),
     killThis: /\bkill this\b/.test(cl),
     requiresBattlefield: /only while (?:i'm|i am) at a battlefield/i.test(text),
@@ -1699,6 +1713,7 @@ export function canActivateUnit(s: MatchState, player: PlayerId, iid: string): U
   if (ab.exhaust && u.exhausted) return null
   if (ab.requiresBattlefield && battlefieldOf(s, iid) < 0) return null
   if (ab.recycleTrash > s.players[player].zones.trash.length) return null
+  if (ab.discard > s.players[player].zones.hand.length) return null
   const cost = { energy: ab.energy, power: ab.power }
   if (!costIsFree(cost) && !autoPay(s.players[player], cost)) return null
   return ab
@@ -3739,6 +3754,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (action.type === 'PLAY_GEAR') {
         // Track Equipment plays this turn (Azir - Emperor of the Sands gate).
         if (parseKeywords(card).equip) p.playedEquipmentThisTurn = true
+        // The gear's own "When you play this, …" effect (Forge of the Future →
+        // Recruit token; Shurelya's Requiem → ready your units). Applied after the
+        // gear is in play so token/ready effects see correct state.
+        const gearOnPlay = onPlayEffect(card)
+        const applyGearOnPlay = (st: MatchState): MatchState => {
+          for (const line of applyParsed(st, st.players[action.player], gearOnPlay, undefined, ci.iid))
+            st = log(st, action.player, line)
+          return fireTokenPlay(st, action.player, tokenUnitsIn(gearOnPlay))
+        }
         // Attach to a target unit (granting its bonuses) if given, else base.
         if (action.targetIid) {
           for (const u of p.zones.base.concat(s.battlefields.flatMap((b) => b.units)))
@@ -3747,12 +3771,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
               let s1 = log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`)
               s1 = fireAttachEquip(s1, action.player, u) // Aphelios - Exalted
+              s1 = applyGearOnPlay(s1)
               return ok(firePlayTriggers(s1, action.player, ci.iid, card, effTotal))
             }
         }
         p.zones.base.push({ ...ci })
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
-        return ok(firePlayTriggers(log(s, action.player, `Played gear ${card.name} (unattached).`), action.player, ci.iid, card, effTotal))
+        let s1 = applyGearOnPlay(log(s, action.player, `Played gear ${card.name} (unattached).`))
+        return ok(firePlayTriggers(s1, action.player, ci.iid, card, effTotal))
       }
 
       // Spell. In a showdown we resolve immediately (legacy path). In the
@@ -3925,8 +3951,19 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         for (const line of applyParsed(s, s.players[action.player], onPlayEffect(card), bfi, ci.iid)) s = log(s, action.player, line)
         s = firePlayTriggers(s, action.player, ci.iid, card, 0)
       } else if (card.type === 'gear') {
-        s.players[action.player].zones.base.push({ ...ci, exhausted: false })
-        s = log(s, action.player, `Revealed ${card.name} — gear entered play.`)
+        // Edge of Night: "When you play this from face down, attach it to a unit
+        // you control (here)." Auto-attach to a friendly unit at this battlefield.
+        const fromFD = /when you play this from face ?down,[^.]*attach it to a unit you control/i.test(card.text ?? '')
+        const host = fromFD ? s.battlefields[bfi].units.find((u) => u.owner === action.player) : undefined
+        if (host) {
+          host.attached = [...host.attached, `${card.id}|${ci.iid}`]
+          emit({ kind: 'buff', iid: host.iid, player: action.player, cardId: card.id })
+          s = log(s, action.player, `Revealed ${card.name} — attached to ${getCard(host.cardId)?.name} (here).`)
+          s = fireAttachEquip(s, action.player, host)
+        } else {
+          s.players[action.player].zones.base.push({ ...ci, exhausted: false })
+          s = log(s, action.player, `Revealed ${card.name} — gear entered play.`)
+        }
         s = firePlayTriggers(s, action.player, ci.iid, card, 0)
       } else {
         s = log(s, action.player, `Revealed ${card.name} — resolving.`)
@@ -4146,8 +4183,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (!pay || applyPayment(p, cost, pay)) return fail(state, 'Not enough resources.')
       }
       for (let i = 0; i < ab.recycleTrash && p.zones.trash.length > 0; i++) p.zones.mainDeck.push(p.zones.trash.shift()!)
+      // Discard cost (Gutter Palace) — auto-discards from the front of hand.
+      let discarded = 0
+      for (let i = 0; i < ab.discard && p.zones.hand.length > 0; i++) { sendToTrash(p, p.zones.hand.shift()!); discarded++ }
       if (ab.exhaust && !ab.killThis) u.exhausted = true
       let s1 = log(s, action.player, `${name}: activated — ${ab.effectText}.`)
+      if (discarded > 0) s1 = fireDiscard(log(s1, action.player, `Discarded ${discarded} as a cost.`), action.player)
       // "Attach an Equipment you control to a unit you control" (Jax) — a
       // two-step pick-equip → pick-target, reusing the Forge choice flow.
       if (/attach\b[^.]*\bequipment\b[^.]*\bto a unit/i.test(ab.effectText)) {

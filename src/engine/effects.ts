@@ -64,6 +64,8 @@ export interface ParsedEffect {
   namedToken: { name: string; count: number; exhausted: boolean; temporary: boolean; here: boolean } | null
   /** Number of your units to ready (un-exhaust) — the player chooses which. */
   readyUnits: number
+  /** Ready ALL your units, no choice ("ready your units" — Shurelya's Requiem). */
+  readyAllUnits: boolean
   /** Number of your runes to ready (un-exhaust) — "ready up to N (friendly) runes"
    *  (Sona - Harmonious, Annie - Dark Child). */
   readyRunes: number
@@ -198,6 +200,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   damage: 0,
   recruits: 0,
   recruitsHere: false,
+  readyAllUnits: false,
   goldTokens: 0,
   namedToken: null,
   readyUnits: 0,
@@ -376,6 +379,9 @@ function parse(text: string): ParsedEffect {
   // Guard against "ready" as a TOKEN adjective ("play a ready 3 :rb_might: Sprite
   // unit token" — Trevor Snoozebottom): that's part of the token, not a
   // ready-units action, and always reads "a/an ready …".
+  // "ready your units" / "ready all (your/friendly) units" with no count — readies
+  // every friendly unit (Shurelya's Requiem). Distinct from the counted form below.
+  if (/\bready (?:all (?:your |friendly )?|your )units\b/.test(t)) { eff.readyAllUnits = true; hit = true }
   const readyM = t.match(/\bready (?:up to )?(a|an|another|target|one|two|three|\d+)\b[^.]*?\bunits?\b/i)
   if (readyM && !/\b(?:a|an) ready\b/.test(t)) {
     const w = readyM[1].toLowerCase()

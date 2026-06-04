@@ -2033,6 +2033,61 @@ describe('Batch F — Spiritforged attach', () => {
     expect(eq?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true)
   })
 
+  it('Forge of the Future: gear on-play creates a Recruit token (Gap 10)', () => {
+    const gear = injectCard('forge-future-t', 'When you play this, play a 1 :rb_might: Recruit unit token at your base.Kill this: Recycle up to 4 cards from trashes.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const g = mk(gear, 0)
+    s.players[0].zones.hand.push(g)
+    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.filter((x) => x.cardId === TOKEN_PILE_IDS[0] && x.owner === 0).length).toBe(1)
+  })
+
+  it("Shurelya's Requiem: gear on-play readies all your units (Gap 10)", () => {
+    const gear = injectCard('shurelya-t', '[Equip] :rb_rune_rainbow:. When you play this, ready your units.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const u1 = mk(furyUnit.id, 0, { exhausted: true })
+    const u2 = mk(furyUnit.id, 0, { exhausted: true })
+    s.players[0].zones.base.push(u1, u2)
+    const g = mk(gear, 0)
+    s.players[0].zones.hand.push(g)
+    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.filter((x) => (x.iid === u1.iid || x.iid === u2.iid) && !x.exhausted).length).toBe(2)
+  })
+
+  it('Edge of Night: reveal from facedown auto-attaches to a friendly unit here (Gap 10)', () => {
+    const gear = injectCard('edge-of-night-t', '[Hidden] When you play this from face down, attach it to a unit you control (here). [Equip] :rb_rune_chaos:.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.turn = 5
+    const host = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [host], controller: 0 }
+    const g = mk(gear, 0, { facedown: true, hiddenTurn: 4 })
+    s.battlefields[0].facedown = g
+    const r = reduce(s, { type: 'REVEAL', player: 0, iid: g.iid })
+    expect(r.error).toBeFalsy()
+    const h = r.state.battlefields[0].units.find((x) => x.iid === host.iid)
+    expect(h?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true)
+    expect(r.state.players[0].zones.base.some((x) => x.iid === g.iid)).toBe(false) // not unattached at base
+  })
+
+  it('Gutter Palace: "Discard 1, exhaust" activated ability — discard cost gated & paid (Gap 10)', () => {
+    const gear = injectCard('gutter-palace-t', 'Discard 1, :rb_exhaust:: Play a 1 :rb_might: Bird unit token with [Deflect].', { type: 'gear', energy: 0, power: {} })
+    const ab = unitActivatedAbility(CARD_INDEX[gear] as never)
+    expect(ab?.discard).toBe(1)
+    const s = baseState()
+    const g = mk(gear, 0)
+    s.players[0].zones.base.push(g)
+    // Empty hand → can't pay the discard cost.
+    expect(canActivateUnit(s, 0, g.iid)).toBeNull()
+    // With a card in hand → activates, discards it, plays a Bird token.
+    s.players[0].zones.hand.push(mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: g.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.hand.length).toBe(0)
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === TOKEN_BY_NAME['bird'] && x.owner === 0)).toBe(true)
+  })
+
   it('DETACH returns the gear to your Base unattached', () => {
     const gear = injectCard('f-gear2', '+1 Might', { type: 'gear' })
     const s = baseState()
