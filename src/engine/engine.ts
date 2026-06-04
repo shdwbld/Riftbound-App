@@ -601,6 +601,47 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     for (const c of top) if (c !== drawn) deck.push(c)
     if (drawn) lines.push(`Looked at top ${top.length}; drew ${getCard(drawn.cardId)?.name}; recycled ${top.length - 1}.`)
   }
+  if (e.peekBanishPlay) {
+    // "Look at/reveal the top N; banish one (a unit), then play it (free / discounted
+    // to 0); recycle (or draw) the rest." Auto-plays the highest-cost playable unit.
+    const { n, from, discount, here, drawRest } = e.peekBanishPlay
+    const playable = (c: EngineCard) => {
+      const d = getCard(c.cardId)
+      return !!d && d.type === 'unit' && (discount == null || cardCost(c) <= discount)
+    }
+    if (from === 'opponent') {
+      // Blind Fury: reveal each opponent's top card; play the best unit under your
+      // control (free); recycle the rest to their owners' decks.
+      const revealed: { card: EngineCard; deck: EngineCard[] }[] = []
+      for (const op of s.players) {
+        if (op.id === p.id) continue
+        const top = op.zones.mainDeck.shift()
+        if (top) revealed.push({ card: top, deck: op.zones.mainDeck })
+      }
+      const units = revealed.filter((r) => playable(r.card))
+      const chosen = units.length ? units.reduce((b, r) => (cardCost(r.card) > cardCost(b.card) ? r : b)) : undefined
+      if (chosen) {
+        p.zones.base.push({ ...chosen.card, owner: p.id, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+        lines.push(`Banished & played ${getCard(chosen.card.cardId)?.name} from an opponent's deck (free).`)
+      }
+      for (const r of revealed) if (r !== chosen) r.deck.push(r.card) // recycle to owner's deck
+      if (!chosen && revealed.length) lines.push(`Revealed ${revealed.length} opponent card(s); none playable — recycled.`)
+    } else {
+      const deck = p.zones.mainDeck
+      const top = deck.splice(0, Math.min(n, deck.length))
+      const units = top.filter(playable)
+      const chosen = units.length ? units.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b)) : undefined
+      if (chosen) {
+        const bi = here && sourceIid ? bfIndexOfUnit(s, sourceIid) : -1
+        const dest = bi >= 0 ? s.battlefields[bi].units : p.zones.base
+        dest.push({ ...chosen, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+        if (bi >= 0) recomputeControllers(s)
+        lines.push(`Banished & played ${getCard(chosen.cardId)?.name} from deck (free)${bi >= 0 ? ' here' : ''}.`)
+      }
+      for (const c of top) if (c !== chosen) { if (drawRest) p.zones.hand.push(c); else deck.push(c) }
+      if (!chosen && top.length) lines.push(`Looked at top ${top.length}; no playable unit — ${drawRest ? 'drew' : 'recycled'} ${top.length}.`)
+    }
+  }
   if (e.tempMightAll) {
     // Board-wide temp Might to all the controller's units (Grand Strategem).
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(

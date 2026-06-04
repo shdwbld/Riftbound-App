@@ -125,6 +125,14 @@ export interface ParsedEffect {
    *  draw one) and recycle the rest." (Stacked Deck, Called Shot.) No type filter —
    *  auto-draws the highest-cost of the N. */
   peekToHand: { n: number } | null
+  /** Deck-dig: "Look at/reveal the top N, you may banish one (a unit), then play it
+   *  (ignoring its cost / reducing its cost by D). Recycle the rest." (Rek'Sai -
+   *  Swarm Queen, Rek'sai - Void Burrower, Reinforce, Void Rush, Blind Fury.)
+   *  Auto-plays the highest-cost playable UNIT for free (or whose discounted cost is
+   *  0); recycles the rest (or `drawRest` = Void Rush draws them). `from:'opponent'`
+   *  reveals the top of each opponent's deck (Blind Fury); `here` plays it at the
+   *  source's battlefield (Swarm Queen). */
+  peekBanishPlay: { n: number; from: 'self' | 'opponent'; discount?: number; here?: boolean; drawRest?: boolean } | null
   /** Runes the affected unit's owner channels exhausted (Retreat: "channels 1
    *  rune exhausted"). Distinct from `channel`, which gives the caster ready runes. */
   channelExhausted: number
@@ -191,6 +199,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   revealPlayFromDeck: false,
   peekDraw: null,
   peekToHand: null,
+  peekBanishPlay: null,
   channelExhausted: 0,
   tempMightSelf: 0,
   tempMightAll: 0,
@@ -208,7 +217,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || e.score > 0
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -262,7 +271,9 @@ function parse(text: string): ParsedEffect {
   let tNoCond = dokM ? t.replace(dokM[0], ' ') : t
   if (dpbM) tNoCond = tNoCond.replace(dpbM[0], ' ')
 
-  const drawM = tNoCond.match(new RegExp(`draw ${NUM}`))
+  // The trailing \b stops "draw an" matching inside "draw any (you didn't banish)"
+  // (Void Rush) and similar — a number word must end at a boundary.
+  const drawM = tNoCond.match(new RegExp(`draw ${NUM}\\b`))
   if (drawM) { eff.draw += num(drawM[1]); hit = true }
 
   // Channel ready runes — but NOT the "channel N rune exhausted" variant (Soaring
@@ -455,6 +466,24 @@ function parse(text: string): ParsedEffect {
   if (!eff.peekDraw) {
     const pthM = t.match(/look at the top (\d+|a|an|one|two|three|four|five) cards? of your main deck[\s\S]*?(?:put (?:1|one|a card) into your hand|draw one)[\s\S]*?recycle the (?:rest|other)/)
     if (pthM) { eff.peekToHand = { n: num(pthM[1]) }; hit = true }
+  }
+  // Deck-dig: "look at/reveal the top N … (you may) banish one/a unit, then play it
+  // (ignoring its cost / reducing its cost by D)" (Rek'Sai - Swarm Queen, Rek'sai -
+  // Void Burrower, Reinforce, Void Rush). Blind Fury reveals each opponent's top
+  // card instead. Auto-plays the best playable unit; recycles (or draws) the rest.
+  const pbpM = t.match(/(?:look at|reveal) the top (\d+|a|an|one|two|three|four|five) cards? of your main deck[\s\S]*?banish (?:one|an?(?: unit)?)\b[\s\S]*?play it/)
+  const bfM = !pbpM ? t.match(/each opponent reveals the top card[\s\S]*?banish it,? then play it/) : null
+  if (pbpM || bfM) {
+    // "reducing its cost by N" can sit after "play it", so scan the whole text.
+    const discM = t.match(/reducing its cost by :rb_energy_(\d+):/)
+    eff.peekBanishPlay = {
+      n: pbpM ? num(pbpM[1]) : 1,
+      from: bfM ? 'opponent' : 'self',
+      ...(discM ? { discount: parseInt(discM[1], 10) } : {}),
+      ...(/play it here|play it (?:to|at) (?:that|the) battlefield/.test(t) ? { here: true } : {}),
+      ...(/draw any you didn'?t banish/.test(t) ? { drawRest: true } : {}),
+    }
+    hit = true
   }
   // "its owner channels N rune(s) exhausted" — tied to the bounced unit's owner.
   const chExM = t.match(new RegExp(`channels? ${NUM} runes? exhausted`))

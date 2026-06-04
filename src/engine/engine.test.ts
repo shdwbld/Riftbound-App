@@ -1002,6 +1002,78 @@ describe('tokens (Recruit)', () => {
     expect(totalBuffs).toBe(0)
   })
 
+  // --- Deck-dig: "banish one of the top N, then play it" ---
+  const inPlay = (st: MatchState, owner: PlayerId, cardId: string) =>
+    [...st.players[owner].zones.base, ...st.battlefields.flatMap((b) => b.units)].some((u) => u.owner === owner && u.cardId === cardId)
+
+  it('peekBanishPlay: plays the highest-cost unit from the top N for free, recycles the rest', () => {
+    const bigUnit = injectCard('bp-big', 'A unit.', { energy: 6 })
+    const aSpell = injectCard('bp-spell', 'A spell.', { type: 'spell', energy: 1 })
+    const rek = injectCard('bp-rek', 'When you play me, look at the top 2 cards of your Main Deck. You may banish one, then play it. Recycle the rest.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(bigUnit, 0), mk(aSpell, 0), mk(furyUnit.id, 0)]
+    const u = mk(rek, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(inPlay(r.state, 0, bigUnit)).toBe(true) // the unit was played
+    expect(r.state.players[0].zones.mainDeck.some((c) => c.cardId === bigUnit)).toBe(false)
+  })
+
+  it('peekBanishPlay: a discount only frees a unit whose cost is within it (Reinforce/Void Rush)', () => {
+    const dear = injectCard('bp-dear', 'A unit.', { energy: 5 })
+    const cheap = injectCard('bp-cheap', 'A unit.', { energy: 1 })
+    const reinf = injectCard('bp-reinf', 'When you play me, look at the top 2 cards of your Main Deck. You may banish a unit from among them, then play it, reducing its cost by :rb_energy_2:. Recycle the rest.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(dear, 0), mk(cheap, 0)]
+    const u = mk(reinf, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(inPlay(r.state, 0, cheap)).toBe(true) // 1-cost is within the 2 discount → free
+    expect(inPlay(r.state, 0, dear)).toBe(false) // 5-cost stays in the deck (recycled)
+  })
+
+  it('peekBanishPlay (Void Rush): draws the cards it did not banish', () => {
+    const cheap = injectCard('vr-cheap', 'A unit.', { energy: 1 })
+    const other = injectCard('vr-other', 'A spell.', { type: 'spell', energy: 3 })
+    const vr = injectCard('vr-test', 'When you play me, reveal the top 2 cards of your Main Deck. You may banish one, then play it, reducing its cost by :rb_energy_2:. Draw any you didn\'t banish.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(cheap, 0), mk(other, 0)]
+    const u = mk(vr, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(inPlay(r.state, 0, cheap)).toBe(true) // played the 1-cost unit
+    expect(r.state.players[0].zones.hand.some((c) => c.cardId === other)).toBe(true) // drew the other
+  })
+
+  it('peekBanishPlay (Blind Fury): plays a unit off an opponent\'s deck under your control', () => {
+    const enemyUnit = injectCard('bf-enemy', 'A unit.', { energy: 4 })
+    const bf = injectCard('bf-test', "When you play me, each opponent reveals the top card of their Main Deck. Choose one and banish it, then play it, ignoring its cost. Then recycle the rest.", { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[1].zones.mainDeck = [mk(enemyUnit, 1)]
+    const u = mk(bf, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(inPlay(r.state, 0, enemyUnit)).toBe(true) // the opponent's unit now serves player 0
+    expect(r.state.players[1].zones.mainDeck.some((c) => c.cardId === enemyUnit)).toBe(false)
+  })
+
+  it("Rek'Sai - Swarm Queen (champion): on attack, plays a unit from the deck to her battlefield", () => {
+    const recruit = injectCard('sq-recruit', 'A unit.', { energy: 3 })
+    const sqSpell = injectCard('sq-spell', 'A spell.', { type: 'spell', energy: 1 })
+    const sq = injectCard('sq-test', 'When I attack, you may reveal the top 2 cards of your Main Deck. You may banish one, then play it. If it is a unit, you may play it here. Recycle the rest.', { type: 'unit', energy: 0, power: {}, might: 6 })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(recruit, 0), mk(sqSpell, 0)] // recruit is the only unit
+    // Stunned weak defender so combat auto-resolves and attackers survive.
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('sq-def', 'A unit.', { might: 1 }), 1, { stunned: true, exhausted: true })], controller: 1 }
+    const queen = mk(sq, 0)
+    s.players[0].zones.base.push(queen)
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [queen.iid], toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.battlefields[0].units.some((u) => u.cardId === recruit && u.owner === 0)).toBe(true) // played here
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
