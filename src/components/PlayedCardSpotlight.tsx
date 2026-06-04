@@ -1,6 +1,7 @@
 import { getCard } from '../data/cards'
 import type { MatchState, PlayerId } from '../engine/types'
 import CardText from './CardText'
+import CardPreview from './CardPreview'
 
 /** Right-rail "last played" spotlight. While a chain is live it shows the chain as
  *  a LIFO stack (the newest reaction big on top, the cards it responds to listed
@@ -32,23 +33,25 @@ export default function PlayedCardSpotlight({
         <div className="flex h-40 items-center justify-center text-center text-sm text-white/25">Nothing played yet</div>
       ) : (
         <div className="space-y-2">
-          {/* The big top card — art + full rules */}
+          {/* The big top card — art + full rules. Hover the art to zoom (no click). */}
           <div className="flex gap-3">
-            {card.imageUrl ? (
-              <img
-                src={card.imageUrl}
-                alt={card.name}
-                className="w-24 shrink-0 rounded-lg object-cover shadow-lg"
-                style={{ aspectRatio: '744/1039' }}
-              />
-            ) : (
-              <div
-                className="flex w-24 shrink-0 items-center justify-center rounded-lg bg-[#1c1c28] p-1 text-center text-[10px]"
-                style={{ aspectRatio: '744/1039' }}
-              >
-                {card.name}
-              </div>
-            )}
+            <CardPreview cardId={top.cardId} delay={80}>
+              {card.imageUrl ? (
+                <img
+                  src={card.imageUrl}
+                  alt={card.name}
+                  className="w-24 shrink-0 cursor-zoom-in rounded-lg object-cover shadow-lg"
+                  style={{ aspectRatio: '744/1039' }}
+                />
+              ) : (
+                <div
+                  className="flex w-24 shrink-0 items-center justify-center rounded-lg bg-[#1c1c28] p-1 text-center text-[10px]"
+                  style={{ aspectRatio: '744/1039' }}
+                >
+                  {card.name}
+                </div>
+              )}
+            </CardPreview>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-bold leading-tight">{bare(card.name)}</div>
               <div className="text-[11px] text-white/40">
@@ -69,16 +72,18 @@ export default function PlayedCardSpotlight({
               {stack.slice(1).map((s, i) => {
                 const c = getCard(s.cardId)
                 return (
-                  <div key={i} className="flex items-center gap-2 text-[11px] text-white/55">
-                    {c?.imageUrl && (
-                      <img src={c.imageUrl} alt="" className="h-8 w-[23px] shrink-0 rounded object-cover" style={{ aspectRatio: '744/1039' }} />
-                    )}
-                    <span className="truncate">
-                      {s.kind === 'counter' ? '✗ ' : ''}
-                      {bare(c?.name) || s.cardId}
-                    </span>
-                    <span className="shrink-0 text-white/30">· {match.players[s.player]?.name}</span>
-                  </div>
+                  <CardPreview key={i} cardId={s.cardId} delay={80}>
+                    <div className="flex cursor-zoom-in items-center gap-2 text-[11px] text-white/55">
+                      {c?.imageUrl && (
+                        <img src={c.imageUrl} alt="" className="h-8 w-[23px] shrink-0 rounded object-cover" style={{ aspectRatio: '744/1039' }} />
+                      )}
+                      <span className="truncate">
+                        {s.kind === 'counter' ? '✗ ' : ''}
+                        {bare(c?.name) || s.cardId}
+                      </span>
+                      <span className="shrink-0 text-white/30">· {match.players[s.player]?.name}</span>
+                    </div>
+                  </CardPreview>
                 )
               })}
             </div>
