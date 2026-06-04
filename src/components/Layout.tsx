@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { audio, type SfxName } from '../lib/audio'
 import AudioSettings from './AudioSettings'
 
@@ -26,6 +26,11 @@ function clickSfxFor(target: EventTarget | null): SfxName | null {
 }
 
 export default function Layout() {
+  // The in-match board (Match / Online) goes full-bleed to use the whole desktop;
+  // every other page stays centered at max-w-6xl.
+  const { pathname } = useLocation()
+  const fullBleed = ['/match', '/online'].some((p) => pathname === p || pathname.startsWith(p + '/'))
+
   // Global click SFX: first gesture also unlocks the AudioContext.
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -72,7 +77,7 @@ export default function Layout() {
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+      <main className={`flex-1 py-6 ${fullBleed ? 'w-full px-3' : 'mx-auto w-full max-w-6xl px-4'}`}>
         <Outlet />
       </main>
       <footer className="border-t border-white/10 px-4 py-4 text-center text-[11px] leading-relaxed text-white/30">
