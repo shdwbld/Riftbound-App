@@ -27,6 +27,9 @@ export type TriggerEvent =
   | 'stun' // you stun one or more enemy units
   | 'enemyDeath' // an enemy unit dies (Pyke - Returned, Sivir - Battle Mistress)
   | 'discard' // you discard one or more cards (Jinx - Rebel)
+  | 'recycleRune' // you recycle a rune (Sivir - Battle Mistress)
+  | 'recycleCard' // you recycle one or more (non-rune) cards to your Main Deck (Karma - Channeler)
+  | 'spendBuff' // you spend a buff (Fae Dragon)
 
 export interface TriggeredAbility {
   event: TriggerEvent
@@ -83,6 +86,13 @@ const PATTERNS: Pattern[] = [
   { event: 'stun', scope: 'global', re: /when(?:ever)?\s+you\s+\[?stun\]?\s+(?:one or more\s+)?(?:an?\s+)?enemy\s+units?/i },
   // "When you discard one or more cards" (Jinx - Rebel). Effect targets the source.
   { event: 'discard', scope: 'global', re: /when(?:ever)?\s+you\s+discard/i },
+  // "When you recycle a rune" (Sivir - Battle Mistress).
+  { event: 'recycleRune', scope: 'global', re: /when(?:ever)?\s+you\s+recycle\s+a\s+rune/i },
+  // "When you recycle one or more cards (to your Main Deck)" (Karma - Channeler).
+  // Runes aren't cards, so this fires only on Main-Deck card recycles.
+  { event: 'recycleCard', scope: 'global', re: /when(?:ever)?\s+you\s+recycle\s+(?:one or more\s+)?cards?/i },
+  // "When you spend a buff" (Fae Dragon).
+  { event: 'spendBuff', scope: 'global', re: /when(?:ever)?\s+you\s+spend\s+a\s+buff/i },
 ]
 
 /** The effect clause following a trigger phrase: from the phrase's end to the

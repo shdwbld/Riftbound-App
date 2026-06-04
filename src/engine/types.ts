@@ -95,6 +95,9 @@ export interface PlayerState {
   /** Whether this player has discarded a card this turn (gates Raging Soul's
    *  conditional [Assault]/[Ganking]). Cleared at turn start. */
   discardedThisTurn?: boolean
+  /** Whether this player has gained XP this turn (gates Wily Newtfish's +1 Might
+   *  and [Ganking]). Cleared at turn start. */
+  xpGainedThisTurn?: boolean
   /** Whether Zilean - Time Mage's once-per-turn token-doubling has fired this turn.
    *  Cleared at turn start. */
   zileanDoubledThisTurn?: boolean

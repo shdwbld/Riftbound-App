@@ -1275,6 +1275,74 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].units.find((x) => x.iid === rl.iid)?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true) // free-attached on attack
   })
 
+  it('Sivir - Battle Mistress: recycle a rune → exhaust to play a Gold token (P2)', () => {
+    const sivir = injectCard('sivir-bm-t', 'When you recycle a rune, you may exhaust me to play a Gold gear token exhausted. When one or more enemy units die, ready me.', { name: 'Sivir - Battle Mistress', type: 'legend' })
+    const s = baseState()
+    s.players[0].legend = mk(sivir, 0)
+    const rune = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(rune)
+    const r = reduce(s, { type: 'RECYCLE_RUNE', player: 0, iid: rune.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === GOLD_TOKEN_ID)).toBe(true) // Gold token
+    expect(r.state.players[0].legend?.exhausted).toBe(true) // Sivir exhausted to pay
+  })
+
+  it('Karma - Channeler: recycling a card (Vision) buffs a friendly unit (P2)', () => {
+    const karma = injectCard('karma-ch-t', "[Vision] When you recycle one or more cards, buff a friendly unit. (Runes aren't cards.)", { name: 'Karma - Channeler', type: 'unit', might: 6 })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(karma, 0), mk(furyUnit.id, 0))
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)] // a card to recycle
+    s.vision = { player: 0, cardId: s.players[0].zones.mainDeck[0].cardId }
+    const r = reduce(s, { type: 'VISION_DECIDE', player: 0, recycle: true })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.some((x) => (x.buffs ?? 0) > 0)).toBe(true) // a friendly unit buffed
+  })
+
+  it('Fae Dragon: playing a Gold token when you spend a buff (P2)', () => {
+    const fae = injectCard('fae-dragon-t', 'When you spend a buff, play a Gold gear token exhausted.', { name: 'Fae Dragon', type: 'unit', might: 7 })
+    const spender = injectCard('fae-spender', 'When you play me, spend a buff to ready me.', { type: 'unit', energy: 0, power: {}, might: 3 })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(fae, 0), mk(furyUnit.id, 0, { buffs: 1 })) // a buffed donor
+    const sp = mk(spender, 0)
+    s.players[0].zones.hand.push(sp)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: sp.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === GOLD_TOKEN_ID)).toBe(true) // Fae Dragon Gold
+  })
+
+  it('Wily Newtfish: +1 Might and [Ganking] only if you gained XP this turn (P2)', () => {
+    const wily = injectCard('wily-t', "If you've gained XP this turn, I have +1 :rb_might: and [Ganking].", { type: 'unit', might: 4 })
+    const s = baseState()
+    const u = mk(wily, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(4) // no XP gained
+    expect(reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [u.iid], toBattlefield: 1 }).error).toBeTruthy() // can't gank
+    s.players[0].xpGainedThisTurn = true
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(5) // +1 Might
+    expect(reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [u.iid], toBattlefield: 1 }).error).toBeFalsy() // can gank
+  })
+
+  it('Ember Monk: +2 Might when a card is played from [Hidden], not on normal plays (P2)', () => {
+    const ember = injectCard('ember-monk-t', 'When you play a card from [Hidden], give me +2 :rb_might: this turn.', { name: 'Ember Monk', type: 'unit', might: 4 })
+    const hid = injectCard('em-hidden', '[Hidden]', { type: 'spell', energy: 0, power: {} })
+    const vanilla = injectCard('em-vanilla', 'A unit.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const s = baseState()
+    s.turn = 6
+    const em = mk(ember, 0)
+    s.players[0].zones.base.push(em)
+    // Normal play → no boost.
+    s.players[0].zones.hand.push(mk(vanilla, 0))
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: s.players[0].zones.hand[0].iid, payment: { exhaust: [], recycle: [] } })
+    expect((r.state.players[0].zones.base.find((x) => x.iid === em.iid)?.tempMight) ?? 0).toBe(0)
+    // Reveal a facedown card (played from Hidden) → +2.
+    const fd = mk(hid, 0, { facedown: true, hiddenTurn: 4 })
+    r.state.battlefields[0] = { cardId: battlefield.id, units: [], controller: 0 }
+    r.state.battlefields[0].facedown = fd
+    r = reduce(r.state, { type: 'REVEAL', player: 0, iid: fd.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === em.iid)?.tempMight).toBe(2)
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return

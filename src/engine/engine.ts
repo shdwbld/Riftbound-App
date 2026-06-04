@@ -514,7 +514,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     if (s.winner == null && p.points >= s.pointsToWin) { s.winner = p.id; s.phase = 'gameover' }
   }
   // Direct XP gain ("gain N XP" — Scuttle Crab Deathknell, Right of Conquest).
-  if (e.gainXp) { p.xp = (p.xp ?? 0) + e.gainXp; lines.push(`Gained ${e.gainXp} XP (now ${p.xp}).`) }
+  if (e.gainXp) { p.xp = (p.xp ?? 0) + e.gainXp; p.xpGainedThisTurn = true; lines.push(`Gained ${e.gainXp} XP (now ${p.xp}).`) }
   // Recruit / named tokens are token UNITS — Zilean doubles the count (once/turn)
   // and Renata makes them enter ready. Gold are gear tokens (Renata-ready only).
   if (e.recruits) {
@@ -784,6 +784,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     if (donor) {
       donor.buffs = (donor.buffs ?? 0) - 1
       lines.push(`Spent a buff from ${getCard(donor.cardId)?.name}.`)
+      for (const l of fireSpendBuffInline(s, p.id)) lines.push(l) // Fae Dragon
     } else {
       costPaid = false
     }
@@ -933,6 +934,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // Stun"; Teemo - Strategist's "Deal 1 … for each [Hidden]"). Skip the generic
     // apply for these — their dedicated handler below does the real work.
     const skipGenericApply = srcName === 'Twisted Fate - Gambler' || srcName === 'Teemo - Strategist'
+      || (srcName === 'Sivir - Battle Mistress' && ability.event === 'recycleRune')
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1099,6 +1101,17 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if (ability.event === 'hold' && srcName === 'Blitzcrank - Impassive' && sourceIid) {
       s = bounceUnitToHand(s, sourceIid, player, 'Blitzcrank - Impassive', 0)
       s = log(s, player, `${label}: Blitzcrank returned to hand (held).`)
+      handled = true
+    }
+    // Sivir - Battle Mistress: "When you recycle a rune, you may exhaust me to play
+    // a Gold gear token exhausted." Auto-paid only while Sivir (legend) is ready.
+    if (ability.event === 'recycleRune' && srcName === 'Sivir - Battle Mistress' && sourceIid) {
+      const src = findUnitAnywhere(s, sourceIid) ?? (s.players[player].legend?.iid === sourceIid ? s.players[player].legend : undefined)
+      if (src && !src.exhausted) {
+        src.exhausted = true
+        spawnGold(s.players[player], 1, s.turn)
+        s = log(s, player, `${label}: Sivir exhausted to play a Gold token.`)
+      }
       handled = true
     }
     // Rell - Magnetic: "When I attack, you may play an Equipment (Energy ≤ 2),
@@ -1295,7 +1308,7 @@ function fireTokenPlay(s: MatchState, player: PlayerId, count: number): MatchSta
  *  countered on the chain still triggers these â€” rule 4.x / T2). Excludes the
  *  card just played so it doesn't react to its own entry, and skips triggers
  *  whose "when you play a <type>" filter the played card doesn't match. */
-function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, playedCard?: Card, playedCost?: number): MatchState {
+function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, playedCard?: Card, playedCost?: number, fromHidden = false): MatchState {
   let fired = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
   // Triggers that pay by exhausting their own source ("…exhaust me to…") are
   // cost-gated and handled explicitly (Chemtech Cask), not auto-resolved here —
@@ -1304,6 +1317,8 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   // "When you play a card on an opponent's turn" (Viktor - Innovator) — only fires
   // while it's NOT the controller's turn.
   fired = fired.filter((f) => !/on an opponent'?s turn/i.test(f.ability.text) || s.activePlayer !== player)
+  // "When you play a card from [Hidden]" (Ember Monk) — only on a reveal-play.
+  fired = fired.filter((f) => /\bfrom \[?hidden\]?/i.test(f.ability.text) ? fromHidden : true)
   if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost))
   return fireTriggers(s, fired)
 }
@@ -1316,6 +1331,19 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
  *  "you may move me") are left for manual resolution by fireTriggers. */
 function fireStun(s: MatchState, player: PlayerId): MatchState {
   return fireTriggers(s, collectGlobal(s, player, 'stun'))
+}
+
+/** In-place "When you spend a buff, …" reaction (Fae Dragon → play a Gold gear
+ *  token exhausted). Called at each buff-spend site; returns log lines. */
+function fireSpendBuffInline(s: MatchState, player: PlayerId): string[] {
+  const lines: string[] = []
+  for (const u of controlledPermanents(s, player)) {
+    if (/when(?:ever)?\s+you\s+spend\s+a\s+buff/i.test(getCard(u.cardId)?.text ?? '')) {
+      spawnGold(s.players[player], 1, s.turn) // Fae Dragon: Gold gear token (exhausted)
+      lines.push(`Spent a buff: played a Gold gear token.`)
+    }
+  }
+  return lines
 }
 
 /** Fire "When you use an activated ability of a gear, give me +N Might this turn"
@@ -1458,6 +1486,7 @@ function makeBfApi(s: MatchState): BfApi {
       if (!u) return false
       u.buffs = (u.buffs ?? 0) - 1
       note(player, `Spent a buff.`)
+      for (const l of fireSpendBuffInline(s, player)) note(player, l) // Fae Dragon
       return true
     },
     hasMightyHere(player, bfIndex) {
@@ -2039,6 +2068,7 @@ function grantHunt(s: MatchState, player: PlayerId, bfIndex: number): MatchState
     if (u.owner === player) xp += parseKeywords(def(u)).hunt
   if (xp > 0) {
     s.players[player].xp += xp
+    s.players[player].xpGainedThisTurn = true
     s = log(s, player, `Hunt: +${xp} XP (${s.players[player].xp} total).`)
   }
   return s
@@ -2274,6 +2304,7 @@ export function beginTurn(state: MatchState): MatchState {
   p.cardsPlayedThisTurn = 0
   p.playedEquipmentThisTurn = false
   p.discardedThisTurn = false
+  p.xpGainedThisTurn = false
   p.zileanDoubledThisTurn = false
   p.apheliosModesThisTurn = 0
   p.pool = { energy: 0, power: {} }
@@ -2887,6 +2918,11 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => x.owner !== u.owner).length : 0
     b += enemies - parseKeywords(d).assault
   }
+  // Wily Newtfish: "If you've gained XP this turn, I have +1 Might and [Ganking]."
+  if (/if you('ve| have)? gained xp this turn,?[^.]*\+(\d+)/.test(text) && owner.xpGainedThisTurn) {
+    const wm = text.match(/if you('ve| have)? gained xp this turn,?[^.]*\+(\d+)/)
+    if (wm) b += parseInt(wm[2], 10)
+  }
   // Self: "While you have N+ runes, I have +X Might." (Master Yi - Meditative)
   const runeM = text.match(/while you have (\d+)\+? (?:or more )?runes?, i have \+(\d+)\s*(?::rb_might:|might)/)
   if (runeM && owner.zones.runePool.length >= parseInt(runeM[1], 10)) b += parseInt(runeM[2], 10)
@@ -2996,6 +3032,8 @@ function unitHasGanking(s: MatchState, u: EngineCard): boolean {
   if (/while (?:i'm|i am) buffed,?[^.]*\[ganking\]/.test(t)) return (u.buffs ?? 0) > 0
   // Raging Soul: "If you've discarded a card this turn, I have [Assault] and [Ganking]."
   if (/if you've discarded a card this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.discardedThisTurn ?? false
+  // Wily Newtfish: "If you've gained XP this turn, I have +1 Might and [Ganking]."
+  if (/if you('ve| have)? gained xp this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.xpGainedThisTurn ?? false
   return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking || unitGrantedKeyword(s, u, 'ganking') // Breakneck Mech
 }
 
@@ -4308,7 +4346,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         recomputeControllers(s)
         s = log(s, action.player, `Revealed ${card.name} — entered play.`)
         for (const line of applyParsed(s, s.players[action.player], onPlayEffect(card), bfi, ci.iid)) s = log(s, action.player, line)
-        s = firePlayTriggers(s, action.player, ci.iid, card, 0)
+        s = firePlayTriggers(s, action.player, ci.iid, card, 0, true) // played from [Hidden]
       } else if (card.type === 'gear') {
         // Edge of Night: "When you play this from face down, attach it to a unit
         // you control (here)." Auto-attach to a friendly unit at this battlefield.
@@ -4323,11 +4361,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s.players[action.player].zones.base.push({ ...ci, exhausted: false })
           s = log(s, action.player, `Revealed ${card.name} — gear entered play.`)
         }
-        s = firePlayTriggers(s, action.player, ci.iid, card, 0)
+        s = firePlayTriggers(s, action.player, ci.iid, card, 0, true) // played from [Hidden]
       } else {
         s = log(s, action.player, `Revealed ${card.name} — resolving.`)
         s = resolveSpellEffects(s, action.player, card, [])
-        s = firePlayTriggers(s, action.player, ci.iid, card, 0)
+        s = firePlayTriggers(s, action.player, ci.iid, card, 0, true) // played from [Hidden]
         sendToTrash(s.players[action.player], ci)
       }
       return ok(s)
@@ -4365,6 +4403,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const top = p.zones.mainDeck.shift()!
         p.zones.mainDeck.push(top) // recycle to the bottom
         out = log(s, action.player, `Vision: recycled ${getCard(top.cardId)?.name ?? 'a card'} to the bottom of the deck.`)
+        // Karma - Channeler: "When you recycle one or more cards, buff a friendly unit."
+        out = fireTriggers(out, collectGlobal(out, action.player, 'recycleCard'))
       } else {
         out = log(s, action.player, `Vision: kept the top card.`)
       }
@@ -4497,6 +4537,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const u = findUnitAnywhere(s, action.iid)!
         u.exhausted = true
         p.xp += 1
+        p.xpGainedThisTurn = true
         return ok(log(s, action.player, `${getCard(u.cardId)?.name}: exhausted to gain 1 XP (now ${p.xp}).`))
       }
       // Lux - Crownguard: exhaust to add Energy to the pool (for playing spells).
@@ -4612,7 +4653,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         s1.vision = { player: action.player, cardId: p.zones.mainDeck[0].cardId }
       // "Gain N XP" (Scryer's Bloom's trailing sentence, not in effectText).
       const xpM = srcText.match(/gain (\d+)\s*(?::rb_xp:|xp)/i)
-      if (xpM) p.xp += parseInt(xpM[1], 10)
+      if (xpM) { p.xp += parseInt(xpM[1], 10); p.xpGainedThisTurn = true }
       // Prize of Progress: "When you use an activated ability of a gear, give me
       // +1 Might this turn." Fires when the activated source is a gear.
       if (getCard(u.cardId)?.type === 'gear') s1 = fireGearAbilityUse(s1, action.player)
@@ -4864,12 +4905,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     }
 
     case 'RECYCLE_RUNE': {
-      const s = clone(state)
+      let s = clone(state)
       const p = s.players[action.player]
       const rune = removeFromZone(p, 'runePool', action.iid)
       if (!rune) return fail(state, 'Rune not in your pool.')
       p.zones.runeDeck.push({ ...rune, exhausted: false, damage: 0 })
-      return ok(log(s, action.player, `Recycled ${getCard(rune.cardId)?.name}.`))
+      s = log(s, action.player, `Recycled ${getCard(rune.cardId)?.name}.`)
+      // Sivir - Battle Mistress: "When you recycle a rune, …" (optional exhaust-me).
+      s = fireTriggers(s, collectGlobal(s, action.player, 'recycleRune'))
+      return ok(s)
     }
 
     case 'TRASH_CARD': {
