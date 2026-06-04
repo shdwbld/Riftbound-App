@@ -1956,6 +1956,18 @@ function abilityUsableNow(card: Card | undefined, p: PlayerState): boolean {
 export function canActivateUnit(s: MatchState, player: PlayerId, iid: string): UnitAbility | null {
   const u = controlledInstance(s, player, iid)
   if (!u) return null
+  // Heimerdinger - Inventor has no printed "::" ability of its own; instead it
+  // borrows any friendly [Exhaust] ability. Surface a synthetic, no-target
+  // ability so the UI shows an Activate affordance; the reducer opens a
+  // pendingChoice (heimerBorrow) to pick which ability to use.
+  if (isHeimerdinger(getCard(u.cardId))) {
+    if (!canActivateHeimer(s, player, iid)) return null
+    return {
+      exhaust: true, energy: 0, power: {}, recycleTrash: 0, discard: 0,
+      killThis: false, requiresBattlefield: false, doubleMight: false,
+      effect: parseEffectText(''), effectText: 'borrow an ability', label: 'Borrow an ability',
+    }
+  }
   if (!abilityUsableNow(getCard(u.cardId), s.players[player])) return null
   // Abilities the dedicated printed-activated path already handles (Orb of
   // Regret, Lux - Crownguard) go through ACTIVATE_ABILITY instead.
@@ -1969,6 +1981,44 @@ export function canActivateUnit(s: MatchState, player: PlayerId, iid: string): U
   const cost = { energy: ab.energy, power: ab.power }
   if (!costIsFree(cost) && !autoPay(s.players[player], cost)) return null
   return ab
+}
+
+/** Heimerdinger - Inventor: "I have all :rb_exhaust: abilities of all friendly
+ *  legends, units, and gear." */
+function isHeimerdinger(card: Card | undefined): boolean {
+  return (card?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Heimerdinger - Inventor'
+}
+
+/** A friendly permanent (unit / gear / legend, NOT Heimerdinger itself) whose
+ *  printed activated ability is an [Exhaust]-cost ability — a Heimerdinger borrow
+ *  source. Returns {iid → ability} entries the controller could currently afford
+ *  to invoke (ignoring the source's own exhausted state, since Heimerdinger pays
+ *  the exhaust instead of the source). */
+function heimerBorrowSources(s: MatchState, player: PlayerId): { src: EngineCard; ab: UnitAbility }[] {
+  const out: { src: EngineCard; ab: UnitAbility }[] = []
+  for (const perm of controlledPermanents(s, player)) {
+    const card = getCard(perm.cardId)
+    if (isHeimerdinger(card)) continue // Heimerdinger doesn't borrow its own text
+    if (printedActivated(card)) continue // handled via ACTIVATE_ABILITY, not the borrow flow
+    const ab = unitActivatedAbility(card)
+    if (!ab || !ab.exhaust) continue // only [Exhaust]-cost abilities are granted
+    if (!abilityUsableNow(card, s.players[player])) continue
+    if (ab.requiresBattlefield && battlefieldOf(s, perm.iid) < 0) continue
+    if (ab.recycleTrash > s.players[player].zones.trash.length) continue
+    if (ab.discard > s.players[player].zones.hand.length) continue
+    const cost = { energy: ab.energy, power: ab.power }
+    if (!costIsFree(cost) && !autoPay(s.players[player], cost)) continue
+    out.push({ src: perm, ab })
+  }
+  return out
+}
+
+/** Whether `player`'s Heimerdinger `iid` can be activated to borrow some friendly
+ *  permanent's [Exhaust] ability right now (Heimerdinger ready + ≥1 borrow source). */
+function canActivateHeimer(s: MatchState, player: PlayerId, iid: string): boolean {
+  const u = controlledInstance(s, player, iid)
+  if (!u || u.exhausted || !isHeimerdinger(getCard(u.cardId))) return false
+  return heimerBorrowSources(s, player).length > 0
 }
 
 /** The battlefield-granted activated ability available on a unit/legend right
@@ -4690,6 +4740,40 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           applyTempMight(s, action.iid, -amt, 1)
           return ok(log(s, action.player, `Orb of Regret: ${name} -${amt} Might this turn (min 1).`))
         }
+        case 'heimerBorrow': {
+          // Heimerdinger - Inventor: resolve the chosen friendly [Exhaust] ability
+          // (action.iid is its source) by re-running the normal ACTIVATE_UNIT
+          // resolution against that source — then EXHAUST HEIMERDINGER instead of
+          // the source (Heimerdinger pays the exhaust). The source's own
+          // exhausted state is restored to what it was before.
+          const heimerIid = pc.payload
+          const heimer = heimerIid ? controlledInstance(s, action.player, heimerIid) : undefined
+          if (!heimer || heimer.exhausted || !isHeimerdinger(getCard(heimer.cardId)))
+            return fail(state, 'Heimerdinger is unavailable.')
+          const src = controlledInstance(s, action.player, action.iid)
+          if (!src) return fail(state, 'That source is no longer in play.')
+          const bab = unitActivatedAbility(getCard(src.cardId))
+          if (!bab || !bab.exhaust) return fail(state, 'That ability can no longer be borrowed.')
+          // Temporarily ready the source so canActivateUnit accepts the re-dispatch
+          // (we restore its exhausted state right after).
+          const srcWasExhausted = src.exhausted
+          src.exhausted = false
+          // Untargeted borrowed abilities (draw / channel / tokens / self-pump)
+          // resolve fully; targeted ones (deal N / give +Might) currently resolve
+          // without a target through this choice flow.
+          const inner = reduceInner(s, { type: 'ACTIVATE_UNIT', player: action.player, iid: action.iid })
+          if (inner.error) {
+            src.exhausted = srcWasExhausted // roll back the temporary ready
+            return fail(state, inner.error)
+          }
+          const s2 = inner.state
+          // Restore the source's exhausted state; Heimerdinger pays the exhaust.
+          const src2 = controlledInstance(s2, action.player, action.iid)
+          if (src2) src2.exhausted = srcWasExhausted
+          const heimer2 = controlledInstance(s2, action.player, heimerIid!)
+          if (heimer2) heimer2.exhausted = true
+          return ok(log(s2, action.player, `Heimerdinger - Inventor: borrowed ${getCard(src.cardId)?.name ?? 'an'} ability — ${bab.effectText}.`))
+        }
       }
       return ok(s)
     }
@@ -4741,6 +4825,19 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const p = s.players[action.player]
       const u = controlledInstance(s, action.player, action.iid)!
       const name = getCard(u.cardId)?.name ?? 'a unit'
+      // Heimerdinger - Inventor: doesn't run a printed effect itself — it offers a
+      // CHOICE of any friendly [Exhaust] ability to borrow. Pay nothing yet; the
+      // borrowed ability's cost (and Heimerdinger's exhaust) are paid on resolve.
+      if (isHeimerdinger(getCard(u.cardId))) {
+        const sources = heimerBorrowSources(s, action.player)
+        if (!sources.length) return fail(state, 'No friendly [Exhaust] ability to borrow.')
+        const options = sources.map(({ src, ab: bab }) => ({
+          iid: src.iid,
+          label: `${getCard(src.cardId)?.name ?? src.iid}: ${bab.label}`,
+        }))
+        offerChoice(s, { player: action.player, kind: 'heimerBorrow', bfIndex: -1, prompt: `${name} — borrow a friendly [Exhaust] ability.`, options, payload: u.iid })
+        return ok(log(s, action.player, `${name}: choose a friendly [Exhaust] ability to borrow.`))
+      }
       const mightNow = mightOf(u) // for "double my Might" before any change
       // Pay the cost: energy/runes, recycle-from-trash, exhaust, kill-this.
       const cost = { energy: ab.energy, power: ab.power }

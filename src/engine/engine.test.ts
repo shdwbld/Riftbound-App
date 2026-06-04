@@ -877,6 +877,42 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].units.find((x) => x.iid === pz.iid)?.tempMight).toBe(1)
   })
 
+  it('Heimerdinger - Inventor: borrows a friendly [Exhaust] ability; exhausts Heimerdinger, not the source', () => {
+    const heimer = injectCard('heimer-inventor-t', 'I have all :rb_exhaust: abilities of all friendly legends, units, and gear.', { type: 'unit', name: 'Heimerdinger - Inventor', might: 3 })
+    const gear = injectCard('heimer-gear-t', ':rb_exhaust:: Draw 1.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const hz = mk(heimer, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [hz], controller: 0 }
+    const g = mk(gear, 0)
+    s.players[0].zones.base.push(g)
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const handBefore = s.players[0].zones.hand.length
+    // Heimerdinger is offered as activatable (synthetic borrow ability).
+    expect(canActivateUnit(s, 0, hz.iid)?.label).toBe('Borrow an ability')
+    // Activating Heimerdinger opens a borrow choice listing the gear's ability.
+    const r1 = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: hz.iid })
+    expect(r1.error).toBeUndefined()
+    expect(r1.state.pendingChoice?.kind).toBe('heimerBorrow')
+    expect(r1.state.pendingChoice?.options.some((o) => o.iid === g.iid)).toBe(true)
+    expect(r1.state.battlefields[0].units.find((x) => x.iid === hz.iid)?.exhausted).toBeFalsy() // not yet paid
+    // Resolve the choice (borrow the gear's "Draw 1").
+    const r2 = reduce(r1.state, { type: 'RESOLVE_CHOICE', player: 0, iid: g.iid })
+    expect(r2.error).toBeUndefined()
+    expect(r2.state.players[0].zones.hand.length).toBe(handBefore + 1) // drew 1
+    expect(r2.state.battlefields[0].units.find((x) => x.iid === hz.iid)?.exhausted).toBe(true) // Heimerdinger exhausted
+    expect(r2.state.players[0].zones.base.find((x) => x.iid === g.iid)?.exhausted).toBeFalsy() // source gear NOT exhausted
+  })
+
+  it('Heimerdinger - Inventor: not activatable with no borrowable [Exhaust] ability', () => {
+    const heimer = injectCard('heimer-inventor-t2', 'I have all :rb_exhaust: abilities of all friendly legends, units, and gear.', { type: 'unit', name: 'Heimerdinger - Inventor', might: 3 })
+    const s = baseState()
+    const hz = mk(heimer, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [hz], controller: 0 }
+    expect(canActivateUnit(s, 0, hz.iid)).toBeNull()
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: hz.iid })
+    expect(r.error).toBeTruthy()
+  })
+
   it('Stalking Wolf: required kill of a tribe unit; enters at its battlefield (Gap 4)', () => {
     const wolf = injectCard('stalking-wolf-t', "[Ambush] As an additional cost to play me, kill a Bird, Cat, Dog, or Poro you control. You may play me to its battlefield (even if you don't have other units there).", { type: 'unit', energy: 0, power: {}, might: 6 })
     const poro = injectCard('sw-poro', 'A unit.', { might: 1, tags: ['Poro'] })
