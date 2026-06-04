@@ -9,7 +9,7 @@ import { createMatch } from '../engine/setup'
 import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
-import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import BoardCard from '../components/BoardCard'
 import MatchBoard from '../components/MatchBoard'
@@ -110,14 +110,14 @@ export default function MatchPage() {
   // Rune picker is ON by default — every rune-spending play opens the overlay.
   // Toggle off to auto-pay silently.
   const [manualPay, setManualPay] = useState(true)
-  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean } | null>(null)
+  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean; payAdditionalCost?: boolean } | null>(null)
   // Animated battle summary after a combat / chain resolution.
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
   // End-of-turn recap banner + per-turn event buffer (keyed by match.turn).
   const [recap, setRecap] = useState<TurnRecapData | null>(null)
   const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
   // Pending Ambush battlefield choice.
-  const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; options: { label: string; value: number }[] } | null>(null)
+  const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending Deflect surcharge payment (after a spell's targets are chosen).
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
 
@@ -277,6 +277,7 @@ export default function MatchPage() {
     // unit enters READY (can act the turn it arrives).
     let accelerate = false
     let repeat = false
+    let payAdditionalCost = false
     let cost = effectiveCostOf(match, controlling, card)
     if (type === 'PLAY_UNIT') {
       const ac = accelerateCost(card)
@@ -285,6 +286,16 @@ export default function MatchPage() {
           `${card.name} has Accelerate. Pay ${costLabel(ac)} extra so it enters READY (can act now)?\n\nOK = pay & enter ready · Cancel = enter exhausted.`,
         )
         if (accelerate) cost = addCost(cost, ac)
+      }
+      // Optional "you may pay X as an additional cost to play me" — Pay / Skip.
+      // Bard - Mercurial's additional cost is "exhaust your legend" (no rune cost).
+      const opt = optionalPlayCost(card)
+      const isBard = card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial'
+      if (opt || isBard) {
+        payAdditionalCost = window.confirm(
+          `${card.name}: pay an additional cost (${opt ? costLabel(opt) : 'exhaust your legend'}) for its bonus?\n\nOK = pay · Cancel = skip.`,
+        )
+        if (payAdditionalCost && opt) cost = addCost(cost, opt)
       }
     }
     // Repeat is an OPTIONAL extra cost on spells — confirm to pay it so the
@@ -302,17 +313,17 @@ export default function MatchPage() {
     // Manual rune selection: open the payment modal instead of auto-paying.
     if (manualPay && !costIsFree(cost)) {
       if (!autoPay(match.players[controlling], cost)) return flash('Not enough resources.')
-      setPaying({ c, card, type, cost, accelerate, repeat })
+      setPaying({ c, card, type, cost, accelerate, repeat, payAdditionalCost })
       return
     }
     const payment = autoPay(match.players[controlling], cost)
     if (!payment) return flash('Not enough resources.')
-    proceedPlay(c, card, type, payment, accelerate, repeat)
+    proceedPlay(c, card, type, payment, accelerate, repeat, payAdditionalCost)
   }
 
   /** Finish a play once payment is settled (auto or manual): targeting for
    *  spells/gear, or an immediate dispatch for units. */
-  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean, repeat = false) => {
+  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean, repeat = false, payAdditionalCost = false) => {
     if (type === 'PLAY_SPELL' && needsTarget(card)) {
       const legal = getLegalTargets(match, card, controlling)
       if (legal.length === 0) {
@@ -340,18 +351,19 @@ export default function MatchPage() {
           .filter((x) => x.bf.units.some((u) => u.owner === controlling))
         if (legal.length === 0) return flash('No battlefield with your units for Ambush.')
         if (legal.length === 1) {
-          act({ type, player: controlling, iid: c.iid, payment, accelerate, toBattlefield: legal[0].i })
+          act({ type, player: controlling, iid: c.iid, payment, accelerate, payAdditionalCost, toBattlefield: legal[0].i })
           return
         }
         setAmbushPick({
           iid: c.iid,
           payment,
           accelerate,
+          payAdditionalCost,
           options: legal.map((x) => ({ label: getCard(x.bf.cardId)?.name ?? `Battlefield ${x.i + 1}`, value: x.i })),
         })
         return
       }
-      act({ type, player: controlling, iid: c.iid, payment, accelerate })
+      act({ type, player: controlling, iid: c.iid, payment, accelerate, payAdditionalCost })
     } else if (type === 'PLAY_SPELL') act({ type, player: controlling, iid: c.iid, payment, repeat })
     else act({ type, player: controlling, iid: c.iid, payment })
   }
@@ -470,7 +482,7 @@ export default function MatchPage() {
             setPaying(null)
             if (p.counterChainId)
               act({ type: 'COUNTER', player: controlling, iid: p.c.iid, targetChainId: p.counterChainId, payment })
-            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate, p.repeat)
+            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate, p.repeat, p.payAdditionalCost)
           }}
         />
       )}
@@ -516,7 +528,7 @@ export default function MatchPage() {
           onPick={(bf) => {
             const a = ambushPick
             setAmbushPick(null)
-            act({ type: 'PLAY_UNIT', player: controlling, iid: a.iid, payment: a.payment, accelerate: a.accelerate, toBattlefield: bf })
+            act({ type: 'PLAY_UNIT', player: controlling, iid: a.iid, payment: a.payment, accelerate: a.accelerate, payAdditionalCost: a.payAdditionalCost, toBattlefield: bf })
           }}
           onCancel={() => setAmbushPick(null)}
         />

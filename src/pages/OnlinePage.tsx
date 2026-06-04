@@ -17,7 +17,7 @@ import { createMatch } from '../engine/setup'
 import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
-import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import PaymentModal from '../components/PaymentModal'
 import ChoiceModal from '../components/ChoiceModal'
@@ -80,12 +80,12 @@ export default function OnlinePage() {
   const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; kind: 'spell' | 'gear' | 'activateUnit'; count: number; picked: string[]; repeat?: boolean; targetScope?: 'enemy' | 'friendly' | 'any' } | null>(null)
   const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
   // The pending play awaiting a chosen rune payment (the overlay).
-  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean } | null>(null)
+  const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean; payAdditionalCost?: boolean } | null>(null)
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
   // End-of-turn recap banner + per-turn event buffer (keyed by match.turn).
   const [recap, setRecap] = useState<TurnRecapData | null>(null)
   const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
-  const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; options: { label: string; value: number }[] } | null>(null)
+  const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
   const [seat, setSeat] = useState<PlayerId>(0)
@@ -476,6 +476,7 @@ export default function OnlinePage() {
     // unit enters READY (can act the turn it arrives).
     let accelerate = false
     let repeat = false
+    let payAdditionalCost = false
     let cost = effectiveCostOf(match, seat, card)
     if (type === 'PLAY_UNIT') {
       const ac = accelerateCost(card)
@@ -484,6 +485,16 @@ export default function OnlinePage() {
           `${card.name} has Accelerate. Pay ${costLabel(ac)} extra so it enters READY (can act now)?\n\nOK = pay & enter ready · Cancel = enter exhausted.`,
         )
         if (accelerate) cost = addCost(cost, ac)
+      }
+      // Optional "you may pay X as an additional cost to play me" — Pay / Skip.
+      // Bard - Mercurial's additional cost is "exhaust your legend" (no rune cost).
+      const opt = optionalPlayCost(card)
+      const isBard = card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial'
+      if (opt || isBard) {
+        payAdditionalCost = window.confirm(
+          `${card.name}: pay an additional cost (${opt ? costLabel(opt) : 'exhaust your legend'}) for its bonus?\n\nOK = pay · Cancel = skip.`,
+        )
+        if (payAdditionalCost && opt) cost = addCost(cost, opt)
       }
     }
     // Repeat is an OPTIONAL extra cost on spells — confirm to resolve twice.
@@ -500,13 +511,13 @@ export default function OnlinePage() {
     // Every rune-spending play opens the rune picker overlay.
     if (!costIsFree(cost)) {
       if (!autoPay(match.players[seat], cost)) return flash('Not enough resources.')
-      setPaying({ c, card, type, cost, accelerate, repeat })
+      setPaying({ c, card, type, cost, accelerate, repeat, payAdditionalCost })
       return
     }
-    proceedPlay(c, card, type, { exhaust: [], recycle: [] }, accelerate, repeat)
+    proceedPlay(c, card, type, { exhaust: [], recycle: [] }, accelerate, repeat, payAdditionalCost)
   }
 
-  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean, repeat = false) => {
+  const proceedPlay = (c: EngineCard, card: Card, type: PlayType, payment: Payment, accelerate: boolean, repeat = false, payAdditionalCost = false) => {
     if (type === 'PLAY_SPELL' && needsTarget(card)) {
       const legal = getLegalTargets(match, card, seat)
       if (legal.length === 0) {
@@ -532,18 +543,19 @@ export default function OnlinePage() {
           .filter((x) => x.bf.units.some((u) => u.owner === seat))
         if (legal.length === 0) return flash('No battlefield with your units for Ambush.')
         if (legal.length === 1) {
-          dispatch({ type, player: seat, iid: c.iid, payment, accelerate, toBattlefield: legal[0].i })
+          dispatch({ type, player: seat, iid: c.iid, payment, accelerate, payAdditionalCost, toBattlefield: legal[0].i })
           return
         }
         setAmbushPick({
           iid: c.iid,
           payment,
           accelerate,
+          payAdditionalCost,
           options: legal.map((x) => ({ label: getCard(x.bf.cardId)?.name ?? `Battlefield ${x.i + 1}`, value: x.i })),
         })
         return
       }
-      dispatch({ type, player: seat, iid: c.iid, payment, accelerate })
+      dispatch({ type, player: seat, iid: c.iid, payment, accelerate, payAdditionalCost })
     } else if (type === 'PLAY_SPELL') dispatch({ type, player: seat, iid: c.iid, payment, repeat })
     else dispatch({ type, player: seat, iid: c.iid, payment })
   }
@@ -671,7 +683,7 @@ export default function OnlinePage() {
             setPaying(null)
             if (p.counterChainId)
               dispatch({ type: 'COUNTER', player: seat, iid: p.c.iid, targetChainId: p.counterChainId, payment })
-            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate, p.repeat)
+            else proceedPlay(p.c, p.card, p.type, payment, p.accelerate, p.repeat, p.payAdditionalCost)
           }}
         />
       )}
@@ -717,7 +729,7 @@ export default function OnlinePage() {
           onPick={(bf) => {
             const a = ambushPick
             setAmbushPick(null)
-            dispatch({ type: 'PLAY_UNIT', player: seat, iid: a.iid, payment: a.payment, accelerate: a.accelerate, toBattlefield: bf })
+            dispatch({ type: 'PLAY_UNIT', player: seat, iid: a.iid, payment: a.payment, accelerate: a.accelerate, payAdditionalCost: a.payAdditionalCost, toBattlefield: bf })
           }}
           onCancel={() => setAmbushPick(null)}
         />
