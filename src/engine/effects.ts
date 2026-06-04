@@ -150,6 +150,9 @@ export interface ParsedEffect {
    *  this turn, to a minimum of 1" — Thousand-Tailed Watcher). Floored by
    *  `tempMightFloor`. */
   tempMightAllEnemy: number
+  /** Tag-scoped Might-this-turn: "give your Mechs +N Might this turn" (Danger Zone).
+   *  Applies `amount` to every friendly unit carrying `tag`. */
+  tempMightTag: { tag: string; amount: number } | null
   /** Extra cards drawn if a chosen target dies during this resolution. */
   drawOnKill: number
   /** Who the targeted part may hit. */
@@ -214,6 +217,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   tempMightSelf: 0,
   tempMightAll: 0,
   tempMightAllEnemy: 0,
+  tempMightTag: null,
   drawOnKill: 0,
   targetScope: null,
   targetCount: 0,
@@ -228,7 +232,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -557,6 +561,16 @@ function parse(text: string): ParsedEffect {
   const tmEnemyM = t.match(new RegExp(`give (?:all )?enemy units?(?:\\s+(?:here|there))? (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
   if (tmEnemyM) {
     eff.tempMightAllEnemy += (tmEnemyM[1] === '-' ? -1 : 1) * parseInt(tmEnemyM[2], 10)
+    hit = true
+  }
+
+  // Tag-scoped Might-this-turn: "give your Mechs +N Might this turn" (Danger Zone).
+  // The tag is the capitalized noun (plural 's' stripped). Skip the generic "units"
+  // form (handled by tempMightAll above).
+  const tmTagM = t.match(new RegExp(`give your ([a-z]+?)s? (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
+  if (tmTagM && !['unit', 'friendly', 'other', 'token', 'enemy'].includes(tmTagM[1])) {
+    const tag = tmTagM[1][0].toUpperCase() + tmTagM[1].slice(1)
+    eff.tempMightTag = { tag, amount: (tmTagM[2] === '-' ? -1 : 1) * parseInt(tmTagM[3], 10) }
     hit = true
   }
 

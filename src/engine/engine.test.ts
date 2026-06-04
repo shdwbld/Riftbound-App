@@ -1252,6 +1252,45 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].units.find((u) => u.iid === ally2.iid)?.buffs ?? 0).toBe(0)
   })
 
+  // --- Tag-scoped Might auras ---
+  it('Rumble - Scrapper: your Mechs have +1 Might (including itself)', () => {
+    const rumble = injectCard('rs-test', 'Your Mechs have +1 :rb_might: (including me).', { name: 'Rumble - Scrapper', might: 4, tags: ['Mech'] })
+    const mech = injectCard('rs-mech', 'A unit.', { might: 3, tags: ['Mech'] })
+    const nonmech = injectCard('rs-non', 'A unit.', { might: 3, tags: [] })
+    const s = baseState()
+    const r1 = mk(rumble, 0), m = mk(mech, 0), nm = mk(nonmech, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [r1, m, nm], controller: 0 }
+    expect(combatMightAt(s, 0, m, 'attacker')).toBe(4) // 3 + 1
+    expect(combatMightAt(s, 0, r1, 'attacker')).toBe(5) // 4 + 1 (including me)
+    expect(combatMightAt(s, 0, nm, 'attacker')).toBe(3) // non-Mech unaffected
+  })
+
+  it('Danger Zone: gives your Mechs +1 Might this turn (tag-scoped)', () => {
+    const dz = injectCard('dz-test', 'When you play me, give your Mechs +1 :rb_might: this turn.', { type: 'unit', energy: 0, power: {} })
+    const mech = mk(injectCard('dz-mech', 'A unit.', { tags: ['Mech'] }), 0)
+    const nonmech = mk(injectCard('dz-non', 'A unit.', { tags: [] }), 0)
+    const s = baseState()
+    s.players[0].zones.base.push(mech, nonmech)
+    const u = mk(dz, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.find((x) => x.iid === mech.iid)?.tempMight).toBe(1)
+    expect(r.state.players[0].zones.base.find((x) => x.iid === nonmech.iid)?.tempMight ?? 0).toBe(0)
+  })
+
+  it('Master Yi - Wuju Master (legend): your units have +1 Might while at 6+ XP', () => {
+    const myi = injectCard('myi-test', '[Level 6][>] Your units have +1 :rb_might:.', { name: 'Master Yi - Wuju Master' })
+    const unit = injectCard('myi-u', 'A unit.', { might: 3 })
+    const s = baseState()
+    s.players[0].legend = mk(myi, 0)
+    const u = mk(unit, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    s.players[0].xp = 5
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(3) // below 6 XP → no aura
+    s.players[0].xp = 6
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(4) // 6+ XP → +1
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never

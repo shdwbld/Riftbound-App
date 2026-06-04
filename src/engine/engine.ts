@@ -677,6 +677,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     for (const u of enemies) { applyTempMight(s, u.iid, e.tempMightAllEnemy, e.tempMightFloor); n++ }
     if (n) lines.push(`${e.tempMightAllEnemy > 0 ? '+' : ''}${e.tempMightAllEnemy} Might this turn to ${n} enemy unit(s).`)
   }
+  if (e.tempMightTag) {
+    // Tag-scoped temp Might to your tagged units (Danger Zone: "your Mechs +1").
+    const { tag, amount } = e.tempMightTag
+    const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+      (u) => u.owner === p.id && (getCard(u.cardId)?.tags ?? []).includes(tag),
+    )
+    for (const u of units) u.tempMight = (u.tempMight ?? 0) + amount
+    if (units.length) lines.push(`${amount > 0 ? '+' : ''}${amount} Might this turn to ${units.length} ${tag}(s).`)
+  }
   if (e.readyUnits) {
     // Surface a "choose which unit(s) to ready" prompt for the player.
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
@@ -1387,6 +1396,10 @@ function hasTank(s: MatchState, u: EngineCard): boolean {
 function auraMightBonus(s: MatchState, u: EngineCard): number {
   let b = 0
   if (getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Soul Shepherd')) b += 1
+  // Rumble - Scrapper: "Your Mechs have +1 Might (including me)."
+  if ((getCard(u.cardId)?.tags ?? []).includes('Mech') && controlsUnitNamed(s, u.owner, 'Rumble - Scrapper')) b += 1
+  // (Master Yi - Wuju Master's "[Level 6] Your units have +1" is already handled in
+  // conditionalMight's legend-granted-buffs block — no duplicate here.)
   // Self-scaling champions whose Might tracks a game value (state-aware, so the
   // bonus updates live and is consulted by combat — showdownSteps/combatMightAt).
   const name = (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
