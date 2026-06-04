@@ -270,7 +270,12 @@ export interface MatchState {
  *  winner chooses the First Player, then each player picks their Chosen Champion
  *  (when a variant choice exists) and their Battlefield. */
 export interface SetupState {
-  step: 'roll' | 'first' | 'champion' | 'battlefield'
+  /** 'roll' and 'first' stay sequential; once the First Player is chosen the
+   *  setup moves to the single concurrent 'select' step where EVERY player, at
+   *  once, picks their Champion + Battlefield and takes their mulligan, then
+   *  submits Ready (the legacy 'champion'/'battlefield' steps are unused but
+   *  kept in the union for back-compat). */
+  step: 'roll' | 'first' | 'champion' | 'battlefield' | 'select'
   /** Per-player turn-order roll (highest chooses the First Player). */
   rolls: number[] | null
   /** The highest roller — the only player who may choose the First Player. */
@@ -283,6 +288,9 @@ export interface SetupState {
   battlefieldOptions: string[][]
   /** Per-player chosen battlefield (null = not yet chosen). */
   battlefieldPick: (string | null)[]
+  /** Per-player readiness during the concurrent 'select' step. The match starts
+   *  (beginTurn → phase 'action') only once every non-out player is ready. */
+  ready?: boolean[]
 }
 
 // --- Actions ---------------------------------------------------------------
@@ -313,6 +321,17 @@ export type Action =
   | { type: 'CHOOSE_CHAMPION'; player: PlayerId; cardId: string }
   /** A player picks the Battlefield they contribute during setup. */
   | { type: 'CHOOSE_BATTLEFIELD'; player: PlayerId; cardId: string }
+  /** Concurrent pre-game submit: record this player's Champion + Battlefield
+   *  picks AND their mulligan (toBottom cards sent to the bottom of the main
+   *  deck + redraw that many), then mark them Ready. When every non-out player
+   *  has submitted, the match starts (beginTurn → phase 'action'). */
+  | {
+      type: 'SUBMIT_PREGAME'
+      player: PlayerId
+      championId: string | null
+      battlefieldId: string | null
+      toBottom: string[]
+    }
   | { type: 'MULLIGAN'; player: PlayerId; toBottom: string[] }
   | { type: 'ACTIVATE_LEGEND'; player: PlayerId }
   /** Generate a token (e.g. Recruit) from the token pile onto your Base. */

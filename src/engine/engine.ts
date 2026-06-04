@@ -3763,35 +3763,20 @@ function resolveTopOfChain(state: MatchState): MatchState {
 /** Public reducer: resets the feedback-event buffer, applies the action, and
  *  attaches any emitted events to the result. */
 /** Finish interactive setup: apply champion picks, build the chosen battlefields
- *  (4-player: the first player's is dropped), set pointsToWin, start the mulligan.
- *  Mutates and returns `s` (caller has already cloned). */
+ *  (4-player: the first player's is dropped), set pointsToWin. Hands are already
+ *  drawn (on entry to the 'select' step) and mulligans already applied (per
+ *  SUBMIT_PREGAME). The caller starts the game (beginTurn). Mutates and returns
+ *  `s` (caller has already cloned). */
 function finalizeSetup(s: MatchState): MatchState {
   const su = s.setup!
   const n = s.players.length
   const first = s.firstPlayer
-  const baseName = (name: string) => name.replace(/\s*\([^)]*\)\s*$/, '').trim()
   su.championPick.forEach((id, i) => {
-    const p = s.players[i]
-    // Set aside the Chosen Champion: pull a matching card out of the (still
-    // undrawn) main deck into the Champion Zone, then draw the opening hand.
-    if (id) {
-      let idx = p.zones.mainDeck.findIndex((c) => c.cardId === id)
-      if (idx < 0) {
-        const bn = baseName(getCard(id)?.name ?? '')
-        idx = p.zones.mainDeck.findIndex((c) => baseName(getCard(c.cardId)?.name ?? '') === bn)
-      }
-      if (idx >= 0) {
-        const pulled = p.zones.mainDeck.splice(idx, 1)[0]
-        p.champion = { ...pulled, cardId: id }
-      } else if (!p.champion) {
-        p.champion = { iid: `${i}:champ:${id}`, cardId: id, owner: i, exhausted: false, damage: 0, attached: [] }
-      }
-    }
-    // Draw the opening hand now (interactive setup deferred it past the roll).
-    if (p.zones.hand.length === 0)
-      for (let k = 0; k < RULES.openingHand && p.zones.mainDeck.length > 0; k++)
-        p.zones.hand.push(p.zones.mainDeck.shift()!)
+    // Set aside the Chosen Champion (idempotent — SUBMIT_PREGAME already did it).
+    if (id) pullChampion(s.players[i], id, i)
   })
+  // Safety net: ensure every player has an opening hand (idempotent).
+  drawOpeningHands(s)
   const contributors = s.players.map((_, i) => i).filter((i) => !(n === 4 && i === first))
   const bfIds = contributors
     .map((i) => su.battlefieldPick[i])
@@ -3802,23 +3787,58 @@ function finalizeSetup(s: MatchState): MatchState {
     (n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer) +
     bfIds.reduce((sum, id) => sum + battlefieldPassive(id).winDelta, 0)
   s.setup = undefined
-  s.phase = 'mulligan'
-  return log(s, null, 'Setup complete â€” players mulligan.')
+  return log(s, null, 'Setup complete.')
 }
 
-/** Advance the setup state to the next pending step, or finalize into mulligan.
- *  A step is pending only where a player has a real choice (2+ options). */
+/** Set aside a player's Chosen Champion in the Champion Zone. Searches the main
+ *  deck first, then the (already-drawn) opening hand; pulling from the hand
+ *  draws a replacement so hand size is preserved. Idempotent if already set. */
+function pullChampion(p: PlayerState, id: string, seat: PlayerId): void {
+  if (p.champion) return
+  const baseName = (name: string) => name.replace(/\s*\([^)]*\)\s*$/, '').trim()
+  const bn = baseName(getCard(id)?.name ?? '')
+  const match = (c: EngineCard) =>
+    c.cardId === id || baseName(getCard(c.cardId)?.name ?? '') === bn
+  let idx = p.zones.mainDeck.findIndex(match)
+  if (idx >= 0) {
+    const pulled = p.zones.mainDeck.splice(idx, 1)[0]
+    p.champion = { ...pulled, cardId: id }
+    return
+  }
+  idx = p.zones.hand.findIndex(match)
+  if (idx >= 0) {
+    const pulled = p.zones.hand.splice(idx, 1)[0]
+    p.champion = { ...pulled, cardId: id }
+    if (p.zones.mainDeck.length > 0) p.zones.hand.push(p.zones.mainDeck.shift()!)
+    return
+  }
+  p.champion = { iid: `${seat}:champ:${id}`, cardId: id, owner: seat, exhausted: false, damage: 0, attached: [] }
+}
+
+/** Draw each player's opening hand (idempotent) so the concurrent 'select'
+ *  step can show hands for the mulligan. Interactive setup deferred the draw
+ *  past the roll (Core Rules §117–118); we draw it on entry to 'select'. */
+function drawOpeningHands(s: MatchState): void {
+  for (const p of s.players) {
+    if (p.zones.hand.length === 0)
+      for (let k = 0; k < RULES.openingHand && p.zones.mainDeck.length > 0; k++)
+        p.zones.hand.push(p.zones.mainDeck.shift()!)
+  }
+}
+
+/** Advance the setup state into the single concurrent 'select' step. Champion +
+ *  Battlefield + mulligan all happen at once there, gated by per-player Ready
+ *  (the legacy sequential 'champion'/'battlefield' steps are no longer used).
+ *  Single options are pre-filled as defaults but a Ready submit is still
+ *  required so the barrier is uniform. */
 function advanceSetup(s: MatchState): EngineResult {
   const su = s.setup!
-  if (su.championOptions.some((o, i) => o.length > 1 && su.championPick[i] === null)) {
-    su.step = 'champion'
-    return ok(s)
-  }
-  if (su.battlefieldOptions.some((o, i) => o.length > 1 && su.battlefieldPick[i] === null)) {
-    su.step = 'battlefield'
-    return ok(s)
-  }
-  return ok(finalizeSetup(s))
+  if (!su.ready) su.ready = s.players.map(() => false)
+  // Out players don't gate the start — count them as ready.
+  su.ready = s.players.map((p, i) => (p.out ? true : (su.ready?.[i] ?? false)))
+  su.step = 'select'
+  drawOpeningHands(s)
+  return ok(s)
 }
 
 export function reduce(state: MatchState, action: Action): EngineResult {
@@ -3858,7 +3878,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const s = clone(state)
       s.firstPlayer = action.firstPlayer
       s.activePlayer = action.firstPlayer
-      s.setup!.step = 'champion'
+      // Move into the single concurrent pre-game step (Champion + Battlefield +
+      // mulligan all at once, gated by per-player Ready / SUBMIT_PREGAME).
       return advanceSetup(s)
     }
 
@@ -3880,6 +3901,59 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const s = clone(state)
       s.setup!.battlefieldPick[action.player] = action.cardId
       return advanceSetup(s)
+    }
+
+    case 'SUBMIT_PREGAME': {
+      if (state.phase !== 'setup' || state.setup?.step !== 'select')
+        return fail(state, 'Not the pre-game selection step.')
+      const su0 = state.setup
+      const pl = action.player
+      if (pl < 0 || pl >= state.players.length) return fail(state, 'Invalid player.')
+      if (state.players[pl].out) return fail(state, 'You are out of the match.')
+      if (su0.ready?.[pl]) return fail(state, 'You are already ready.')
+      // Validate the champion pick against this player's options. null is allowed
+      // only when there's no real choice (≤1 option); else default to the first.
+      const champOpts = su0.championOptions[pl] ?? []
+      let championId = action.championId
+      if (championId == null) championId = champOpts.length > 0 ? champOpts[0] : null
+      if (championId != null && !champOpts.includes(championId))
+        return fail(state, 'That champion is not an option for you.')
+      // Validate the battlefield pick the same way.
+      const bfOpts = su0.battlefieldOptions[pl] ?? []
+      let battlefieldId = action.battlefieldId
+      if (battlefieldId == null) battlefieldId = bfOpts.length > 0 ? bfOpts[0] : null
+      if (battlefieldId != null && !bfOpts.includes(battlefieldId))
+        return fail(state, 'That battlefield is not an option for you.')
+      if (action.toBottom.length > 2)
+        return fail(state, 'You may set aside at most 2 cards.')
+
+      let s = clone(state)
+      const su = s.setup!
+      const p = s.players[pl]
+      su.championPick[pl] = championId
+      su.battlefieldPick[pl] = battlefieldId
+      // Set aside the Chosen Champion now (before the mulligan redraw, so it
+      // can't be drawn back), then apply the mulligan to the opening hand.
+      if (championId != null) pullChampion(p, championId, pl)
+      const setAside: EngineCard[] = []
+      for (const iid of action.toBottom) {
+        const c = removeFromZone(p, 'hand', iid)
+        if (c) setAside.push(c)
+      }
+      p.zones.mainDeck.push(...setAside)
+      for (let i = 0; i < setAside.length && p.zones.mainDeck.length > 0; i++)
+        p.zones.hand.push(p.zones.mainDeck.shift()!)
+      p.mulliganed = true
+      su.ready = s.players.map((_, i) => (i === pl ? true : (su.ready?.[i] ?? false)))
+      s = log(
+        s,
+        pl,
+        setAside.length ? `${p.name} is ready (mulliganed ${setAside.length}).` : `${p.name} is ready.`,
+      )
+      // Start the game once every non-out player has submitted.
+      const allReady = s.players.every((pl2, i) => pl2.out || su.ready?.[i])
+      if (allReady) return ok(beginTurn(finalizeSetup(s)))
+      return ok(s)
     }
 
     case 'MULLIGAN': {

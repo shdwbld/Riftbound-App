@@ -356,7 +356,7 @@ describe('interactive setup (turn-order roll → first → mulligan)', () => {
     if (vayne) expect(championVariants(vayne.id).length).toBeGreaterThan(1)
   })
 
-  it('rolls for turn order; the winner chooses first; then mulligan', () => {
+  it('rolls for turn order; the winner chooses first; then concurrent select', () => {
     let s = createMatch([miniDeck('A'), miniDeck('B')], { interactiveSetup: true })
     expect(s.phase).toBe('setup')
     expect(s.setup?.step).toBe('roll')
@@ -374,11 +374,104 @@ describe('interactive setup (turn-order roll → first → mulligan)', () => {
     expect(r.error).toBeUndefined()
     s = r.state
     expect(s.firstPlayer).toBe(0)
-    // Single battlefield option each → no choice → straight to mulligan.
-    expect(s.phase).toBe('mulligan')
-    expect(s.battlefields.length).toBe(2)
-    // Hand is drawn now (after the roll), in finalizeSetup.
+    // Now in the single CONCURRENT 'select' step (still phase 'setup'), with
+    // every player's opening hand already drawn for the mulligan.
+    expect(s.phase).toBe('setup')
+    expect(s.setup?.step).toBe('select')
+    expect(s.setup?.ready).toEqual([false, false])
     expect(s.players[0].zones.hand.length).toBe(4)
+    expect(s.players[1].zones.hand.length).toBe(4)
+  })
+
+  it('concurrent pre-game: first SUBMIT_PREGAME waits, second starts the game', () => {
+    let s = createMatch([miniDeck('A'), miniDeck('B')], { interactiveSetup: true })
+    s = reduce(s, { type: 'ROLL_TURN_ORDER', player: 0, rolls: [9, 3] }).state // A wins
+    s = reduce(s, { type: 'CHOOSE_FIRST', player: 0, firstPlayer: 0 }).state
+    expect(s.setup?.step).toBe('select')
+    // Player 0 sets aside 2 cards and readies up — the match must NOT start yet.
+    const p0Hand = s.players[0].zones.hand.map((c) => c.iid)
+    let r = reduce(s, {
+      type: 'SUBMIT_PREGAME',
+      player: 0,
+      championId: null,
+      battlefieldId: null,
+      toBottom: [p0Hand[0], p0Hand[1]],
+    })
+    expect(r.error).toBeUndefined()
+    s = r.state
+    expect(s.phase).toBe('setup') // still waiting
+    expect(s.setup?.ready).toEqual([true, false])
+    expect(s.players[0].mulliganed).toBe(true)
+    expect(s.players[0].zones.hand.length).toBe(4) // mulligan redrew the 2
+    // The 2 set-aside cards are now at the bottom of the main deck.
+    expect(s.players[0].zones.mainDeck.slice(-2).map((c) => c.iid)).toEqual([p0Hand[0], p0Hand[1]])
+    // Re-submitting is rejected.
+    expect(reduce(s, { type: 'SUBMIT_PREGAME', player: 0, championId: null, battlefieldId: null, toBottom: [] }).error).toBeTruthy()
+    // Player 1 readies → barrier met → the game starts (beginTurn ran).
+    r = reduce(s, { type: 'SUBMIT_PREGAME', player: 1, championId: null, battlefieldId: null, toBottom: [] })
+    expect(r.error).toBeUndefined()
+    s = r.state
+    expect(s.phase).toBe('action') // beginTurn ran
+    expect(s.setup).toBeUndefined()
+    expect(s.activePlayer).toBe(0)
+    expect(s.players[1].mulliganed).toBe(true)
+    // Battlefields were built from each player's pick (defaults auto-filled).
+    expect(s.battlefields.length).toBe(2)
+    expect(s.battlefields.every((b) => b.cardId === battlefield.id)).toBe(true)
+  })
+
+  it('SUBMIT_PREGAME validates champion + battlefield picks against options', () => {
+    let s = createMatch([miniDeck('A'), miniDeck('B')], { interactiveSetup: true })
+    s = reduce(s, { type: 'ROLL_TURN_ORDER', player: 0, rolls: [9, 3] }).state
+    s = reduce(s, { type: 'CHOOSE_FIRST', player: 0, firstPlayer: 0 }).state
+    // A battlefield not in this player's options is rejected.
+    const bad = reduce(s, {
+      type: 'SUBMIT_PREGAME',
+      player: 0,
+      championId: null,
+      battlefieldId: 'not-a-real-battlefield',
+      toBottom: [],
+    })
+    expect(bad.error).toBeTruthy()
+    // Too many mulligan cards is rejected.
+    const tooMany = reduce(s, {
+      type: 'SUBMIT_PREGAME',
+      player: 0,
+      championId: null,
+      battlefieldId: null,
+      toBottom: s.players[0].zones.hand.slice(0, 3).map((c) => c.iid),
+    })
+    expect(tooMany.error).toBeTruthy()
+  })
+
+  it('setup pulls the Chosen Champion to the Champion Zone via SUBMIT_PREGAME', () => {
+    const champ = CARDS.find((c) => c.type === 'unit' && c.supertype === 'champion')
+    if (!champ) return
+    const champDeck = (name: string): Deck => ({
+      id: name,
+      name,
+      legendId: null,
+      championId: champ.id,
+      main: { [champ.id]: 2, [furyUnit.id]: 10 },
+      runes: { [furyRune.id]: 12 },
+      battlefields: [battlefield.id],
+      sideboard: {},
+      updatedAt: 0,
+    })
+    let s = createMatch([champDeck('A'), miniDeck('B')], { interactiveSetup: true })
+    s = reduce(s, { type: 'ROLL_TURN_ORDER', player: 0, rolls: [9, 3] }).state
+    s = reduce(s, { type: 'CHOOSE_FIRST', player: 0, firstPlayer: 0 }).state
+    const champOpt = s.setup?.championOptions[0]?.[0]
+    expect(champOpt).toBeTruthy()
+    s = reduce(s, { type: 'SUBMIT_PREGAME', player: 0, championId: champOpt ?? null, battlefieldId: null, toBottom: [] }).state
+    s = reduce(s, { type: 'SUBMIT_PREGAME', player: 1, championId: null, battlefieldId: null, toBottom: [] }).state
+    expect(s.phase).toBe('action')
+    expect(s.players[0].champion?.cardId).toBe(champOpt)
+    // The champion is set aside, not left in the deck/hand.
+    const stillSomewhere = s.players[0].zones.mainDeck
+      .concat(s.players[0].zones.hand)
+      .filter((c) => c.cardId === champ.id).length
+    expect(stillSomewhere).toBe(1) // the second copy stays; the chosen one is set aside
   })
 })
 

@@ -279,6 +279,7 @@ export function createMatch(decks: Deck[], opts: MatchOptions = {}): MatchState 
       championPick,
       battlefieldOptions,
       battlefieldPick,
+      ready: base.players.map(() => false),
     },
     log: [{ turn: 1, player: null, text: `Match created (${n} players) — roll for turn order.` }],
   }

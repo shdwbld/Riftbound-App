@@ -58,6 +58,156 @@ function BigCard({ cardId, onClick, onInspect, selected }: { cardId: string; onC
   )
 }
 
+/** A small per-player ready/lock indicator row for the concurrent pre-game. */
+function ReadyRoster({
+  players,
+  ready,
+  names,
+}: {
+  players: MatchState['players']
+  ready: boolean[]
+  names: string[]
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+      {players.map((p, i) =>
+        p.out ? null : (
+          <span
+            key={i}
+            className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 ${
+              ready[i] ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-200' : 'border-white/10 bg-white/5 text-white/60'
+            }`}
+          >
+            <span>{ready[i] ? '✓' : '…'}</span>
+            <b className="text-white/85">{names[i]}</b>
+            <span>{ready[i] ? 'ready' : 'choosing'}</span>
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
+
+/** The single concurrent pre-game screen for one player: pick a Battlefield,
+ *  pick a Champion, and set aside up to 2 mulligan cards, then submit Ready. */
+function PregameSelect({
+  match,
+  seat,
+  onAct,
+  names,
+  onInspect,
+  ready,
+  Frame,
+}: {
+  match: MatchState
+  seat: PlayerId
+  onAct: (a: Action) => void
+  names: string[]
+  onInspect: (cardId: string) => void
+  ready: boolean[]
+  Frame: (p: { title: string; subtitle?: string; children?: React.ReactNode }) => React.ReactElement
+}) {
+  const su = match.setup!
+  const me = match.players[seat]
+  const champOpts = su.championOptions[seat] ?? []
+  const bfOpts = su.battlefieldOptions[seat] ?? []
+  const [champ, setChamp] = useState<string | null>(su.championPick[seat] ?? champOpts[0] ?? null)
+  const [bf, setBf] = useState<string | null>(su.battlefieldPick[seat] ?? bfOpts[0] ?? null)
+  const [aside, setAside] = useState<string[]>([])
+  const toggle = (iid: string) =>
+    setAside((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : s.length < 2 ? [...s, iid] : s))
+
+  // Valid to submit: a battlefield is chosen when options exist, a champion is
+  // chosen when options exist, and the mulligan count is within the limit.
+  const champOk = champOpts.length === 0 || champ != null
+  const bfOk = bfOpts.length === 0 || bf != null
+  const valid = champOk && bfOk && aside.length <= 2
+
+  const submit = () =>
+    onAct({
+      type: 'SUBMIT_PREGAME',
+      player: seat,
+      championId: champ,
+      battlefieldId: bf,
+      toBottom: aside,
+    })
+
+  return (
+    <Frame
+      title="Prepare for battle"
+      subtitle={`${names[seat]} — choose your Battlefield & Champion, set aside up to 2 cards, then Ready up.`}
+    >
+      <ReadyRoster players={match.players} ready={ready} names={names} />
+
+      {bfOpts.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">Battlefield</h3>
+          <div className="flex flex-wrap justify-center gap-4">
+            {bfOpts.map((cid) => (
+              <BigCard key={cid} cardId={cid} selected={bf === cid} onClick={() => setBf(cid)} onInspect={() => onInspect(cid)} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {champOpts.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">Chosen Champion</h3>
+          <div className="flex flex-wrap justify-center gap-4">
+            {champOpts.map((cid) => (
+              <BigCard key={cid} cardId={cid} selected={champ === cid} onClick={() => setChamp(cid)} onInspect={() => onInspect(cid)} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">
+          Opening hand · mulligan <span className="text-white/40">({aside.length}/2 set aside)</span>
+        </h3>
+        <div className="flex flex-wrap justify-center gap-3">
+          {me.zones.hand.map((c) => {
+            const card = getCard(c.cardId)
+            const marked = aside.includes(c.iid)
+            return (
+              <div key={c.iid} className="flex flex-col items-center gap-1">
+                <button
+                  onClick={() => toggle(c.iid)}
+                  onDoubleClick={() => onInspect(c.cardId)}
+                  className={`w-24 overflow-hidden rounded-lg border-2 transition hover:-translate-y-1 ${
+                    marked ? 'border-rose-400 opacity-50' : 'border-white/10 hover:border-amber-300/60'
+                  }`}
+                  style={{ aspectRatio: '744/1039' }}
+                  title="Click to set aside · double-click to inspect"
+                >
+                  {card?.imageUrl ? (
+                    <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-[#1c1c28] p-1 text-center text-[10px]">{card?.name ?? c.cardId}</div>
+                  )}
+                </button>
+                <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${marked ? 'bg-rose-500/30 text-rose-200' : 'bg-white/10 text-white/55'}`}>
+                  {marked ? '↩ set aside' : 'keep'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+
+      <button
+        onClick={submit}
+        disabled={!valid}
+        className={`rounded-xl px-10 py-3 text-base font-bold transition ${
+          valid ? 'bg-emerald-500 hover:bg-emerald-400' : 'cursor-not-allowed bg-white/10 text-white/40'
+        }`}
+      >
+        {aside.length ? `Ready (mulligan ${aside.length}) ✓` : 'Ready ✓'}
+      </button>
+    </Frame>
+  )
+}
+
 export default function SetupScreen({
   match,
   onAct,
@@ -178,7 +328,39 @@ export default function SetupScreen({
     )
   }
 
-  // --- Champion selection ---------------------------------------------------
+  // --- Concurrent pre-game: Champion + Battlefield + mulligan, then Ready ----
+  if (su.step === 'select') {
+    // Hotseat (no seat): iterate seats that haven't readied yet, one per device.
+    // Online (seat set): always the local player.
+    const ready = su.ready ?? match.players.map(() => false)
+    const i = seat ?? match.players.findIndex((p, idx) => !p.out && !ready[idx])
+    if (i < 0 || i == null) {
+      // Everyone (hotseat) has readied — barrier waiting on the engine to start.
+      return <Frame title="Starting…"><p className="py-6 text-white/50">All players ready.</p></Frame>
+    }
+    if (ready[i]) {
+      const remaining = match.players.filter((p, idx) => !p.out && !ready[idx]).length
+      return (
+        <Frame title="Ready ✓" subtitle="Waiting for the other players to lock in.">
+          <ReadyRoster players={match.players} ready={ready} names={names} />
+          <p className="py-2 text-white/55">Waiting for {remaining} player{remaining === 1 ? '' : 's'}…</p>
+        </Frame>
+      )
+    }
+    return (
+      <PregameSelect
+        match={match}
+        seat={i}
+        onAct={onAct}
+        names={names}
+        onInspect={(id) => setInspect(id)}
+        ready={ready}
+        Frame={Frame}
+      />
+    )
+  }
+
+  // --- Champion selection (legacy sequential step — unused under concurrent) -
   if (su.step === 'champion') {
     const i = su.championOptions.findIndex((o, idx) => o.length > 1 && su.championPick[idx] == null)
     if (i >= 0) {
