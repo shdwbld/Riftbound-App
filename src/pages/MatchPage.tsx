@@ -488,6 +488,7 @@ export default function MatchPage() {
         onCardAction={(a) => act(a)}
         onActivateUnit={activateUnit}
         onAttachGear={(gearIid) => setAttachPick({ gearIid })}
+        onUndo={undo}
         targetingActive={!!targeting}
         legalTargets={targeting ? activeLegalTargets().filter((id) => !targeting.picked.includes(id)) : undefined}
         targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}

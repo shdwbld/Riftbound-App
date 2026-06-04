@@ -103,6 +103,7 @@ export default function OnlinePage() {
 
   const transportRef = useRef<Transport | null>(null)
   const matchRef = useRef<MatchState | null>(null)
+  const historyRef = useRef<MatchState[]>([]) // host-side undo history (pre-action states)
   const roleRef = useRef<Role>('host')
   const myDeckRef = useRef<Deck | null>(null)
   const clientIdRef = useRef<string>(makeClientId())
@@ -256,11 +257,22 @@ export default function OnlinePage() {
           if (!cur) return
           const { state, error, events } = reduce(cur, msg.action)
           if (error) return
+          historyRef.current.push(cur)
+          if (historyRef.current.length > 100) historyRef.current.shift()
           matchRef.current = state
           setLastEvents(events)
           setMatch(state)
           hostPersist(state)
           t.send({ kind: 'state', state, events })
+        } else if (msg.kind === 'undo') {
+          // A guest asked to undo — pop the host's history and rebroadcast.
+          const prev = historyRef.current.pop()
+          if (!prev) return
+          matchRef.current = prev
+          setLastEvents(undefined)
+          setMatch(prev)
+          hostPersist(prev)
+          t.send({ kind: 'state', state: prev })
         } else if (msg.kind === 'resync') {
           // A reconnecting guest asks for the current match — re-send start + state.
           if (matchRef.current) {
@@ -374,12 +386,29 @@ export default function OnlinePage() {
       if (!cur) return
       const { state, error, events } = reduce(cur, action)
       if (error) return flash(error)
+      historyRef.current.push(cur)
+      if (historyRef.current.length > 100) historyRef.current.shift()
       matchRef.current = state
       setLastEvents(events)
       setMatch(state)
       transportRef.current?.send({ kind: 'state', state, events })
     } else {
       transportRef.current?.send({ kind: 'action', action })
+    }
+  }
+
+  // Multi-step undo. Host pops its history + rebroadcasts; a guest asks the host.
+  const undo = () => {
+    if (roleRef.current === 'host') {
+      const prev = historyRef.current.pop()
+      if (!prev) return flash('Nothing to undo.')
+      matchRef.current = prev
+      setLastEvents(undefined)
+      setMatch(prev)
+      hostPersist(prev)
+      transportRef.current?.send({ kind: 'state', state: prev })
+    } else {
+      transportRef.current?.send({ kind: 'undo' })
     }
   }
 
@@ -691,6 +720,7 @@ export default function OnlinePage() {
         onCardAction={(a) => dispatch(a)}
         onActivateUnit={activateUnit}
         onAttachGear={(gearIid) => setAttachPick({ gearIid })}
+        onUndo={undo}
         targetingActive={!!targeting}
         legalTargets={
           targeting

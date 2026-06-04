@@ -55,6 +55,8 @@ export interface MatchBoardProps {
   onActivateUnit?: (iid: string) => void
   /** Attach an unattached Equipment in base to a unit (page opens a unit picker). */
   onAttachGear?: (gearIid: string) => void
+  /** Revert the last action (multi-step history lives in the page). */
+  onUndo?: () => void
   /** Targeting mode: clicking a legal unit picks it as a spell target. */
   targetingActive?: boolean
   /** The unit iids that are legal targets for the spell being aimed. */
@@ -142,6 +144,7 @@ export default function MatchBoard({
   onCardAction,
   onActivateUnit,
   onAttachGear,
+  onUndo,
   targetingActive,
   legalTargets,
   targetProgress,
@@ -630,6 +633,15 @@ export default function MatchBoard({
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
         panel lands here in Stage 2. On < xl this stacks below the board. */}
     <aside className="space-y-3 xl:w-[340px] xl:shrink-0">
+      {onUndo && (
+        <button
+          onClick={onUndo}
+          title="Revert the last action (multi-step)"
+          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-white/70 hover:bg-white/10"
+        >
+          ↶ Undo
+        </button>
+      )}
       <PlayedCardSpotlight match={match} perspective={perspective} lastPlayed={lastPlayed} />
 
       {/* MIDDLE — Action: turn/priority + Pass, targeting, chain Pass/Counter */}

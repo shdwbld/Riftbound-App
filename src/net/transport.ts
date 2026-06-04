@@ -17,6 +17,8 @@ export type NetMessage =
   | { kind: 'action'; action: Action }
   /** A reconnecting guest asks the host to re-send start + current state. */
   | { kind: 'resync'; clientId: string }
+  /** A guest asks the host to undo the last action (manual fail-safe). */
+  | { kind: 'undo' }
   | { kind: 'leave' }
 
 export interface Transport {
