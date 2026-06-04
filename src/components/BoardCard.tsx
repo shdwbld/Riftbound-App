@@ -3,6 +3,9 @@ import { getCard } from '../data/cards'
 import { isUnit, type Card } from '../types/cards'
 import { parseKeywords, levelBonus } from '../engine/keywords'
 
+/** Manual sandbox status-marker dot colors, indexed 1–4 (0/undefined = none). */
+const MARKER_COLORS = ['', 'bg-rose-500', 'bg-amber-400', 'bg-emerald-400', 'bg-sky-400']
+
 /** Compact combat/status keyword badges for an in-play unit. */
 function keywordBadges(def: Card): { label: string; title: string; cls: string }[] {
   const k = parseKeywords(def)
@@ -107,6 +110,14 @@ export default function BoardCard({
       {(ci as { stunned?: boolean }).stunned && !faceDown && (
         <span className="stun-stars" aria-hidden>💫</span>
       )}
+      {/* Manual status marker (sandbox): a colored dot in the top-right corner. */}
+      {(ci as { marker?: number }).marker ? (
+        <span
+          className={`absolute right-0 top-0 m-0.5 h-2.5 w-2.5 rounded-full shadow ring-1 ring-black/60 ${MARKER_COLORS[(ci as { marker?: number }).marker!] ?? 'bg-white'}`}
+          title={`Status marker ${(ci as { marker?: number }).marker}`}
+          aria-hidden
+        />
+      ) : null}
       {def && isUnit(def) && !faceDown && (() => {
         const base = effectiveMight(ci, def.might)
         const lvl = levelBonus(def, xp)

@@ -5285,4 +5285,16 @@ describe('Manual override — grant flags / setDamage / readyAll', () => {
     expect(r.error).toBeFalsy()
     expect(r.state.players[0].zones.hand.length).toBe(before + 1)
   })
+
+  it('marker cycles and clears', () => {
+    const s = baseState(); s.sandbox = true
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'marker', iid: u.iid })
+    expect(r.state.battlefields[0].units[0].marker).toBe(1)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'marker', iid: u.iid })
+    expect(r.state.battlefields[0].units[0].marker).toBe(2)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'marker', iid: u.iid, value: -1 })
+    expect(r.state.battlefields[0].units[0].marker).toBeUndefined()
+  })
 })

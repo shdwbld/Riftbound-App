@@ -372,6 +372,8 @@ export default function MatchBoard({
           { label: 'Clear summoning sickness', action: ov('grant', { flag: 'sickness' }) },
           { label: "Clear can't-move", action: ov('grant', { flag: 'cantmove' }) },
           { label: '⚡ Re-fire enter triggers', action: ov('triggerEnterPlay') },
+          { label: '◍ Cycle marker', action: ov('marker') },
+          { label: '○ Clear marker', action: ov('marker', { value: -1 }) },
         )
         if (zone === 'battlefield') statuses.push({ label: '↩ Recall to base (exhaust)', action: ov('toBase') })
         groups.push({ label: 'Might & damage', items: [

@@ -5173,6 +5173,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         case 'mill': { const p = s.players[action.player]; const n = action.amount ?? 1; if (p) for (let i = 0; i < n && p.zones.mainDeck.length; i++) p.zones.trash.push(p.zones.mainDeck.shift()!); break }
         case 'damage': { if (u) u.damage = Math.max(0, (u.damage ?? 0) + (action.amount ?? 1)); break }
         case 'setDamage': { if (u) u.damage = Math.max(0, action.value ?? 0); break }
+        // Cosmetic status marker (1–4 colored dot). No value = cycle 0→1→2→3→4→0;
+        // value < 0 clears. No engine behavior — a manual visual reminder.
+        case 'marker': { if (u) { const v = action.value != null ? (action.value < 0 ? 0 : action.value) : ((u.marker ?? 0) + 1) % 5; u.marker = v || undefined } break }
         case 'grant': {
           if (!u) break
           switch (action.flag) {
