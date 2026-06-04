@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { getCard } from '../data/cards'
 import type { MatchState, Action, PlayerId } from '../engine/types'
 import CardDetailModal from './CardDetailModal'
+import MulliganHand from './MulliganHand'
 
 // Pre-game setup (Core Rules §111–120): roll for turn order → the winner chooses
 // the First Player → each player picks their Chosen Champion (when a variant
@@ -88,8 +89,11 @@ function ReadyRoster({
   )
 }
 
-/** The single concurrent pre-game screen for one player: pick a Battlefield,
- *  pick a Champion, and set aside up to 2 mulligan cards, then submit Ready. */
+/** The pre-game screens for one player, as a local 3-step wizard: Battlefield →
+ *  Champion → Mulligan, one focused screen at a time (the old, uncluttered look).
+ *  A step with only one option is skipped (auto-used); Mulligan always shows. All
+ *  players run their own wizard concurrently; finishing dispatches the single
+ *  SUBMIT_PREGAME, after which the parent shows the "waiting" view. */
 function PregameSelect({
   match,
   seat,
@@ -117,93 +121,89 @@ function PregameSelect({
   const toggle = (iid: string) =>
     setAside((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : s.length < 2 ? [...s, iid] : s))
 
-  // Valid to submit: a battlefield is chosen when options exist, a champion is
-  // chosen when options exist, and the mulligan count is within the limit.
-  const champOk = champOpts.length === 0 || champ != null
-  const bfOk = bfOpts.length === 0 || bf != null
-  const valid = champOk && bfOk && aside.length <= 2
+  // Only show a selection screen where there's a real choice; a single-option
+  // battlefield/champion is auto-used (the pick is already initialised above).
+  // Mulligan always shows and is always last.
+  const steps: ('battlefield' | 'champion' | 'mulligan')[] = [
+    ...(bfOpts.length > 1 ? (['battlefield'] as const) : []),
+    ...(champOpts.length > 1 ? (['champion'] as const) : []),
+    'mulligan',
+  ]
+  const [stepIdx, setStepIdx] = useState(0)
+  const idx = Math.min(stepIdx, steps.length - 1)
+  const step = steps[idx]
 
   const submit = () =>
-    onAct({
-      type: 'SUBMIT_PREGAME',
-      player: seat,
-      championId: champ,
-      battlefieldId: bf,
-      toBottom: aside,
-    })
+    onAct({ type: 'SUBMIT_PREGAME', player: seat, championId: champ, battlefieldId: bf, toBottom: aside })
 
+  const back =
+    idx > 0 ? (
+      <button onClick={() => setStepIdx(idx - 1)} className="rounded-xl bg-white/10 px-6 py-3 text-sm font-semibold hover:bg-white/20">
+        ◀ Back
+      </button>
+    ) : null
+  const stepLabel = `Step ${idx + 1} of ${steps.length}`
+
+  if (step === 'battlefield') {
+    return (
+      <Frame title="Choose your Battlefield" subtitle={`${names[seat]} — ${stepLabel}. Pick the battlefield you bring to the row.`}>
+        <ReadyRoster players={match.players} ready={ready} names={names} />
+        <div className="flex flex-wrap justify-center gap-6">
+          {bfOpts.map((cid) => (
+            <BigCard key={cid} cardId={cid} selected={bf === cid} onClick={() => setBf(cid)} onInspect={() => onInspect(cid)} />
+          ))}
+        </div>
+        <div className="flex items-center justify-center gap-3">
+          {back}
+          <button
+            onClick={() => setStepIdx(idx + 1)}
+            disabled={bf == null}
+            className={`rounded-xl px-8 py-3 text-base font-bold transition ${bf != null ? 'bg-indigo-500 hover:bg-indigo-400' : 'cursor-not-allowed bg-white/10 text-white/40'}`}
+          >
+            Next ▶
+          </button>
+        </div>
+      </Frame>
+    )
+  }
+
+  if (step === 'champion') {
+    return (
+      <Frame title="Choose your Champion" subtitle={`${names[seat]} — ${stepLabel}. Pick the Chosen Champion you start with.`}>
+        <ReadyRoster players={match.players} ready={ready} names={names} />
+        <div className="flex flex-wrap justify-center gap-6">
+          {champOpts.map((cid) => (
+            <BigCard key={cid} cardId={cid} selected={champ === cid} onClick={() => setChamp(cid)} onInspect={() => onInspect(cid)} />
+          ))}
+        </div>
+        <div className="flex items-center justify-center gap-3">
+          {back}
+          <button
+            onClick={() => setStepIdx(idx + 1)}
+            disabled={champ == null}
+            className={`rounded-xl px-8 py-3 text-base font-bold transition ${champ != null ? 'bg-indigo-500 hover:bg-indigo-400' : 'cursor-not-allowed bg-white/10 text-white/40'}`}
+          >
+            Next ▶
+          </button>
+        </div>
+      </Frame>
+    )
+  }
+
+  // Mulligan (always the final step) — the classic hover-preview + BoardCard look.
   return (
     <Frame
-      title="Prepare for battle"
-      subtitle={`${names[seat]} — choose your Battlefield & Champion, set aside up to 2 cards, then Ready up.`}
+      title="Choose your mulligan"
+      subtitle={`${names[seat]} — ${stepLabel}. Set aside up to 2 cards (sent to the bottom, then redraw that many). ${aside.length}/2 marked.`}
     >
       <ReadyRoster players={match.players} ready={ready} names={names} />
-
-      {bfOpts.length > 0 && (
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">Battlefield</h3>
-          <div className="flex flex-wrap justify-center gap-4">
-            {bfOpts.map((cid) => (
-              <BigCard key={cid} cardId={cid} selected={bf === cid} onClick={() => setBf(cid)} onInspect={() => onInspect(cid)} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {champOpts.length > 0 && (
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">Chosen Champion</h3>
-          <div className="flex flex-wrap justify-center gap-4">
-            {champOpts.map((cid) => (
-              <BigCard key={cid} cardId={cid} selected={champ === cid} onClick={() => setChamp(cid)} onInspect={() => onInspect(cid)} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-white/55">
-          Opening hand · mulligan <span className="text-white/40">({aside.length}/2 set aside)</span>
-        </h3>
-        <div className="flex flex-wrap justify-center gap-3">
-          {me.zones.hand.map((c) => {
-            const card = getCard(c.cardId)
-            const marked = aside.includes(c.iid)
-            return (
-              <div key={c.iid} className="flex flex-col items-center gap-1">
-                <button
-                  onClick={() => toggle(c.iid)}
-                  onDoubleClick={() => onInspect(c.cardId)}
-                  className={`w-24 overflow-hidden rounded-lg border-2 transition hover:-translate-y-1 ${
-                    marked ? 'border-rose-400 opacity-50' : 'border-white/10 hover:border-amber-300/60'
-                  }`}
-                  style={{ aspectRatio: '744/1039' }}
-                  title="Click to set aside · double-click to inspect"
-                >
-                  {card?.imageUrl ? (
-                    <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-[#1c1c28] p-1 text-center text-[10px]">{card?.name ?? c.cardId}</div>
-                  )}
-                </button>
-                <span className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${marked ? 'bg-rose-500/30 text-rose-200' : 'bg-white/10 text-white/55'}`}>
-                  {marked ? '↩ set aside' : 'keep'}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
-      <button
-        onClick={submit}
-        disabled={!valid}
-        className={`rounded-xl px-10 py-3 text-base font-bold transition ${
-          valid ? 'bg-emerald-500 hover:bg-emerald-400' : 'cursor-not-allowed bg-white/10 text-white/40'
-        }`}
-      >
-        {aside.length ? `Ready (mulligan ${aside.length}) ✓` : 'Ready ✓'}
-      </button>
+      <MulliganHand hand={me.zones.hand} aside={aside} onToggle={toggle} onInspect={onInspect} />
+      <div className="flex items-center justify-center gap-3">
+        {back}
+        <button onClick={submit} className="rounded-xl bg-emerald-500 px-10 py-3 text-base font-bold transition hover:bg-emerald-400">
+          {aside.length ? `Ready (mulligan ${aside.length}) ✓` : 'Ready ✓'}
+        </button>
+      </div>
     </Frame>
   )
 }
@@ -339,16 +339,17 @@ export default function SetupScreen({
       return <Frame title="Starting…"><p className="py-6 text-white/50">All players ready.</p></Frame>
     }
     if (ready[i]) {
-      const remaining = match.players.filter((p, idx) => !p.out && !ready[idx]).length
+      const waitingNames = match.players.flatMap((p, idx) => (!p.out && !ready[idx] ? [names[idx]] : [])).join(', ')
       return (
         <Frame title="Ready ✓" subtitle="Waiting for the other players to lock in.">
           <ReadyRoster players={match.players} ready={ready} names={names} />
-          <p className="py-2 text-white/55">Waiting for {remaining} player{remaining === 1 ? '' : 's'}…</p>
+          <p className="py-2 text-white/55">{waitingNames ? `Waiting for ${waitingNames}…` : 'All players ready — starting…'}</p>
         </Frame>
       )
     }
     return (
       <PregameSelect
+        key={i}
         match={match}
         seat={i}
         onAct={onAct}

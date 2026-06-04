@@ -11,7 +11,7 @@ import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../en
 import { needsTarget, spellEffect } from '../engine/effects'
 import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
-import BoardCard from '../components/BoardCard'
+import MulliganHand from '../components/MulliganHand'
 import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
 import PaymentModal from '../components/PaymentModal'
@@ -712,12 +712,9 @@ export function MulliganView({
 }) {
   const [aside, setAside] = useState<string[]>([])
   const [view, setView] = useState<Card | null>(null)
-  const [hover, setHover] = useState<string | null>(null)
   if (!pending) return null
   const toggle = (iid: string) =>
     setAside((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : s.length < 2 ? [...s, iid] : s))
-  const previewId = hover ?? pending.zones.hand[0]?.cardId
-  const preview = previewId ? getCard(previewId) : null
   return (
     <div className="mx-auto max-w-5xl space-y-6 py-8 text-center">
       <div>
@@ -728,48 +725,7 @@ export function MulliganView({
         </p>
       </div>
 
-      <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start sm:justify-center">
-        {/* Hover preview area */}
-        <div className="hidden w-56 shrink-0 sm:block">
-          {preview?.imageUrl ? (
-            <img src={preview.imageUrl} alt={preview.name} className="w-full rounded-2xl shadow-2xl" style={{ aspectRatio: '744/1039', objectFit: 'cover' }} />
-          ) : (
-            <div className="flex w-full items-center justify-center rounded-2xl bg-[#1c1c28] p-4" style={{ aspectRatio: '744/1039' }}>
-              {preview?.name}
-            </div>
-          )}
-          <div className="mt-2 text-sm font-semibold">{preview?.name}</div>
-        </div>
-
-        {/* The opening hand — big cards */}
-        <div className="flex flex-wrap justify-center gap-4">
-          {pending.zones.hand.map((c) => (
-            <div
-              key={c.iid}
-              className="flex flex-col items-center gap-2"
-              onMouseEnter={() => setHover(c.cardId)}
-            >
-              <button
-                onClick={() => toggle(c.iid)}
-                onDoubleClick={() => setView(getCard(c.cardId) ?? null)}
-                className={`w-28 rounded-xl transition hover:-translate-y-1 ${
-                  aside.includes(c.iid) ? 'opacity-50 ring-2 ring-rose-400' : 'ring-1 ring-white/10 hover:ring-amber-300/60'
-                }`}
-                title="Click to set aside · double-click to inspect"
-              >
-                <BoardCard ci={c} />
-              </button>
-              <span
-                className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
-                  aside.includes(c.iid) ? 'bg-rose-500/30 text-rose-200' : 'bg-white/10 text-white/60'
-                }`}
-              >
-                {aside.includes(c.iid) ? '↩ set aside' : 'keep'}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <MulliganHand hand={pending.zones.hand} aside={aside} onToggle={toggle} onInspect={(cardId) => setView(getCard(cardId) ?? null)} />
 
       <div className="flex items-center justify-center gap-3">
         <button
