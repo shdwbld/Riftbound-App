@@ -88,6 +88,8 @@ export default function OnlinePage() {
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending "Equip to a unit" choice for an unattached gear in base.
   const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
+  // Pending play destination for a unit whose rules let it enter a battlefield.
+  const [destPick, setDestPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
   const [seat, setSeat] = useState<PlayerId>(0)
@@ -558,6 +560,21 @@ export default function OnlinePage() {
         })
         return
       }
+      // Cards whose rules let them be played to a battlefield (Blitzcrank, Mischievous
+      // Marai, Shadow): offer Base vs each battlefield — card rules override "enter base".
+      if (/play (?:me|this) to (?:a|an|any|its)?\s*battlefield/i.test(card.text ?? '') && match.battlefields.length > 0) {
+        setDestPick({
+          iid: c.iid,
+          payment,
+          accelerate,
+          payAdditionalCost,
+          options: [
+            { label: '🏠 Base (bench)', value: -1 },
+            ...match.battlefields.map((bf, i) => ({ label: getCard(bf.cardId)?.name ?? `Battlefield ${i + 1}`, value: i })),
+          ],
+        })
+        return
+      }
       dispatch({ type, player: seat, iid: c.iid, payment, accelerate, payAdditionalCost })
     } else if (type === 'PLAY_SPELL') dispatch({ type, player: seat, iid: c.iid, payment, repeat })
     else dispatch({ type, player: seat, iid: c.iid, payment })
@@ -757,6 +774,20 @@ export default function OnlinePage() {
           />
         )
       })()}
+      {destPick && (
+        <ChoiceModal
+          title="✦ Where to play?"
+          subtitle="This unit's rules let it enter a battlefield, or stay on your base."
+          options={destPick.options}
+          onPick={(v) => {
+            const d = destPick
+            setDestPick(null)
+            const toBf = Number(v)
+            dispatch({ type: 'PLAY_UNIT', player: seat, iid: d.iid, payment: d.payment, accelerate: d.accelerate, payAdditionalCost: d.payAdditionalCost, ...(toBf >= 0 ? { toBattlefield: toBf } : {}) })
+          }}
+          onCancel={() => setDestPick(null)}
+        />
+      )}
       {match.pendingChoice && match.pendingChoice.player === seat && (
         <ChoiceModal
           title="✦ Battlefield"

@@ -5069,6 +5069,39 @@ describe('Playtest Pass 2 — optional additional cost (you may pay X to play me
   })
 })
 
+describe('Playtest Pass 2 — play a unit straight to a battlefield', () => {
+  it('places a "play me to a battlefield" unit at the chosen battlefield', () => {
+    const blitz = injectCard('ptb-blitz', 'When you play me to a battlefield, deal 1 to an enemy unit.', { type: 'unit', energy: 0, power: {}, might: 4 })
+    const s = baseState()
+    const u = mk(blitz, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] }, toBattlefield: 1 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[1].units.some((x) => x.iid === u.iid)).toBe(true) // at bf1
+    expect(r.state.players[0].zones.base.some((x) => x.iid === u.iid)).toBe(false) // not in base
+  })
+
+  it('opens a showdown when played into a contested battlefield', () => {
+    const blitz = injectCard('ptb-blitz2', 'When you play me to a battlefield, deal 1 to an enemy unit.', { type: 'unit', energy: 0, power: {}, might: 4 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('ptb-def', 'A unit.', { type: 'unit', might: 2 }), 1)], controller: 1 }
+    const u = mk(blitz, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] }, toBattlefield: 0 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.phase).toBe('showdown') // becomes present → contested → showdown
+  })
+
+  it('ignores toBattlefield for a vanilla unit (still enters base)', () => {
+    const s = baseState()
+    const u = mk(injectCard('ptb-vanilla', 'A unit.', { type: 'unit', energy: 0, power: {}, might: 4 }), 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] }, toBattlefield: 1 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.some((x) => x.iid === u.iid)).toBe(true) // base, not bf1
+  })
+})
+
 describe('Playtest Pass 2 — equip an unattached gear from base (ATTACH)', () => {
   it('attaches a base gear to a unit and grants its static Might bonus', () => {
     const sword = injectCard('atc-sword', '[Equip] :rb_rune_fury: (:rb_rune_fury:: Attach this to a unit you control.) I have +2 :rb_might:.', { type: 'gear', energy: 0, power: {} })

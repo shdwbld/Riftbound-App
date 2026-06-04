@@ -4317,10 +4317,20 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Ambush: a Reaction unit enters directly at a contested battlefield. Stalking
         // Wolf may also enter at the battlefield of the unit it killed (even alone).
         const ambushBf = kw.ambush ? (action.toBattlefield ?? (killCostBf >= 0 ? killCostBf : null)) : null
-        if (ambushBf != null) {
-          s.battlefields[ambushBf].units.push({ ...ci, exhausted: false, enteredTurn: s.turn })
+        // A non-Ambush unit whose rules let it be played straight to a battlefield
+        // (Blitzcrank - Impassive, Mischievous Marai, Shadow). Honoured only when the
+        // player chose a destination. Shadow "enters ready" when played to a battlefield.
+        const canPlayToBf = !kw.ambush && /play (?:me|this) to (?:a|an|any|its)?\s*battlefield/i.test(card.text ?? '')
+        const playToBf = canPlayToBf && action.toBattlefield != null ? action.toBattlefield : null
+        const enterBf = ambushBf != null ? ambushBf : playToBf
+        const priorBfController = enterBf != null ? s.battlefields[enterBf].controller : null
+        if (enterBf != null) {
+          // Ambush always enters ready; a play-to-battlefield enters ready only if it
+          // otherwise would (Accelerate/Level) or its own "enter ready" rule applies.
+          const readyHere = ambushBf != null || entersReady || /if you play (?:me|this) to a battlefield, i enters? ready/i.test(card.text ?? '')
+          s.battlefields[enterBf].units.push({ ...ci, exhausted: !readyHere, enteredTurn: s.turn })
           recomputeControllers(s)
-          bfUnitPlayedHere(s, action.player, ambushBf, ci.iid) // Valley of Idols / Star Spring
+          bfUnitPlayedHere(s, action.player, enterBf, ci.iid) // Valley of Idols / Star Spring
         } else {
           p.zones.base.push({ ...ci, exhausted: !entersReady, enteredTurn: s.turn })
         }
@@ -4328,7 +4338,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         let s1 = log(
           s,
           action.player,
-          `Played ${card.name}${ambushBf != null ? ' (Ambush)' : accelChosen ? ' (ready · Accelerate)' : levelReady ? ' (ready · Level)' : ''}.`,
+          `Played ${card.name}${ambushBf != null ? ' (Ambush)' : playToBf != null ? ` to ${bfBaseNameAt(s, playToBf) || `Battlefield ${playToBf + 1}`}` : accelChosen ? ' (ready · Accelerate)' : levelReady ? ' (ready · Level)' : ''}.`,
         )
         // Pay the required kill cost now that the unit is in play.
         if (killCostVictim) {
@@ -4435,6 +4445,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
         s1 = fireOpponentUnitPlay(s1, action.player, ci.iid) // Vex - Apathetic
+        // A non-Ambush unit played straight to a battlefield "becomes present" there
+        // → contested ⇒ a showdown opens (or a control flip awards the conquer).
+        if (playToBf != null) s1 = showdownOrConquerAfterEffectMove(s1, playToBf, ci.iid, priorBfController)
         return ok(s1)
       }
 
