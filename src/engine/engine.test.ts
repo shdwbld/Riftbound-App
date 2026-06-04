@@ -1343,6 +1343,21 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.base.find((x) => x.iid === em.iid)?.tempMight).toBe(2)
   })
 
+  it('Weaponmaster: re-seats an already-attached gear when none in hand/base (P3)', () => {
+    const wm = injectCard('wm-reseat-t', "[Weaponmaster] (When you play me, you may [Equip] one of your Equipment to me, even if it's already attached.)", { type: 'unit', energy: 0, power: {}, might: 4 })
+    const gear = injectCard('wm-gear', 'A gear.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const g = mk(gear, 0)
+    const otherUnit = mk(furyUnit.id, 0, { attached: [`${gear}|${g.iid}`] })
+    s.players[0].zones.base.push(otherUnit)
+    const u = mk(wm, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true) // re-seated to the new unit
+    expect(r.state.players[0].zones.base.find((x) => x.iid === otherUnit.iid)?.attached.length).toBe(0) // taken from the other unit
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return

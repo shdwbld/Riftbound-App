@@ -4111,18 +4111,38 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         if (e.manual && !e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
-        // Weaponmaster: auto-attach a piece of gear from your hand on entry.
-        // May be granted owner-wide (Azir - Emperor of the Sands → Sand Soldiers).
+        // Weaponmaster: auto-attach a piece of Equipment on entry. May be granted
+        // owner-wide (Azir - Emperor of the Sands → Sand Soldiers). Prefers a gear in
+        // hand, then a detached gear in base, then RE-SEATS one already attached to
+        // another friendly unit ("even if it's already attached"). (The "[Equip] for
+        // one rainbow less" cost is treated as free here — a balance nicety, deferred.)
         if (kw.weaponmaster || unitGrantedKeyword(s1, ci, 'weaponmaster')) {
-          const gearCi = p.zones.hand.find((c) => getCard(c.cardId)?.type === 'gear')
           const target = p.zones.base.find((u) => u.iid === ci.iid)
-          if (gearCi && target) {
-            removeFromZone(p, 'hand', gearCi.iid)
-            target.attached = [...target.attached, `${gearCi.cardId}|${gearCi.iid}`]
-            emit({ kind: 'buff', iid: target.iid, player: action.player, cardId: gearCi.cardId })
-            s1 = log(s1, action.player, `Weaponmaster: attached ${getCard(gearCi.cardId)?.name} to ${card.name}.`)
+          let attachRef: string | undefined
+          const handGear = p.zones.hand.find((c) => getCard(c.cardId)?.type === 'gear')
+          const baseGear = p.zones.base.find((c) => getCard(c.cardId)?.type === 'gear' && c.iid !== ci.iid)
+          if (target && handGear) {
+            removeFromZone(p, 'hand', handGear.iid)
+            attachRef = `${handGear.cardId}|${handGear.iid}`
+          } else if (target && baseGear) {
+            removeFromZone(p, 'base', baseGear.iid)
+            attachRef = `${baseGear.cardId}|${baseGear.iid}`
+          } else if (target) {
+            for (const host of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)]) {
+              if (host.owner !== action.player || host.iid === ci.iid || !host.attached.length) continue
+              const [ref] = host.attached.splice(0, 1)
+              attachRef = ref
+              break
+            }
+          }
+          if (target && attachRef) {
+            target.attached = [...target.attached, attachRef]
+            const gCid = attachRef.split('|')[0]
+            emit({ kind: 'buff', iid: target.iid, player: action.player, cardId: gCid })
+            s1 = fireAttachEquip(s1, action.player, target)
+            s1 = log(s1, action.player, `Weaponmaster: attached ${getCard(gCid)?.name} to ${card.name}.`)
           } else {
-            s1 = log(s1, action.player, `Weaponmaster: no Equipment in hand to attach.`)
+            s1 = log(s1, action.player, `Weaponmaster: no Equipment available to attach.`)
           }
         }
         s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
