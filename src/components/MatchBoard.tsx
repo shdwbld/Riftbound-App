@@ -406,6 +406,33 @@ export default function MatchBoard({
       setMenu({ x: e.clientX, y: e.clientY, items, groups: groups.length ? groups : undefined })
     }
   }
+
+  /** Right-click a ZONE (not a card) — quick sandbox actions for that pile.
+   *  Native menu is already suppressed at the board root; this adds function. */
+  const openZoneMenu = (e: React.MouseEvent, kind: 'deck' | 'runeDeck' | 'base' | 'hand' | 'battlefield', owner: PlayerId) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!onCardAction || !match.sandbox) return
+    const O = (op: OverrideOp, extra: Record<string, unknown> = {}): Action => ({ type: 'OVERRIDE', player: owner, op, ...extra }) as Action
+    const items: MenuItem[] = []
+    if (kind === 'deck') {
+      items.push({ label: '🛠 Draw 1', action: O('draw') })
+      items.push({ label: '🛠 Draw 3', action: O('draw', { amount: 3 }) })
+      items.push({ label: '🛠 Mill 1', action: O('mill', { amount: 1 }) })
+      items.push({ label: '🛠 Shuffle deck', action: O('shuffle') })
+    } else if (kind === 'runeDeck') {
+      items.push({ label: '🛠 Channel 1', action: O('channel') })
+      items.push({ label: '🛠 Channel 3', action: O('channel', { amount: 3 }) })
+    } else if (kind === 'hand') {
+      items.push({ label: '🛠 Draw 1', action: O('draw') })
+      items.push({ label: '🛠 Draw 3', action: O('draw', { amount: 3 }) })
+    } else {
+      // base / battlefield
+      items.push({ label: '🛠 Ready all units', action: O('readyAll') })
+    }
+    setDrill(null)
+    setMenu({ x: e.clientX, y: e.clientY, items })
+  }
   // Opponents in seating order, starting just after the local player.
   const opponents: PlayerState[] = []
   for (let i = 1; i < match.players.length; i++)
@@ -479,7 +506,7 @@ export default function MatchBoard({
               : { text: `${activeName}'s turn`, cls: 'border-white/15 bg-white/5 text-white/60' }
 
   return (
-    <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
+    <div className="flex flex-col gap-3 xl:flex-row xl:items-start" onContextMenu={(e) => e.preventDefault()}>
     {/* FAR-LEFT — manual override panel (sandbox only) */}
     {match.sandbox && onCardAction && <OverridePanel match={match} perspective={perspective} onAct={onCardAction} />}
     {/* CENTER — the board */}
@@ -621,6 +648,7 @@ export default function MatchBoard({
         endTurnNeedsConfirm={hasUnplayedOptions}
         onConcede={onConcede}
         onContext={onCardAction ? openMenu : undefined}
+        onZoneContext={onCardAction && match.sandbox ? (e, kind) => openZoneMenu(e, kind, perspective) : undefined}
         onRevealTop={onCardAction ? () => onCardAction({ type: 'REVEAL_TOP', player: perspective }) : undefined}
         canPlayIid={(iid) => canPlay(match, perspective, iid)}
         fx={fx}
@@ -1186,6 +1214,7 @@ function PlayerMat({
   endTurnNeedsConfirm,
   onConcede,
   onContext,
+  onZoneContext,
   onRevealTop,
   canPlayIid,
   fx,
@@ -1210,6 +1239,7 @@ function PlayerMat({
   endTurnNeedsConfirm?: boolean
   onConcede?: () => void
   onContext?: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'legend' | 'champion') => void
+  onZoneContext?: (e: React.MouseEvent, kind: 'deck' | 'runeDeck' | 'base' | 'hand') => void
   onRevealTop?: () => void
   canPlayIid: (iid: string) => { valid: boolean; reason?: string }
   fx: Fx
@@ -1399,7 +1429,7 @@ function PlayerMat({
         </div>
 
         {/* Base: Units + Gears */}
-        <div className="pm-zone pm-baseunits">
+        <div className="pm-zone pm-baseunits" onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('pm-zone-label')) onZoneContext(e, 'base') } : undefined}>
           <div className="pm-zone-label mb-1">Base: Units + Gears ({me.zones.base.length})</div>
           <div className="flex min-h-[80px] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'base' }, onMoveOverride)}>
         {me.zones.base.map((u) => {
@@ -1452,7 +1482,7 @@ function PlayerMat({
         </div>
 
         {/* Main Deck */}
-        <div className="pm-zone pm-maindeck flex flex-col items-center justify-center gap-1" {...dropTgt(dndOn, { toZone: 'mainDeck' }, onMoveOverride)}>
+        <div className="pm-zone pm-maindeck flex flex-col items-center justify-center gap-1" {...dropTgt(dndOn, { toZone: 'mainDeck' }, onMoveOverride)} onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'deck') : undefined}>
           <div className="pm-zone-label self-start">Main Deck</div>
           <button onClick={onRevealTop} title="Reveal top card" className="rounded transition hover:ring-2 hover:ring-indigo-400/50">
             <CardBack size="sm" count={me.zones.mainDeck.length} />
@@ -1470,7 +1500,7 @@ function PlayerMat({
         </div>
 
         {/* Rune Deck */}
-        <div className="pm-zone pm-runedeck flex flex-col items-center justify-center gap-1">
+        <div className="pm-zone pm-runedeck flex flex-col items-center justify-center gap-1" onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'runeDeck') : undefined}>
           <div className="pm-zone-label self-start">Rune Deck</div>
           <CardBack size="sm" count={me.zones.runeDeck.length} />
         </div>
@@ -1538,9 +1568,9 @@ function PlayerMat({
       </div>
 
       {/* Hand strip (below the mat) */}
-      <div className="rounded-xl border border-amber-600/25 bg-[#0c1322]/70 p-2">
+      <div className="rounded-xl border border-amber-600/25 bg-[#0c1322]/70 p-2" onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('pm-zone-label')) onZoneContext(e, 'hand') } : undefined}>
         <div className="pm-zone-label mb-1">Hand ({me.zones.hand.length})</div>
-        <div className="flex min-h-[80px] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'hand' }, onMoveOverride)}>
+        <div className="flex min-h-[80px] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'hand' }, onMoveOverride)} onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget) onZoneContext(e, 'hand') } : undefined}>
         {me.zones.hand.map((c) => {
           const check = canPlayIid(c.iid)
           // Greyable only when it's a context where playing is conceivable
