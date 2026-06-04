@@ -286,7 +286,7 @@ function banishCard(p: PlayerState, card: EngineCard): void {
 }
 
 /** Create N Recruit tokens onto a player's Base (from card effects). */
-function spawnRecruits(p: PlayerState, n: number, turn: number): number {
+function spawnRecruits(p: PlayerState, n: number, turn: number, ready = false): number {
   const id = TOKEN_PILE_IDS[0]
   if (!id) return 0
   for (let i = 0; i < n; i++)
@@ -294,7 +294,7 @@ function spawnRecruits(p: PlayerState, n: number, turn: number): number {
       iid: `${p.id}:tok:${id}#${(tokenCounter++).toString(36)}`,
       cardId: id,
       owner: p.id,
-      exhausted: true,
+      exhausted: !ready, // Renata Glasc - Industrialist: "Your tokens enter ready."
       damage: 0,
       attached: [],
       enteredTurn: turn,
@@ -304,14 +304,14 @@ function spawnRecruits(p: PlayerState, n: number, turn: number): number {
 
 /** Create N Gold gear tokens onto a player's Base, exhausted (from card effects).
  *  A Gold token can be cashed in (killed) for 1 Power of any domain. */
-function spawnGold(p: PlayerState, n: number, turn: number): number {
+function spawnGold(p: PlayerState, n: number, turn: number, ready = false): number {
   if (!GOLD_TOKEN_ID) return 0
   for (let i = 0; i < n; i++)
     p.zones.base.push({
       iid: `${p.id}:tok:${GOLD_TOKEN_ID}#${(tokenCounter++).toString(36)}`,
       cardId: GOLD_TOKEN_ID,
       owner: p.id,
-      exhausted: true,
+      exhausted: !ready, // Renata Glasc - Industrialist: "Your tokens enter ready."
       damage: 0,
       attached: [],
       enteredTurn: turn,
@@ -476,13 +476,16 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     lines.push(`Scored ${e.score} point(s).`)
     if (s.winner == null && p.points >= s.pointsToWin) { s.winner = p.id; s.phase = 'gameover' }
   }
-  if (e.recruits) lines.push(`Created ${spawnRecruits(p, e.recruits, s.turn)} Recruit(s).`)
-  if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn)} Gold token(s).`)
+  // Recruit / named tokens are token UNITS — Zilean doubles the count (once/turn)
+  // and Renata makes them enter ready. Gold are gear tokens (Renata-ready only).
+  if (e.recruits) lines.push(`Created ${spawnRecruits(p, zileanDouble(s, p.id, e.recruits), s.turn, tokensEnterReady(s, p.id))} Recruit(s).`)
+  if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
   if (e.namedToken) {
     // "… here" plays the token at the source unit's battlefield; otherwise base.
     const hereBf = e.namedToken.here ? bfIndexOfUnit(s, sourceIid) : -1
     const dest = hereBf >= 0 ? s.battlefields[hereBf].units : undefined
-    const made = spawnNamedToken(p, e.namedToken.name, e.namedToken.count, s.turn, e.namedToken.exhausted, e.namedToken.temporary, dest)
+    const exh = e.namedToken.exhausted && !tokensEnterReady(s, p.id)
+    const made = spawnNamedToken(p, e.namedToken.name, zileanDouble(s, p.id, e.namedToken.count), s.turn, exh, e.namedToken.temporary, dest)
     if (made) {
       if (hereBf >= 0) recomputeControllers(s)
       const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
@@ -1271,6 +1274,25 @@ function controlsUnitNamed(s: MatchState, player: PlayerId, name: string): boole
   )
 }
 
+/** Renata Glasc - Industrialist: "Your tokens enter ready." */
+function tokensEnterReady(s: MatchState, player: PlayerId): boolean {
+  return controlsUnitNamed(s, player, 'Renata Glasc - Industrialist')
+}
+
+/** Zilean - Time Mage: "Once each turn, if you would play a token UNIT while I'm at
+ *  a battlefield, you may play that token and an additional copy instead." Returns
+ *  the (possibly doubled) count and marks the once-per-turn use. Gold (gear) tokens
+ *  don't count — only token units. */
+function zileanDouble(s: MatchState, player: PlayerId, n: number): number {
+  const p = s.players[player]
+  if (p.zileanDoubledThisTurn || n <= 0) return n
+  const baseNm = (x: string | undefined) => (x ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
+  const atBf = s.battlefields.some((b) => b.units.some((u) => u.owner === player && baseNm(getCard(u.cardId)?.name) === 'Zilean - Time Mage'))
+  if (!atBf) return n
+  p.zileanDoubledThisTurn = true
+  return n * 2
+}
+
 /** Whether `player`'s Legend's base name matches (art-variant suffix stripped). */
 function playerHasLegend(s: MatchState, player: PlayerId, name: string): boolean {
   const lg = s.players[player]?.legend
@@ -1870,6 +1892,7 @@ export function beginTurn(state: MatchState): MatchState {
   // carry between turns â€” emptied at end of the Draw step / end of turn).
   p.cardsPlayedThisTurn = 0
   p.playedEquipmentThisTurn = false
+  p.zileanDoubledThisTurn = false
   p.pool = { energy: 0, power: {} }
   p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
   p.grantRepeatNextSpell = false

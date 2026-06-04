@@ -92,6 +92,9 @@ export interface PlayerState {
   /** Whether this player has played an Equipment this turn (gates Azir -
    *  Emperor of the Sands' Sand Soldier ability). Cleared at turn start. */
   playedEquipmentThisTurn?: boolean
+  /** Whether Zilean - Time Mage's once-per-turn token-doubling has fired this turn.
+   *  Cleared at turn start. */
+  zileanDoubledThisTurn?: boolean
   /** Extra Energy non-token units cost to play this turn (Vaults of Helia). */
   unitCostBump?: number
   /** Set when a battlefield (The Academy) grants the next spell [Repeat] equal

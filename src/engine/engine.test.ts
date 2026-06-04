@@ -1074,6 +1074,56 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].units.some((u) => u.cardId === recruit && u.owner === 0)).toBe(true) // played here
   })
 
+  // --- Token statics: Renata (enter ready) & Zilean (doubling) ---
+  it('Renata Glasc - Industrialist (champion): your tokens enter ready', () => {
+    const maker = injectCard('rec-maker', 'When you play me, play 2 Recruit unit tokens.', { type: 'unit', energy: 0, power: {} })
+    const renata = injectCard('renata-ind', 'Your tokens enter ready.', { name: 'Renata Glasc - Industrialist' })
+    // With Renata in play → recruits enter ready.
+    let s = baseState()
+    s.players[0].zones.base.push(mk(renata, 0))
+    let u = mk(maker, 0)
+    s.players[0].zones.hand.push(u)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    let recruits = r.state.players[0].zones.base.filter((c) => c.cardId === TOKEN_PILE_IDS[0])
+    expect(recruits.length).toBe(2)
+    expect(recruits.every((c) => !c.exhausted)).toBe(true) // ready
+    // Without Renata → recruits enter exhausted (default).
+    s = baseState()
+    u = mk(maker, 0)
+    s.players[0].zones.hand.push(u)
+    r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    recruits = r.state.players[0].zones.base.filter((c) => c.cardId === TOKEN_PILE_IDS[0])
+    expect(recruits.every((c) => c.exhausted)).toBe(true)
+  })
+
+  it('Zilean - Time Mage (champion): doubles a token-unit play once per turn while at a battlefield', () => {
+    const maker = injectCard('rec-maker2', 'When you play me, play 1 Recruit unit token.', { type: 'unit', energy: 0, power: {} })
+    const zilean = injectCard('zilean-tm', "Once each turn, if you would play a token unit while I'm at a battlefield, you may play that token and an additional copy of it instead.", { name: 'Zilean - Time Mage' })
+    const s = baseState()
+    s.battlefields[0].units.push(mk(zilean, 0)) // Zilean AT a battlefield
+    s.battlefields[0].controller = 0
+    const u1 = mk(maker, 0)
+    const u2 = mk(maker, 0)
+    s.players[0].zones.hand.push(u1, u2)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u1.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.filter((c) => c.cardId === TOKEN_PILE_IDS[0]).length).toBe(2) // 1 → 2
+    expect(r.state.players[0].zileanDoubledThisTurn).toBe(true)
+    // Second token play this turn is NOT doubled (once each turn).
+    r = reduce(r.state, { type: 'PLAY_UNIT', player: 0, iid: u2.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.filter((c) => c.cardId === TOKEN_PILE_IDS[0]).length).toBe(3) // 2 + 1
+  })
+
+  it('Zilean - Time Mage: does NOT double while at base (not a battlefield)', () => {
+    const maker = injectCard('rec-maker3', 'When you play me, play 1 Recruit unit token.', { type: 'unit', energy: 0, power: {} })
+    const zilean = injectCard('zilean-tm2', "Once each turn, if you would play a token unit while I'm at a battlefield, you may play that token and an additional copy of it instead.", { name: 'Zilean - Time Mage' })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(zilean, 0)) // at base, not a battlefield
+    const u = mk(maker, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.filter((c) => c.cardId === TOKEN_PILE_IDS[0]).length).toBe(1) // not doubled
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
