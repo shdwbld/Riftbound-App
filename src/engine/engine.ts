@@ -4102,6 +4102,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             s1 = log(s1, action.player, `Bubble Bot: readied ${getCard(mech.cardId)?.name}.`)
           }
         }
+        // Bard - Mercurial: "You may exhaust your legend as an additional cost … if
+        // you paid, move any number of your units to an open battlefield." Auto-
+        // resolved (pure benefit): if the legend is ready and there's an open
+        // (uncontrolled + empty) battlefield with a ready base unit to send, exhaust
+        // the legend and move that unit there (conquering the open battlefield).
+        if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial' && /exhaust your legend as an additional cost/i.test(card.text ?? '') && !legionGated) {
+          const legend = p.legend
+          const openBf = s1.battlefields.findIndex((b) => b.controller == null && b.units.length === 0)
+          const mover = p.zones.base.find((u) => u.iid !== ci.iid && !u.exhausted && getCard(u.cardId)?.type === 'unit')
+          if (legend && !legend.exhausted && openBf >= 0 && mover) {
+            legend.exhausted = true
+            s1 = log(s1, action.player, `Bard - Mercurial: exhausted your legend (additional cost paid).`)
+            const mv = moveUnits(s1, action.player, [mover.iid], openBf)
+            if (!mv.error) s1 = mv.state
+          }
+        }
         // Vision / Predict: peek the top of your Main Deck; a decision (keep /
         // recycle) is surfaced to the controller (same look, both keywords). Mechs
         // may have Vision granted owner-wide (Forecaster).

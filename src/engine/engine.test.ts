@@ -1358,6 +1358,21 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.base.find((x) => x.iid === otherUnit.iid)?.attached.length).toBe(0) // taken from the other unit
   })
 
+  it('Bard - Mercurial: paying the legend-exhaust moves a unit to conquer an open battlefield (P4)', () => {
+    const bard = injectCard('bard-merc-t', 'You may exhaust your legend as an additional cost to play me. When you play me, if you paid the additional cost, move any number of your units to an open battlefield.', { name: 'Bard - Mercurial', type: 'unit', energy: 0, power: {}, might: 4 })
+    const s = baseState()
+    s.players[0].legend = mk(furyUnit.id, 0) // a ready legend
+    const mover = mk(furyUnit.id, 0) // a ready base unit to send
+    s.players[0].zones.base.push(mover)
+    const b = mk(bard, 0)
+    s.players[0].zones.hand.push(b)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: b.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].legend?.exhausted).toBe(true) // additional cost paid
+    expect(r.state.battlefields[0].units.some((x) => x.iid === mover.iid)).toBe(true) // moved to bf0
+    expect(r.state.battlefields[0].controller).toBe(0) // conquered the open battlefield
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return
