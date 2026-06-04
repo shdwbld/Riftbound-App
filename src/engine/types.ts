@@ -21,6 +21,11 @@ export type OverrideOp =
   | 'stun' | 'unstun' | 'ready' | 'exhaust' | 'buff' | 'unbuff'
   | 'mightUp' | 'mightDown' | 'kill' | 'banish' | 'trash' | 'toBase'
   | 'draw' | 'channel' | 'move'
+  // Manual fail-safe ops (sandbox). Player-scoped use `action.player` as target.
+  | 'points' | 'xp' | 'energy' | 'power' | 'shuffle' | 'mill' | 'damage' | 'spawn'
+  // Advanced game-state overrides (can break a game — that's the point).
+  | 'setActive' | 'setTurn' | 'setPointsToWin' | 'setWinner' | 'setPhase'
+  | 'clearChain' | 'clearShowdown'
 
 /** A destination zone for a sandbox `move` override (a player zone, the
  *  banishment pile, or — with `toBattlefield` set — a battlefield). */
@@ -370,7 +375,7 @@ export type Action =
   /** A manual override op applied in sandbox mode (either player, any card).
    *  `move` uses `toBattlefield` (a battlefield) or `toZone` (a player zone /
    *  banished) to relocate the card at `iid`. */
-  | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number; toZone?: OverrideZone }
+  | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number; toZone?: OverrideZone; /** signed delta for points/xp/energy/draw/channel/mill/damage/might */ amount?: number; /** rune domain for `power`/`spawn` rune */ domain?: Domain; /** card to spawn */ cardId?: string; /** numeric target for setActive/setTurn/setPointsToWin/setWinner (-1 = clear) */ value?: number; /** target phase for setPhase */ phase?: Phase }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number; /** Opt in to the card's optional "you may pay X as an additional cost to play me" (gates the "if you paid" bonus). */ payAdditionalCost?: boolean }
   | {
       type: 'PLAY_SPELL'

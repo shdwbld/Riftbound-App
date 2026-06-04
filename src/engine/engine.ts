@@ -5118,8 +5118,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         case 'exhaust': if (u) u.exhausted = true; break
         case 'buff': if (u) u.buffs = (u.buffs ?? 0) + 1; break
         case 'unbuff': if (u) u.buffs = Math.max(0, (u.buffs ?? 0) - 1); break
-        case 'mightUp': if (u) u.tempMight = (u.tempMight ?? 0) + 1; break
-        case 'mightDown': if (u) u.tempMight = (u.tempMight ?? 0) - 1; break
+        case 'mightUp': if (u) u.tempMight = (u.tempMight ?? 0) + (action.amount ?? 1); break
+        case 'mightDown': if (u) u.tempMight = (u.tempMight ?? 0) - (action.amount ?? 1); break
         case 'kill': if (action.iid) s = fireDeaths(s, killTarget(s, action.iid)); break
         case 'toBase': if (action.iid) sendUnitToBase(s, action.iid); break
         case 'banish':
@@ -5136,8 +5136,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             }
           break
         }
-        case 'draw': drawN(s.players[action.player], 1); break
-        case 'channel': channelN(s.players[action.player], 1); break
+        case 'draw': drawN(s.players[action.player], action.amount ?? 1); break
+        case 'channel': channelN(s.players[action.player], action.amount ?? 1); break
         case 'move': {
           if (!action.iid) break
           const card = pluckCardAnywhere(s, action.iid)
@@ -5159,6 +5159,32 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
           break
         }
+        // --- manual fail-safe ops (player-scoped: action.player is the target) ---
+        case 'points': { const p = s.players[action.player]; if (p) p.points = Math.max(0, p.points + (action.amount ?? 1)); break }
+        case 'xp': { const p = s.players[action.player]; if (p) p.xp = Math.max(0, (p.xp ?? 0) + (action.amount ?? 1)); break }
+        case 'energy': { const p = s.players[action.player]; if (p) { if (!p.pool) p.pool = { energy: 0, power: {} }; p.pool.energy = Math.max(0, p.pool.energy + (action.amount ?? 1)) } break }
+        case 'power': { const p = s.players[action.player]; const d = action.domain; if (p && d) { if (!p.pool) p.pool = { energy: 0, power: {} }; p.pool.power[d] = Math.max(0, (p.pool.power[d] ?? 0) + (action.amount ?? 1)) } break }
+        case 'shuffle': { const p = s.players[action.player]; if (p) p.zones.mainDeck = shuffle(p.zones.mainDeck); break }
+        case 'mill': { const p = s.players[action.player]; const n = action.amount ?? 1; if (p) for (let i = 0; i < n && p.zones.mainDeck.length; i++) p.zones.trash.push(p.zones.mainDeck.shift()!); break }
+        case 'damage': { if (u) u.damage = Math.max(0, (u.damage ?? 0) + (action.amount ?? 1)); break }
+        case 'spawn': {
+          if (!action.cardId) break
+          const card: EngineCard = { iid: `${action.player}:ov:${action.cardId}#${(tokenCounter++).toString(36)}`, cardId: action.cardId, owner: action.player, exhausted: false, damage: 0, attached: [] }
+          if (action.toBattlefield != null && s.battlefields[action.toBattlefield]) s.battlefields[action.toBattlefield].units.push(card)
+          else if (action.toZone === 'banished') s.players[action.player].banished.push(card)
+          else if (action.toZone === 'mainDeck' || action.toZone === 'runeDeck') s.players[action.player].zones[action.toZone].unshift(card)
+          else if (action.toZone) s.players[action.player].zones[action.toZone].push(card)
+          else s.players[action.player].zones.hand.push(card)
+          break
+        }
+        // --- advanced game-state overrides (can break a game) ---
+        case 'setActive': if (action.value != null && s.players[action.value]) s.activePlayer = action.value as PlayerId; break
+        case 'setTurn': if (action.value != null) s.turn = Math.max(1, action.value); break
+        case 'setPointsToWin': if (action.value != null) s.pointsToWin = Math.max(1, action.value); break
+        case 'setWinner': s.winner = action.value == null || action.value < 0 ? null : (action.value as PlayerId); break
+        case 'setPhase': if (action.phase) s.phase = action.phase; break
+        case 'clearChain': s.chain = []; s.priority = null; s.passes = 0; break
+        case 'clearShowdown': s.showdown = null; if (s.phase === 'showdown') s.phase = 'action'; break
       }
       recomputeControllers(s)
       return ok(log(s, action.player, `Override: ${action.op}${nm ? ` ${nm}` : ''}.`))

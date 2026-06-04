@@ -5155,3 +5155,54 @@ describe('Playtest Pass 2 — opponent-play triggers (Vex - Apathetic)', () => {
     expect(played.stunned).toBeFalsy()
   })
 })
+
+describe('Manual override — fail-safe ops', () => {
+  it('rejects OVERRIDE when sandbox is off', () => {
+    const s = baseState()
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'points', amount: 1 })
+    expect(r.error).toBeTruthy()
+  })
+
+  it('adjusts points / xp / energy for the target player', () => {
+    const s = baseState(); s.sandbox = true
+    const p0 = s.players[0].points
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'points', amount: 3 })
+    expect(r.state.players[0].points).toBe(p0 + 3)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'energy', amount: 2 })
+    expect(r.state.players[0].pool?.energy).toBe(2)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'power', domain: 'fury', amount: 1 })
+    expect(r.state.players[0].pool?.power.fury).toBe(1)
+  })
+
+  it('draws N cards', () => {
+    const s = baseState(); s.sandbox = true
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const h0 = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'draw', amount: 2 })
+    expect(r.state.players[0].zones.hand.length).toBe(h0 + 2)
+  })
+
+  it('adds/heals damage on a unit', () => {
+    const s = baseState(); s.sandbox = true
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'damage', iid: u.iid, amount: 2 })
+    expect(r.state.battlefields[0].units[0].damage).toBe(2)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'damage', iid: u.iid, amount: -5 })
+    expect(r.state.battlefields[0].units[0].damage).toBe(0) // clamped, heal
+  })
+
+  it('spawns a fresh card into a zone', () => {
+    const s = baseState(); s.sandbox = true
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'spawn', cardId: furyUnit.id, toZone: 'hand' })
+    expect(r.state.players[0].zones.hand.some((c) => c.cardId === furyUnit.id)).toBe(true)
+  })
+
+  it('clears a stuck showdown', () => {
+    const s = baseState(); s.sandbox = true; s.phase = 'showdown'
+    s.showdown = { battlefield: 0, priority: 0, passes: 0, movedUnit: 'x' } as MatchState['showdown']
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'clearShowdown' })
+    expect(r.state.phase).toBe('action')
+    expect(r.state.showdown).toBeNull()
+  })
+})
