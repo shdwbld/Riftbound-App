@@ -928,6 +928,32 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       }
       handled = true
     }
+    // Rumble - Hotheaded: "When I conquer, you may recycle another friendly unit to
+    // play a Mech from your trash, reducing its Energy cost by the recycled unit's
+    // Might." Auto-resolved conservatively — only when recycling a spare unit makes a
+    // STRONGER Mech free (net board gain), so it never carelessly sacrifices a unit.
+    if (ability.event === 'conquer' && srcName === 'Rumble - Hotheaded' && sourceIid) {
+      const isMech = (c: EngineCard) => (getCard(c.cardId)?.tags ?? []).includes('Mech')
+      const mechs = p.zones.trash.filter((c) => getCard(c.cardId)?.type === 'unit' && isMech(c))
+      const mech = mechs.length ? mechs.reduce((a, b) => (mightOf(b) > mightOf(a) ? b : a)) : undefined
+      if (mech) {
+        const cost = cardCost(mech) // recycled Might must cover the whole cost (free)
+        const spare = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+          .filter((x) => x.owner === player && x.iid !== sourceIid && !x.token && getCard(x.cardId)?.supertype !== 'token' && getCard(x.cardId)?.type === 'unit' && mightOf(x) >= cost && mightOf(x) < mightOf(mech))
+          .sort((a, b) => mightOf(a) - mightOf(b))[0]
+        if (spare) {
+          for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === spare.iid); if (i >= 0) bf.units.splice(i, 1) }
+          const bi = p.zones.base.findIndex((x) => x.iid === spare.iid); if (bi >= 0) p.zones.base.splice(bi, 1)
+          p.zones.mainDeck.push({ ...spare, exhausted: false, damage: 0, attached: [] }) // recycle to deck bottom
+          const ti = p.zones.trash.findIndex((x) => x.iid === mech.iid)
+          const [m] = p.zones.trash.splice(ti, 1)
+          p.zones.base.push({ ...m, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+          recomputeControllers(s)
+          s = log(s, player, `${label}: ${srcName} recycled ${getCard(spare.cardId)?.name} to play ${getCard(m.cardId)?.name} from trash (free).`)
+        }
+      }
+      handled = true
+    }
     // Kha'Zix - Voidreaver (legend): "When you win a combat, gain 1 XP."
     if (ability.event === 'winCombat' && srcName === "Kha'Zix - Voidreaver") {
       p.xp += 1
@@ -2618,11 +2644,27 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
 /** Whether a unit can Gank (move battlefield-to-battlefield) right now. Honors
  *  conditional grants like Bilgewater Bully's "While I'm buffed, I have [Ganking]"
  *  — the keyword scanner reads the bracket unconditionally, so re-gate it here. */
+/** Owner-wide "Your <tag>s (each) have [Keyword]" grants — Rumble - Mechanized Menace
+ *  ([Shield]), Rumble - Hotheaded ([Assault]), Forecaster ([Vision]), Breakneck Mech
+ *  ([Deflect]/[Ganking]). True when a permanent the owner controls grants `keyword`
+ *  to a tag that `u` carries. (`keyword` is the lowercase bracket word.) */
+function unitGrantedKeyword(s: MatchState, u: EngineCard, keyword: string): boolean {
+  const tags = (getCard(u.cardId)?.tags ?? []).map((t) => t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  if (!tags.length) return false
+  for (const perm of controlledPermanents(s, u.owner)) {
+    const txt = (getCard(perm.cardId)?.text ?? '').toLowerCase()
+    if (!txt.includes('have')) continue
+    for (const tag of tags)
+      if (new RegExp(`your ${tag}s? (?:each )?have [^.]*\\[${keyword}\\]`).test(txt)) return true
+  }
+  return false
+}
+
 function unitHasGanking(s: MatchState, u: EngineCard): boolean {
   if (u.grantGanking) return true // [Ganking] granted this turn (Vault Breaker)
   const t = (def(u)?.text ?? '').toLowerCase()
   if (/while (?:i'm|i am) buffed,?[^.]*\[ganking\]/.test(t)) return (u.buffs ?? 0) > 0
-  return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking
+  return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking || unitGrantedKeyword(s, u, 'ganking') // Breakneck Mech
 }
 
 /** Unit-granted auras among units sharing a battlefield. Lee Sin - Centered:
@@ -2669,6 +2711,10 @@ function bfCombatBonus(
     if (role === 'defender' && script?.shieldHere) b += script.shieldHere(u)
     b += conditionalMight(s, u, role, alone)
     b += auraMightHere(here, u)
+    // Owner-wide granted [Shield]/[Assault] (Rumble - Mechanized Menace / Hotheaded):
+    // both are just +1 Might in their combat role.
+    if (role === 'defender' && unitGrantedKeyword(s, u, 'shield')) b += 1
+    if (role === 'attacker' && unitGrantedKeyword(s, u, 'assault')) b += 1
     return b
   }
 }
@@ -2716,7 +2762,7 @@ export function deflectSurcharge(
     const u = find(iid)
     // Deflect may be granted by a [Level N] clause (Master Yi - Tempered), so
     // resolve keywords against the unit owner's XP.
-    if (u && u.owner !== caster) total += keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect
+    if (u && u.owner !== caster) total += keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect + (unitGrantedKeyword(state, u, 'deflect') ? 1 : 0) // Breakneck Mech
   }
   return total
 }
@@ -3559,9 +3605,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (ambushBf != null) recomputeControllers(s1)
           s1 = log(s1, action.player, `Keeper of Masks: played two Reflection copies.`)
         }
+        // Bubble Bot: "When you play me, ready another friendly Mech." Auto-readies an
+        // exhausted friendly Mech (not itself).
+        if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bubble Bot' && !legionGated) {
+          const mech = [...s1.players[action.player].zones.base, ...s1.battlefields.flatMap((b) => b.units)].find(
+            (x) => x.owner === action.player && x.iid !== ci.iid && x.exhausted && (getCard(x.cardId)?.tags ?? []).includes('Mech'),
+          )
+          if (mech) {
+            mech.exhausted = false
+            emit({ kind: 'buff', iid: mech.iid, player: action.player })
+            s1 = log(s1, action.player, `Bubble Bot: readied ${getCard(mech.cardId)?.name}.`)
+          }
+        }
         // Vision / Predict: peek the top of your Main Deck; a decision (keep /
-        // recycle) is surfaced to the controller (same look, both keywords).
-        if ((kw.vision || kw.predict) && p.zones.mainDeck.length > 0) {
+        // recycle) is surfaced to the controller (same look, both keywords). Mechs
+        // may have Vision granted owner-wide (Forecaster).
+        if ((kw.vision || kw.predict || unitGrantedKeyword(s1, ci, 'vision')) && p.zones.mainDeck.length > 0) {
           s1 = { ...s1, vision: { player: action.player, cardId: p.zones.mainDeck[0].cardId } }
           s1 = log(s1, action.player, `${kw.predict ? 'Predict' : 'Vision'} â€” look at the top of your deck; you may recycle it.`)
         }

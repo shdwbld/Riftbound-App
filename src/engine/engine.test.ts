@@ -1291,6 +1291,102 @@ describe('tokens (Recruit)', () => {
     expect(combatMightAt(s, 0, u, 'attacker')).toBe(4) // 6+ XP → +1
   })
 
+  // --- Mech subsystem ---
+  it('Mech token: "play a 3 Might Mech unit token" creates a tagged Mech', () => {
+    const maker = injectCard('mt-maker', 'When you play me, play a 3 :rb_might: Mech unit token to your base.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(maker, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    const tok = r.state.players[0].zones.base.find((c) => (CARD_INDEX[c.cardId]?.tags ?? []).includes('Mech') && c.cardId !== maker)
+    expect(tok).toBeTruthy()
+    expect(CARD_INDEX[tok!.cardId]?.might).toBe(3)
+  })
+
+  it('Rumble - Mechanized Menace: your Mechs have [Shield] (+1 while defending)', () => {
+    const menace = injectCard('mm-test', 'Your Mechs have [Shield]. (+1 :rb_might: while they\'re defenders.)', { name: 'Rumble - Mechanized Menace' })
+    const mech = injectCard('mm-mech', 'A unit.', { might: 3, tags: ['Mech'] })
+    const s = baseState()
+    const m = mk(mech, 0)
+    s.players[0].zones.base.push(mk(menace, 0))
+    s.battlefields[0] = { cardId: battlefield.id, units: [m], controller: 0 }
+    expect(combatMightAt(s, 0, m, 'defender')).toBe(4) // +1 Shield
+    expect(combatMightAt(s, 0, m, 'attacker')).toBe(3) // Shield doesn't apply on attack
+  })
+
+  it('Rumble - Hotheaded: your Mechs each have [Assault] (+1 while attacking)', () => {
+    const hot = injectCard('hh-test', 'Your Mechs each have [Assault]. (+1 :rb_might: while we\'re attackers.)', { name: 'Rumble - Hotheaded', tags: ['Mech'] })
+    const mech = injectCard('hh-mech', 'A unit.', { might: 3, tags: ['Mech'] })
+    const s = baseState()
+    const m = mk(mech, 0)
+    s.players[0].zones.base.push(mk(hot, 0))
+    s.battlefields[0] = { cardId: battlefield.id, units: [m], controller: 0 }
+    expect(combatMightAt(s, 0, m, 'attacker')).toBe(4) // +1 Assault
+    expect(combatMightAt(s, 0, m, 'defender')).toBe(3)
+  })
+
+  it('Forecaster: your Mechs have [Vision] — playing a Mech peeks the deck', () => {
+    const forecaster = injectCard('fc-test', 'Your Mechs have [Vision]. (When you play us, look at the top card of your Main Deck. You may recycle it.)', { name: 'Forecaster', tags: ['Mech'] })
+    const mech = injectCard('fc-mech', 'A unit.', { type: 'unit', energy: 0, power: {}, tags: ['Mech'] })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(forecaster, 0))
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)]
+    const u = mk(mech, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.vision?.player).toBe(0) // Vision peek surfaced
+  })
+
+  it('Breakneck Mech: your Mechs have [Ganking] — a Mech can move battlefield-to-battlefield', () => {
+    const breakneck = injectCard('bn-test', 'Your Mechs have [Deflect] and [Ganking].', { name: 'Breakneck Mech', tags: ['Mech'] })
+    const mech = injectCard('bn-mech', 'A unit.', { might: 3, tags: ['Mech'] })
+    // With Breakneck in play → the Mech can gank bf0 → bf1.
+    let s = baseState()
+    s.players[0].zones.base.push(mk(breakneck, 0))
+    const m = mk(mech, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [m], controller: 0 }
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [m.iid], toBattlefield: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.some((x) => x.iid === m.iid)).toBe(true)
+    // Without Breakneck → the move is rejected (no Ganking).
+    s = baseState()
+    const m2 = mk(mech, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [m2], controller: 0 }
+    r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [m2.iid], toBattlefield: 1 })
+    expect(r.error).toBeTruthy()
+  })
+
+  it('Bubble Bot: readies another friendly Mech when played', () => {
+    const bot = injectCard('bb-test', 'When you play me, ready another friendly Mech.', { name: 'Bubble Bot', type: 'unit', energy: 0, power: {}, tags: ['Mech'] })
+    const otherMech = injectCard('bb-mech', 'A unit.', { tags: ['Mech'] })
+    const s = baseState()
+    const exhaustedMech = mk(otherMech, 0, { exhausted: true })
+    s.players[0].zones.base.push(exhaustedMech)
+    const u = mk(bot, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.find((x) => x.iid === exhaustedMech.iid)?.exhausted).toBe(false)
+  })
+
+  it('Rumble - Hotheaded: on conquer, recycles a spare unit to play a stronger Mech from trash', () => {
+    const hot = injectCard('hh2-test', 'When I conquer, you may recycle another friendly unit to play a Mech from your trash. Reduce its Energy cost by the Might of the unit you recycled.', { name: 'Rumble - Hotheaded', type: 'unit', energy: 0, power: {}, might: 4, tags: ['Mech'] })
+    const trashMech = injectCard('hh2-mech', 'A unit.', { energy: 3, power: {}, might: 5, tags: ['Mech'] })
+    const spare = injectCard('hh2-spare', 'A unit.', { energy: 3, power: {}, might: 3 })
+    const s = baseState()
+    const rumble = mk(hot, 0)
+    const spareU = mk(spare, 0)
+    s.players[0].zones.base.push(rumble, spareU)
+    s.players[0].zones.trash.push(mk(trashMech, 0))
+    // Move Rumble onto an empty battlefield → conquers it → conquer trigger fires.
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [rumble.iid], toBattlefield: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.trash.some((c) => c.cardId === trashMech)).toBe(false) // Mech left trash
+    expect(r.state.players[0].zones.base.some((c) => c.cardId === trashMech)).toBe(true) // played to base
+    expect(r.state.players[0].zones.mainDeck.some((c) => c.cardId === spare)).toBe(true) // spare recycled
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
