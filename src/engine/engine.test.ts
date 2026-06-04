@@ -821,6 +821,14 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.base.some((x) => x.iid === c.iid)).toBe(true) // Patron in play
   })
 
+  it('Rift Herald / LeBlanc: Deathknell parses only the post-[Deathknell] clause (Gap 13)', async () => {
+    const { parseTriggers } = await import('./triggers')
+    const rh = { id: 'rh-test', name: 'Rift Herald', type: 'unit', domains: ['fury'], rarity: 'common', set: 'X', number: 1, might: 4, energy: 0, power: {}, text: 'When I move to a battlefield, look at the top 3 cards of your Main Deck. You may reveal a unit from among them and draw it. Recycle the rest.[Deathknell][&gt;] Play a unit from your hand to your base, ignoring its Energy cost.' } as never
+    const death = parseTriggers(rh).find((a: { event: string }) => a.event === 'death') as { text: string } | undefined
+    expect(death).toBeTruthy()
+    expect(/look at the top/i.test(death!.text)).toBe(false) // move-trigger text no longer leaks into Deathknell
+  })
+
   it('Dazzling Aurora: at end of turn, reveal-until-unit → play it free, recycle the rest', () => {
     const aurora = injectCard('aurora-gear', 'At the end of your turn, reveal cards from the top of your Main Deck until you reveal a unit and banish it. Play it, ignoring its cost, and recycle the rest.', { type: 'gear' })
     const spellId = injectCard('aurora-spell', 'Deal 1.', { type: 'spell', energy: 1, power: {} })
