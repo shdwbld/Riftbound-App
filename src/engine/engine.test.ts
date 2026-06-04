@@ -1163,6 +1163,46 @@ describe('tokens (Recruit)', () => {
     expect((r.state.battlefields[0].units.find((x) => x.iid === a.iid)?.buffs) ?? 0).toBe(0) // no gear → no buff
   })
 
+  it('Jax - Unmatched: a played gear auto-attaches via Quick-Draw aura (P1)', () => {
+    const jax = injectCard('jax-unm-t', 'Your Equipment everywhere have [Quick-Draw]. (Each gains [Reaction]. When you play it, attach it to a unit you control.)', { name: 'Jax - Unmatched', type: 'unit', might: 5 })
+    const gear = injectCard('ju-gear', 'A gear.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(jax, 0), mk(furyUnit.id, 0))
+    const g = mk(gear, 0)
+    s.players[0].zones.hand.push(g)
+    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, payment: { exhaust: [], recycle: [] } }) // no targetIid
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.some((u) => u.attached.some((a) => a.startsWith(`${gear}|`)))).toBe(true) // auto-attached
+    expect(r.state.players[0].zones.base.some((u) => u.cardId === gear)).toBe(false) // not sitting unattached
+  })
+
+  it("Rek'Sai - Breacher: a unit played from a non-hand zone enters ready (P1)", () => {
+    const breacher = injectCard('breacher-t', "Friendly units played from anywhere other than a player's hand have [Accelerate].", { name: "Rek'Sai - Breacher", type: 'unit', might: 3 })
+    const hid = injectCard('br-hidden', '[Hidden]', { type: 'unit', might: 3, energy: 0, power: {} })
+    const s = baseState()
+    s.turn = 6
+    s.players[0].zones.base.push(mk(breacher, 0))
+    const u = mk(hid, 0, { facedown: true, hiddenTurn: 4 })
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: 0 }
+    s.battlefields[0].facedown = u
+    const r = reduce(s, { type: 'REVEAL', player: 0, iid: u.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.find((x) => x.iid === u.iid)?.exhausted).toBe(false) // entered ready via Breacher
+  })
+
+  it('Blitzcrank - Impassive: returns to hand when it holds (P1)', () => {
+    const blitz = injectCard('blitz-t', "[Tank] When I hold, return me to my owner's hand.", { name: 'Blitzcrank - Impassive', type: 'unit', might: 5 })
+    const s = baseState()
+    s.activePlayer = 0
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)]
+    s.players[0].zones.runeDeck = [mk(furyRune.id, 0)]
+    const b = mk(blitz, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [b], controller: 0 } // holding
+    const after = beginTurn(s)
+    expect(after.players[0].zones.hand.some((x) => x.cardId === blitz)).toBe(true) // returned to hand
+    expect(after.battlefields[0].units.some((x) => x.iid === b.iid)).toBe(false) // left the battlefield
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return

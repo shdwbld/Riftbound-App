@@ -595,7 +595,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       } else {
         const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
         const [card] = p.zones.trash.splice(i, 1)
-        p.zones.base.push({ ...card, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+        p.zones.base.push({ ...card, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher: non-hand plays enter ready
         lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (ignoring ${powerDue > 0 ? 'Energy' : ''} cost${powerDue > 0 ? `, paid ${powerDue} Power` : ''}).`)
       }
     }
@@ -613,7 +613,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     }
     for (const c of passed) deck.push(c) // recycle the rest to the bottom
     if (unit) {
-      p.zones.base.push({ ...unit, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+      p.zones.base.push({ ...unit, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher
       lines.push(`Revealed & played ${getCard(unit.cardId)?.name ?? 'a unit'} from deck (free); recycled ${passed.length}.`)
     }
   }
@@ -684,7 +684,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       const units = revealed.filter((r) => playable(r.card))
       const chosen = units.length ? units.reduce((b, r) => (cardCost(r.card) > cardCost(b.card) ? r : b)) : undefined
       if (chosen) {
-        p.zones.base.push({ ...chosen.card, owner: p.id, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+        p.zones.base.push({ ...chosen.card, owner: p.id, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher
         lines.push(`Banished & played ${getCard(chosen.card.cardId)?.name} from an opponent's deck (free).`)
       }
       for (const r of revealed) if (r !== chosen) r.deck.push(r.card) // recycle to owner's deck
@@ -697,7 +697,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       if (chosen) {
         const bi = here && sourceIid ? bfIndexOfUnit(s, sourceIid) : -1
         const dest = bi >= 0 ? s.battlefields[bi].units : p.zones.base
-        dest.push({ ...chosen, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
+        dest.push({ ...chosen, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher
         if (bi >= 0) recomputeControllers(s)
         lines.push(`Banished & played ${getCard(chosen.cardId)?.name} from deck (free)${bi >= 0 ? ' here' : ''}.`)
       }
@@ -873,6 +873,18 @@ function controlledPermanents(s: MatchState, player: PlayerId): EngineCard[] {
   ]
   if (s.players[player].legend) out.push(s.players[player].legend!)
   return out
+}
+
+/** Jax - Unmatched: "Your Equipment everywhere have [Quick-Draw]" — a played gear
+ *  auto-attaches to a unit you control. */
+function controlsQuickDrawAura(s: MatchState, player: PlayerId): boolean {
+  return controlledPermanents(s, player).some((perm) => /your equipment everywhere have \[quick-?draw\]/i.test(getCard(perm.cardId)?.text ?? ''))
+}
+
+/** Rek'Sai - Breacher: "Friendly units played from anywhere other than a player's
+ *  hand have [Accelerate]" — such units enter ready. */
+function controlsBreacherAura(s: MatchState, player: PlayerId): boolean {
+  return controlledPermanents(s, player).some((perm) => /friendly units played from anywhere other than a player's hand have \[accelerate\]/i.test(getCard(perm.cardId)?.text ?? ''))
 }
 
 /** Collect a player's GLOBAL ("when you â€¦") triggers for an event. */
@@ -1072,6 +1084,14 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         self.buffs = 0 // no gear to pay → revert any generic self-buff
         s = log(s, player, `${label}: Adaptatron found no gear to kill — no buff.`)
       }
+      handled = true
+    }
+    // Blitzcrank - Impassive: "When I hold, return me to my owner's hand." (Its
+    // "play me to a battlefield → pull an enemy" half needs battlefield-play support
+    // the engine lacks for non-Ambush units, so only the self-recall is modeled.)
+    if (ability.event === 'hold' && srcName === 'Blitzcrank - Impassive' && sourceIid) {
+      s = bounceUnitToHand(s, sourceIid, player, 'Blitzcrank - Impassive', 0)
+      s = log(s, player, `${label}: Blitzcrank returned to hand (held).`)
       handled = true
     }
     // Rumble - Hotheaded: "When I conquer, you may recycle another friendly unit to
@@ -4036,6 +4056,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
               return ok(firePlayTriggers(s1, action.player, ci.iid, card, effTotal))
             }
         }
+        // Quick-Draw (gear's own keyword, or Jax - Unmatched's "Your Equipment
+        // everywhere have [Quick-Draw]" aura): the gear auto-attaches to a unit you
+        // control on play. Auto-pick the strongest friendly unit.
+        if (parseKeywords(card).quickDraw || controlsQuickDrawAura(s, action.player)) {
+          const host = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+            .filter((u) => u.owner === action.player && getCard(u.cardId)?.type === 'unit')
+            .sort((a, b) => mightOf(b) - mightOf(a))[0]
+          if (host) {
+            host.attached = [...host.attached, `${card.id}|${ci.iid}`]
+            emit({ kind: 'buff', iid: host.iid, player: action.player, cardId: card.id })
+            let s1 = log(s, action.player, `Quick-Draw: attached ${card.name} to ${getCard(host.cardId)?.name}.`)
+            s1 = fireAttachEquip(s1, action.player, host)
+            s1 = applyGearOnPlay(s1)
+            return ok(firePlayTriggers(s1, action.player, ci.iid, card, effTotal))
+          }
+        }
         p.zones.base.push({ ...ci })
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         let s1 = applyGearOnPlay(log(s, action.player, `Played gear ${card.name} (unattached).`))
@@ -4209,7 +4245,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: ci.cardId })
       // Reveal = play for 0, at the battlefield where it was hidden.
       if (card.type === 'unit') {
-        s.battlefields[bfi].units.push({ ...ci, exhausted: true, enteredTurn: s.turn })
+        s.battlefields[bfi].units.push({ ...ci, exhausted: !controlsBreacherAura(s, action.player), enteredTurn: s.turn }) // Rek'Sai - Breacher: from-Hidden is non-hand
         recomputeControllers(s)
         s = log(s, action.player, `Revealed ${card.name} — entered play.`)
         for (const line of applyParsed(s, s.players[action.player], onPlayEffect(card), bfi, ci.iid)) s = log(s, action.player, line)
