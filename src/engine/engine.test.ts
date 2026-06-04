@@ -1137,6 +1137,31 @@ describe('tokens (Recruit)', () => {
     expect(combatMightAt(s, 0, unstunned, 'defender')).toBe(10) // not stunned → unaffected
   })
 
+  it('Aphelios - Exalted (champion): attaching Equipment cycles Ready/Channel/Buff per turn', () => {
+    const aph = injectCard('aph-test', "When you attach an Equipment to me, choose one that hasn't been chosen this turn — Ready 2 runes. Channel 1 rune exhausted. Buff a friendly unit.", { name: 'Aphelios - Exalted', might: 4 })
+    const gearId = injectCard('aph-gear', 'A gear.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const aphU = mk(aph, 0)
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(aphU, ally)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0, { exhausted: true }), mk(furyRune.id, 0, { exhausted: true }))
+    s.players[0].zones.runeDeck.push(mk(furyRune.id, 0))
+    const g1 = mk(gearId, 0), g2 = mk(gearId, 0), g3 = mk(gearId, 0)
+    s.players[0].zones.hand.push(g1, g2, g3)
+    // Mode 0 — Ready 2 runes.
+    let r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g1.iid, targetIid: aphU.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.runePool.every((x) => !x.exhausted)).toBe(true)
+    // Mode 1 — Channel 1 rune exhausted (pool grows from the rune deck).
+    r = reduce(r.state, { type: 'PLAY_GEAR', player: 0, iid: g2.iid, targetIid: aphU.iid, payment: emptyPayment() })
+    expect(r.state.players[0].zones.runePool.length).toBe(3)
+    // Mode 2 — Buff a friendly unit.
+    r = reduce(r.state, { type: 'PLAY_GEAR', player: 0, iid: g3.iid, targetIid: aphU.iid, payment: emptyPayment() })
+    const totalBuffs = r.state.players[0].zones.base.reduce((a, x) => a + (x.buffs ?? 0), 0)
+    expect(totalBuffs).toBe(1)
+    expect(r.state.players[0].apheliosModesThisTurn).toBe(3)
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never

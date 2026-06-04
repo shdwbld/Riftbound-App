@@ -1274,6 +1274,36 @@ function controlsUnitNamed(s: MatchState, player: PlayerId, name: string): boole
   )
 }
 
+/** Aphelios - Exalted: "When you attach an Equipment to me, choose one that hasn't
+ *  been chosen this turn — Ready 2 runes / Channel 1 rune exhausted / Buff a friendly
+ *  unit." Auto-resolves the next un-chosen mode (in order); no-op after all 3. */
+function fireAttachEquip(s: MatchState, player: PlayerId, target: EngineCard): MatchState {
+  const name = (getCard(target.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
+  if (name !== 'Aphelios - Exalted' || target.owner !== player) return s
+  const p = s.players[player]
+  const used = p.apheliosModesThisTurn ?? 0
+  if (used >= 3) return s
+  p.apheliosModesThisTurn = used + 1
+  if (used === 0) {
+    const before = p.zones.runePool.filter((r) => r.exhausted).length
+    makeBfApi(s).readyRunes(player, 2)
+    const readied = before - p.zones.runePool.filter((r) => r.exhausted).length
+    return log(s, player, `Aphelios - Exalted: readied ${readied} rune(s).`)
+  }
+  if (used === 1) {
+    const n = channelN(p, 1, true)
+    return log(s, player, `Aphelios - Exalted: channeled ${n} rune (exhausted).`)
+  }
+  const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+    (u) => u.owner === player && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
+  )
+  if (!friendly.length) return s
+  const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
+  tgt.buffs = 1
+  emit({ kind: 'buff', iid: tgt.iid, player })
+  return log(s, player, `Aphelios - Exalted: buffed ${getCard(tgt.cardId)?.name}.`)
+}
+
 /** Renata Glasc - Industrialist: "Your tokens enter ready." */
 function tokensEnterReady(s: MatchState, player: PlayerId): boolean {
   return controlsUnitNamed(s, player, 'Renata Glasc - Industrialist')
@@ -1893,6 +1923,7 @@ export function beginTurn(state: MatchState): MatchState {
   p.cardsPlayedThisTurn = 0
   p.playedEquipmentThisTurn = false
   p.zileanDoubledThisTurn = false
+  p.apheliosModesThisTurn = 0
   p.pool = { energy: 0, power: {} }
   p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
   p.grantRepeatNextSpell = false
@@ -3523,7 +3554,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             if (u.iid === action.targetIid && u.owner === action.player) {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
-              return ok(firePlayTriggers(log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`), action.player, ci.iid, card, effTotal))
+              let s1 = log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`)
+              s1 = fireAttachEquip(s1, action.player, u) // Aphelios - Exalted
+              return ok(firePlayTriggers(s1, action.player, ci.iid, card, effTotal))
             }
         }
         p.zones.base.push({ ...ci })
@@ -3854,7 +3887,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (gi < 0) return fail(state, 'That Equipment is no longer available.')
           const [gear] = s.players[action.player].zones.base.splice(gi, 1)
           target.attached = [...target.attached, `${gear.cardId}|${gear.iid}`]
-          return ok(log(s, action.player, `Forge of the Fluft: attached ${getCard(gear.cardId)?.name} to ${getCard(target.cardId)?.name}.`))
+          return ok(fireAttachEquip(log(s, action.player, `Forge of the Fluft: attached ${getCard(gear.cardId)?.name} to ${getCard(target.cardId)?.name}.`), action.player, target))
         }
         case 'orbMinusMight': {
           // Orb of Regret: -N Might this turn, to a minimum of 1 current Might.

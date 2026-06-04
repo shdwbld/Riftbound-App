@@ -95,6 +95,9 @@ export interface PlayerState {
   /** Whether Zilean - Time Mage's once-per-turn token-doubling has fired this turn.
    *  Cleared at turn start. */
   zileanDoubledThisTurn?: boolean
+  /** How many of Aphelios - Exalted's three attach-Equipment modes have been chosen
+   *  this turn (each mode used once per turn, in order). Cleared at turn start. */
+  apheliosModesThisTurn?: number
   /** Extra Energy non-token units cost to play this turn (Vaults of Helia). */
   unitCostBump?: number
   /** Set when a battlefield (The Academy) grants the next spell [Repeat] equal
