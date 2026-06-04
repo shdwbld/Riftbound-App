@@ -56,6 +56,9 @@ export interface ParsedEffect {
   namedToken: { name: string; count: number; exhausted: boolean; temporary: boolean; here: boolean } | null
   /** Number of your units to ready (un-exhaust) — the player chooses which. */
   readyUnits: number
+  /** Number of your runes to ready (un-exhaust) — "ready up to N (friendly) runes"
+   *  (Sona - Harmonious, Annie - Dark Child). */
+  readyRunes: number
   /** +1 Might buff counters to apply (e.g. "gains +1 Might" / "buff a unit"). A
    *  "buff" is the Riftbound +1 Might token, capped at one per unit. */
   buff: number
@@ -158,6 +161,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   goldTokens: 0,
   namedToken: null,
   readyUnits: 0,
+  readyRunes: 0,
   buff: 0,
   buffSelf: false,
   buffExcludesSelf: false,
@@ -191,7 +195,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || e.score > 0
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -300,6 +304,11 @@ function parse(text: string): ParsedEffect {
     eff.readyUnits += /^(a|an|another|target|one)$/.test(w) ? 1 : num(w)
     hit = true
   }
+
+  // Ready your RUNES: "ready up to N (friendly) runes" (Sona - Harmonious, Annie -
+  // Dark Child). Distinct from readyUnits (needs the "runes" noun).
+  const readyRunesM = t.match(new RegExp(`ready (?:up to )?${NUM} (?:friendly )?runes?`))
+  if (readyRunesM) { eff.readyRunes += num(readyRunesM[1]); hit = true }
 
   // Damage to unit(s): "deal 3 to a unit", "deal 6 to each of up to two units".
   const dmgM = t.match(/deal (\d+)(?: damage)?\s+to\b[^.]*?units?/)

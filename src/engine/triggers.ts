@@ -26,6 +26,7 @@ export type TriggerEvent =
   | 'winCombat' // a unit's side wins a showdown
   | 'stun' // you stun one or more enemy units
   | 'enemyDeath' // an enemy unit dies (Pyke - Returned, Sivir - Battle Mistress)
+  | 'discard' // you discard one or more cards (Jinx - Rebel)
 
 export interface TriggeredAbility {
   event: TriggerEvent
@@ -73,6 +74,8 @@ const PATTERNS: Pattern[] = [
   // (Eclipse Herald, Leona - Radiant Dawn, Vex - Mocking). [Stun] keyword markers
   // stored as "[stun]" are stripped by the brackets in the clause; match both.
   { event: 'stun', scope: 'global', re: /when(?:ever)?\s+you\s+\[?stun\]?\s+(?:one or more\s+)?(?:an?\s+)?enemy\s+units?/i },
+  // "When you discard one or more cards" (Jinx - Rebel). Effect targets the source.
+  { event: 'discard', scope: 'global', re: /when(?:ever)?\s+you\s+discard/i },
 ]
 
 /** The effect clause following a trigger phrase: from the phrase's end to the

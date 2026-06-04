@@ -3228,3 +3228,67 @@ describe('buffs & Might — application + parser coverage', () => {
     expect(bd.mods).toBe(4)
   })
 })
+
+describe('champion suite — HIGH batch (Annie ×2, Sona, Jinx)', () => {
+  it('Annie - Fiery: your spell deals +1 bonus damage', () => {
+    const annie = 'ogs-001-024'
+    if (!CARD_INDEX[annie]) return
+    const spellId = injectCard('annie-dmg', 'Deal 2 to a unit.', { type: 'spell', energy: 0, power: {} })
+    const targetId = injectCard('annie-tgt', 'A unit.', { might: 10 })
+    const cast = (withAnnie: boolean) => {
+      const s = baseState()
+      if (withAnnie) s.players[0].zones.base.push(mk(annie, 0))
+      const enemy = mk(targetId, 1)
+      s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+      const sp = mk(spellId, 0)
+      s.players[0].zones.hand.push(sp)
+      let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemy.iid], payment: emptyPayment() })
+      r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+      r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+      return r.state.battlefields[0].units.find((u) => u.iid === enemy.iid)?.damage
+    }
+    expect(cast(false)).toBe(2)
+    expect(cast(true)).toBe(3) // +1 Bonus Damage
+  })
+
+  it('readyRunes: "ready up to N (friendly) runes" parses', async () => {
+    const { parseEffectText } = await import('./effects')
+    expect(parseEffectText('Ready up to 4 friendly runes.').readyRunes).toBe(4)
+    expect(parseEffectText('At the end of your turn, ready up to 2 runes.').readyRunes).toBe(2)
+  })
+
+  it('Sona - Harmonious: EOT readies up to 4 runes only while at a battlefield', () => {
+    const sona = 'ogn-073-298'
+    if (!CARD_INDEX[sona]) return
+    const run = (atBf: boolean) => {
+      const s = baseState()
+      if (atBf) s.battlefields[0].units.push(mk(sona, 0))
+      else s.players[0].zones.base.push(mk(sona, 0))
+      for (let i = 0; i < 5; i++) s.players[0].zones.runePool.push(mk(furyRune.id, 0, { exhausted: true }))
+      const r = reduce(s, { type: 'END_TURN', player: 0 })
+      return r.state.players[0].zones.runePool.filter((x) => x.exhausted).length
+    }
+    expect(run(true)).toBe(1) // 5 − 4 readied
+    expect(run(false)).toBe(5) // in base → not at a battlefield → none readied
+  })
+
+  it('Annie - Dark Child (legend): EOT readies up to 2 runes', () => {
+    const annie = 'ogs-017-024'
+    if (!CARD_INDEX[annie]) return
+    const s = baseState()
+    s.players[0].legend = mk(annie, 0)
+    for (let i = 0; i < 5; i++) s.players[0].zones.runePool.push(mk(furyRune.id, 0, { exhausted: true }))
+    const r = reduce(s, { type: 'END_TURN', player: 0 })
+    expect(r.state.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(3) // 5 − 2
+  })
+
+  it('Jinx - Rebel: recognized as a "when you discard" trigger (ready + +1 Might)', async () => {
+    const { parseTriggers } = await import('./triggers')
+    const jinx = CARD_INDEX['ogn-202-298']
+    if (!jinx) return
+    const d = parseTriggers(jinx).find((t) => t.event === 'discard')
+    expect(d).toBeTruthy()
+    expect(d!.effect.readySelf).toBe(true)
+    expect(d!.effect.tempMightSelf).toBe(1)
+  })
+})

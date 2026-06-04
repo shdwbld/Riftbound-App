@@ -573,6 +573,14 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Ready ${cnt} unit(s) â€” choose which.`)
     }
   }
+  if (e.readyRunes) {
+    // "ready up to N (friendly) runes" (Sona - Harmonious, Annie - Dark Child) —
+    // pure benefit, auto-readied (no prompt).
+    const before = p.zones.runePool.filter((r) => r.exhausted).length
+    makeBfApi(s).readyRunes(p.id, e.readyRunes)
+    const readied = before - p.zones.runePool.filter((r) => r.exhausted).length
+    if (readied > 0) lines.push(`Readied ${readied} rune(s).`)
+  }
   if (e.grantAssaultHere && sourceIid != null) {
     // "give your other units here [Assault] this turn" (Lord Broadmane).
     const bi = battlefieldOf(s, sourceIid)
@@ -761,7 +769,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         // choice. Fired once per copy, so Karthus - Eternal doubles it (4 → 8).
         const amt = e.damage || 4
         const dead: EngineCard[] = []
-        for (const tu of [...s.battlefields[deathBf].units]) dead.push(...applyTargetDamage(s, tu.iid, amt, true))
+        for (const tu of [...s.battlefields[deathBf].units]) dead.push(...applyTargetDamage(s, tu.iid, amt, true, player))
         s = log(s, player, `${label}: ${baseName} dealt ${amt} to all units at its battlefield.`)
         s = fireDeaths(s, dead)
         handled = true
@@ -902,6 +910,12 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
  *  "you may move me") are left for manual resolution by fireTriggers. */
 function fireStun(s: MatchState, player: PlayerId): MatchState {
   return fireTriggers(s, collectGlobal(s, player, 'stun'))
+}
+
+/** Fire "when you discard one or more cards" global triggers (Jinx - Rebel —
+ *  ready me + +1 Might this turn). Call once per discard event for `player`. */
+function fireDiscard(s: MatchState, player: PlayerId): MatchState {
+  return fireTriggers(s, collectGlobal(s, player, 'discard'))
 }
 
 /** Chemtech Cask: "When you play a spell on an opponent's turn, you may exhaust
@@ -1528,7 +1542,10 @@ function recallToBase(s: MatchState, u: EngineCard): void {
   emit({ kind: 'buff', iid: u.iid, player: u.owner })
 }
 
-function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spellLike = false): EngineCard[] {
+function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spellLike = false, caster?: PlayerId): EngineCard[] {
+  // Annie - Fiery: "Your spells and abilities deal 1 Bonus Damage." +1 per instance
+  // of spell/ability damage dealt by a controller of Annie - Fiery.
+  if (spellLike && caster != null && controlsUnitNamed(s, caster, 'Annie - Fiery')) amount += 1
   for (let i = 0; i < s.battlefields.length; i++) {
     const bf = s.battlefields[i]
     const u = bf.units.find((x) => x.iid === targetIid)
@@ -2726,7 +2743,7 @@ function resolveSpellEffects(
         if (tu) tu.banishShield = true
       }
       if (e.damage) {
-        dead = applyTargetDamage(s, t, e.damage, true)
+        dead = applyTargetDamage(s, t, e.damage, true, controller)
         s = log(s, controller, `${card.name} dealt ${e.damage}.`)
       } else if (e.kill) {
         // "with N Might or less" restriction (Soul Harvest): skip if too big.
@@ -3592,6 +3609,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           lg.exhausted = true
           s.battlefields[pc.bfIndex].units.push(makeReflection(src, action.player, s.turn, true))
           recomputeControllers(s)
+          s = fireDiscard(s, action.player) // Jinx - Rebel: "when you discard …"
           return ok(log(s, action.player, `LeBlanc — copied ${name} (Temporary); discarded a card.`))
         }
         case 'daisReturn': {
@@ -3709,7 +3727,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Targeted parts (deal N / give a unit +N Might this turn / Buff a unit).
         for (const t of action.targets ?? []) {
           if (!isValidTarget(s1, t)) continue
-          if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true))
+          if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true, action.player))
           if (ab.effect.tempMight) s1 = fireDeaths(s1, applyTempMight(s1, t, ab.effect.tempMight, ab.effect.tempMightFloor))
           // "Buff a friendly unit" (Lee Sin) — a permanent +1 Might counter, capped
           // at one per unit (buffing an already-buffed unit does nothing).
@@ -3925,13 +3943,21 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       for (const bf of s.battlefields)
         bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, deathShield: false, banishShield: false }))
       // "At the end of your turn, …" effects for the ending player's permanents
-      // (Dazzling Aurora's free-unit engine). Base gear + units + battlefield units.
+      // (Dazzling Aurora's free-unit engine; Annie - Dark Child's ready-runes —
+      // hence the legend is included). Base gear + units + battlefield units + legend.
       const ender = state.activePlayer
-      const perms = [...s.players[ender].zones.base, ...s.battlefields.flatMap((b) => b.units.filter((u) => u.owner === ender))]
+      const perms = [
+        ...s.players[ender].zones.base,
+        ...s.battlefields.flatMap((b) => b.units.filter((u) => u.owner === ender)),
+        ...(s.players[ender].legend ? [s.players[ender].legend!] : []),
+      ]
       for (const perm of perms) {
         const def = getCard(perm.cardId)
         if (!def) continue
         const eot = endOfTurnEffect(def)
+        // "if I'm at a battlefield, …" (Sona - Harmonious) — skip when the source
+        // isn't on a battlefield (in base / legend zone).
+        if (/if (?:i'm|i am) at a battlefield/i.test(def.text ?? '') && battlefieldOf(s, perm.iid) < 0) continue
         if (hasUntargetedPart(eot))
           for (const line of applyParsed(s, s.players[ender], eot, undefined, perm.iid)) s = log(s, ender, `${def.name}: ${line}`)
       }
