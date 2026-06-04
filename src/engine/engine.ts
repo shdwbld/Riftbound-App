@@ -1172,6 +1172,7 @@ function fireStun(s: MatchState, player: PlayerId): MatchState {
 /** Fire "when you discard one or more cards" global triggers (Jinx - Rebel —
  *  ready me + +1 Might this turn). Call once per discard event for `player`. */
 function fireDiscard(s: MatchState, player: PlayerId): MatchState {
+  if (s.players[player]) s.players[player].discardedThisTurn = true // gates Raging Soul
   return fireTriggers(s, collectGlobal(s, player, 'discard'))
 }
 
@@ -2084,6 +2085,7 @@ export function beginTurn(state: MatchState): MatchState {
   // carry between turns â€” emptied at end of the Draw step / end of turn).
   p.cardsPlayedThisTurn = 0
   p.playedEquipmentThisTurn = false
+  p.discardedThisTurn = false
   p.zileanDoubledThisTurn = false
   p.apheliosModesThisTurn = 0
   p.pool = { energy: 0, power: {} }
@@ -2668,6 +2670,18 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   if (!d || !owner) return 0
   let b = 0
   const text = (d.text ?? '').toLowerCase()
+  // Conditional / dynamic [Assault] (mightOf bakes in a flat +1 from the bracket;
+  // adjust it here where we have state). Raging Soul: "If you've discarded a card
+  // this turn, I have [Assault]…" — cancel the +1 when the discard hasn't happened.
+  if (role === 'attacker' && /if you've discarded a card this turn,?[^.]*\[assault\]/.test(text) && !owner.discardedThisTurn)
+    b -= parseKeywords(d).assault
+  // Ancient Warmonger: "I have [Assault] equal to the number of enemy units here."
+  // Replace the flat +1 with +1 per enemy unit at its battlefield.
+  if (role === 'attacker' && /\[assault\] equal to the number of enemy units here/.test(text)) {
+    const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
+    const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => x.owner !== u.owner).length : 0
+    b += enemies - parseKeywords(d).assault
+  }
   // Self: "While you have N+ runes, I have +X Might." (Master Yi - Meditative)
   const runeM = text.match(/while you have (\d+)\+? (?:or more )?runes?, i have \+(\d+)\s*(?::rb_might:|might)/)
   if (runeM && owner.zones.runePool.length >= parseInt(runeM[1], 10)) b += parseInt(runeM[2], 10)
@@ -2775,6 +2789,8 @@ function unitHasGanking(s: MatchState, u: EngineCard): boolean {
   if (u.grantGanking) return true // [Ganking] granted this turn (Vault Breaker)
   const t = (def(u)?.text ?? '').toLowerCase()
   if (/while (?:i'm|i am) buffed,?[^.]*\[ganking\]/.test(t)) return (u.buffs ?? 0) > 0
+  // Raging Soul: "If you've discarded a card this turn, I have [Assault] and [Ganking]."
+  if (/if you've discarded a card this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.discardedThisTurn ?? false
   return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking || unitGrantedKeyword(s, u, 'ganking') // Breakneck Mech
 }
 

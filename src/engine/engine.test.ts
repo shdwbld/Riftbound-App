@@ -1416,6 +1416,41 @@ describe('tokens (Recruit)', () => {
     expect(r.error).toBeTruthy()
   })
 
+  it('Raging Soul: [Assault]/[Ganking] gated on having discarded this turn (Gap 8)', () => {
+    const rs = injectCard('raging-soul-t', "If you've discarded a card this turn, I have [Assault] and [Ganking]. (+1 :rb_might: while I'm an attacker.)", { name: 'Raging Soul', might: 4 })
+    const s = baseState()
+    const u = mk(rs, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    // Not discarded → no Assault bonus.
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(4)
+    // Discarded this turn → +1 Might attacking.
+    s.players[0].discardedThisTurn = true
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(5)
+    // Ganking gated likewise: with the discard, it can move bf-to-bf.
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [u.iid], toBattlefield: 1 })
+    expect(r.error).toBeFalsy()
+    // Without the discard → the bf-to-bf move is rejected.
+    const s2 = baseState()
+    const u2 = mk(rs, 0)
+    s2.battlefields[0] = { cardId: battlefield.id, units: [u2], controller: 0 }
+    r = reduce(s2, { type: 'MOVE_UNITS', player: 0, iids: [u2.iid], toBattlefield: 1 })
+    expect(r.error).toBeTruthy()
+  })
+
+  it('Ancient Warmonger: [Assault] equal to the number of enemy units here (Gap 8)', () => {
+    const aw = injectCard('ancient-warmonger-t', "I have [Assault] equal to the number of enemy units here. (+1 :rb_might: while I'm an attacker for each instance of Assault.)", { name: 'Ancient Warmonger', might: 4 })
+    const grunt = injectCard('aw-grunt', 'A unit.', { might: 1 })
+    const s = baseState()
+    const u = mk(aw, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u, mk(grunt, 1), mk(grunt, 1)], controller: 0 }
+    expect(combatMightAt(s, 0, u, 'attacker')).toBe(6) // 4 + 2 enemies
+    // No enemies here → no Assault.
+    const s2 = baseState()
+    const u2 = mk(aw, 0)
+    s2.battlefields[0] = { cardId: battlefield.id, units: [u2], controller: 0 }
+    expect(combatMightAt(s2, 0, u2, 'attacker')).toBe(4)
+  })
+
   it('Bubble Bot: readies another friendly Mech when played', () => {
     const bot = injectCard('bb-test', 'When you play me, ready another friendly Mech.', { name: 'Bubble Bot', type: 'unit', energy: 0, power: {}, tags: ['Mech'] })
     const otherMech = injectCard('bb-mech', 'A unit.', { tags: ['Mech'] })
