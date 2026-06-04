@@ -26,7 +26,7 @@ import PlayedCardSpotlight from './PlayedCardSpotlight'
 import OverridePanel from './OverridePanel'
 
 /** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
-type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string }
+type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; stepper?: { title: string; make: (n: number) => Action } }
 /** A drill-down category in the right-click menu (collapses the rest when open). */
 type MenuGroup = { label: string; items: MenuItem[] }
 import FeedbackLayer from './FeedbackLayer'
@@ -167,6 +167,7 @@ export default function MatchBoard({
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; groups?: MenuGroup[]; statuses?: MenuItem[] } | null>(null)
   const [drill, setDrill] = useState<number | null>(null) // open drill-down category
   const [sub, setSub] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null) // hover flyout (Add status effect)
+  const [stepper, setStepper] = useState<{ title: string; value: number; make: (n: number) => Action } | null>(null) // inline −/value/+ set
   const me = match.players[perspective]
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
@@ -383,6 +384,9 @@ export default function MatchBoard({
           { label: 'Set damage 2', action: ov('setDamage', { value: 2 }) },
           { label: 'Set damage 4', action: ov('setDamage', { value: 4 }) },
           { label: 'Set damage 6', action: ov('setDamage', { value: 6 }) },
+          { label: 'Buff (net)… ⇄', stepper: { title: 'Net buff counters', make: (n: number) => (n >= 0 ? ov('buff', { amount: n }) : ov('unbuff', { amount: -n })) } },
+          { label: 'Might (net, this turn)… ⇄', stepper: { title: 'Net temp Might (this turn)', make: (n: number) => (n >= 0 ? ov('mightUp', { amount: n }) : ov('mightDown', { amount: -n })) } },
+          { label: 'Damage (net)… ⇄', stepper: { title: 'Net damage', make: (n: number) => ov('damage', { amount: n }) } },
         ] })
         // Manually set who controls the battlefield this unit stands on.
         if (zone === 'battlefield') {
@@ -424,6 +428,7 @@ export default function MatchBoard({
     if (items.length || groups.length || statuses.length) {
       setDrill(null)
       setSub(null)
+      setStepper(null)
       setMenu({ x: e.clientX, y: e.clientY, items, groups: groups.length ? groups : undefined, statuses: statuses.length ? statuses : undefined })
     }
   }
@@ -694,25 +699,43 @@ export default function MatchBoard({
           expand just its items; ‹ Back returns; click anywhere else closes). */}
       {menu && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null); setSub(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null); setSub(null) }} />
+          <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null); setSub(null); setStepper(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null); setSub(null); setStepper(null) }} />
           <div
             className="fixed z-50 max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-white/15 bg-[#1a1a26] text-sm shadow-xl"
             style={{ left: menu.x, top: menu.y }}
           >
             {(() => {
+              const closeAll = () => { setMenu(null); setDrill(null); setSub(null); setStepper(null) }
               const run = (it: MenuItem) => {
+                // A stepper item opens the inline −/value/+ panel instead of dispatching.
+                if (it.stepper) { setSub(null); setStepper({ title: it.stepper.title, value: 0, make: it.stepper.make }); return }
                 if (it.activateIid) onActivateUnit?.(it.activateIid)
                 else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
                 else if (it.action) onCardAction?.(it.action)
-                setMenu(null)
-                setDrill(null)
-                setSub(null)
+                closeAll()
               }
               const Item = (it: MenuItem) => (
                 <button key={it.label} onClick={() => run(it)} onMouseEnter={() => setSub(null)} className="block w-full px-3 py-1.5 text-left hover:bg-white/10">
                   {it.label}
                 </button>
               )
+              // Inline stepper view: −/value/+ then Confirm dispatches one net OVERRIDE.
+              if (stepper) {
+                return (
+                  <div className="min-w-[11rem]">
+                    <button onClick={() => setStepper(null)} className="block w-full border-b border-white/10 px-3 py-1.5 text-left text-white/50 hover:bg-white/10">‹ Back</button>
+                    <div className="px-3 py-2">
+                      <div className="mb-2 text-center text-[11px] text-white/60">{stepper.title}</div>
+                      <div className="flex items-center justify-center gap-3">
+                        <button onClick={() => setStepper({ ...stepper, value: stepper.value - 1 })} className="h-7 w-7 rounded bg-white/10 text-base font-bold hover:bg-white/20">−</button>
+                        <span className="w-10 text-center text-lg font-bold tabular-nums">{stepper.value > 0 ? `+${stepper.value}` : stepper.value}</span>
+                        <button onClick={() => setStepper({ ...stepper, value: stepper.value + 1 })} className="h-7 w-7 rounded bg-white/10 text-base font-bold hover:bg-white/20">+</button>
+                      </div>
+                      <button onClick={() => { onCardAction?.(stepper.make(stepper.value)); closeAll() }} className="mt-2 block w-full rounded bg-emerald-500/30 px-3 py-1.5 text-center font-semibold hover:bg-emerald-500/50">Confirm</button>
+                    </div>
+                  </div>
+                )
+              }
               if (drill != null && menu.groups?.[drill]) {
                 const g = menu.groups[drill]
                 return (
