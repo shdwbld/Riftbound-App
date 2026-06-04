@@ -437,48 +437,6 @@ export default function MatchBoard({
     <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
     {/* LEFT — the board */}
     <div ref={rootRef} className={`min-w-0 flex-1 space-y-3 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
-      {/* Turn / priority banner */}
-      {banner && (
-        <div
-          className={`flex items-center justify-between gap-2 rounded-xl border p-2.5 text-sm font-semibold ${banner.cls} ${
-            banner.pulse ? 'fx-ready' : ''
-          }`}
-        >
-          <span>{banner.text}</span>
-          {canRespondNow && (
-            <button
-              onClick={passResponse}
-              className="rounded bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25"
-            >
-              {hasPlayableResponse ? 'Pass (Space)' : 'No response — Pass (Space)'}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Targeting banner */}
-      {targetingActive && (
-        <div className="flex items-center justify-between rounded-xl border border-rose-400/50 bg-rose-500/10 p-3">
-          <span className="text-sm font-semibold text-rose-200">
-            🎯 {targetProgress ? `Pick up to ${targetProgress.count} targets (${targetProgress.picked} chosen)` : 'Choose a target unit'}
-            {fx.legalSet.size ? ` · ${fx.legalSet.size} legal` : ''}…
-          </span>
-          <div className="flex gap-2">
-            {targetProgress && targetProgress.picked > 0 && onConfirmTargets && (
-              <button
-                onClick={onConfirmTargets}
-                className="rounded bg-emerald-500/30 px-3 py-1 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/50"
-              >
-                Done ({targetProgress.picked})
-              </button>
-            )}
-            <button onClick={onCancelTarget} className="rounded bg-white/10 px-3 py-1 text-sm hover:bg-white/20">
-              Cancel (Esc)
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
         {opponents.map((opp) => (
@@ -505,62 +463,6 @@ export default function MatchBoard({
         />
       </div>
 
-      {/* Chain stack */}
-      {chainOpen && (
-        <div className="rounded-xl border border-fuchsia-400/40 bg-fuchsia-500/10 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-sm font-semibold text-fuchsia-200">
-              ⛓ Chain ({match.chain.length}) —{' '}
-              {myChainPriority
-                ? 'your priority'
-                : `waiting for ${match.priority != null ? match.players[match.priority].name : '…'}`}
-            </span>
-            {myChainPriority && onPassPriority && (
-              <button
-                onClick={onPassPriority}
-                className="rounded bg-fuchsia-500/30 px-3 py-1 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-500/50"
-              >
-                Pass (A)
-              </button>
-            )}
-          </div>
-          {/* Top of chain is last; show top-first */}
-          <div className="flex flex-col gap-1">
-            {[...match.chain].reverse().map((item, i) => {
-              const card = getCard(item.cardId)
-              return (
-                <div
-                  key={item.id}
-                  className={`fx-slidein flex items-center justify-between gap-2 rounded px-2 py-1 text-xs ${
-                    i === 0 ? 'bg-fuchsia-500/20' : 'bg-black/20'
-                  }`}
-                >
-                  <span>
-                    {i === 0 && <span className="text-fuchsia-300">▶ </span>}
-                    {item.kind === 'counter' ? '✗ Counter: ' : ''}
-                    <span className="font-medium">{card?.name ?? item.cardId}</span>{' '}
-                    <span className="text-white/40">· {match.players[item.controller].name}</span>
-                  </span>
-                  {myChainPriority && onCounter && item.kind === 'spell' && (
-                    <button
-                      onClick={() => onCounter(item.id)}
-                      className="rounded bg-rose-500/20 px-2 py-0.5 text-[10px] text-rose-200 hover:bg-rose-500/40"
-                    >
-                      Counter
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-          {myChainPriority && (
-            <p className="mt-2 text-[11px] text-white/40">
-              Play a Reaction spell to respond, Counter a spell, or Pass (A) to let
-              the top resolve.
-            </p>
-          )}
-        </div>
-      )}
 
       {/* Showdown — combat preview */}
       {match.phase === 'showdown' && match.showdown && (() => {
@@ -729,6 +631,103 @@ export default function MatchBoard({
         panel lands here in Stage 2. On < xl this stacks below the board. */}
     <aside className="space-y-3 xl:w-[340px] xl:shrink-0">
       <PlayedCardSpotlight match={match} perspective={perspective} lastPlayed={lastPlayed} />
+
+      {/* MIDDLE — Action: turn/priority + Pass, targeting, chain Pass/Counter */}
+      {banner && (
+        <div
+          className={`flex items-center justify-between gap-2 rounded-xl border p-2.5 text-sm font-semibold ${banner.cls} ${
+            banner.pulse ? 'fx-ready' : ''
+          }`}
+        >
+          <span>{banner.text}</span>
+          {canRespondNow && (
+            <button
+              onClick={passResponse}
+              className="shrink-0 rounded bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25"
+            >
+              {hasPlayableResponse ? 'Pass (Space)' : 'No response — Pass (Space)'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {targetingActive && (
+        <div className="rounded-xl border border-rose-400/50 bg-rose-500/10 p-3">
+          <span className="text-sm font-semibold text-rose-200">
+            🎯 {targetProgress ? `Pick up to ${targetProgress.count} targets (${targetProgress.picked} chosen)` : 'Choose a target unit'}
+            {fx.legalSet.size ? ` · ${fx.legalSet.size} legal` : ''}…
+          </span>
+          <div className="mt-2 flex gap-2">
+            {targetProgress && targetProgress.picked > 0 && onConfirmTargets && (
+              <button
+                onClick={onConfirmTargets}
+                className="rounded bg-emerald-500/30 px-3 py-1 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/50"
+              >
+                Done ({targetProgress.picked})
+              </button>
+            )}
+            <button onClick={onCancelTarget} className="rounded bg-white/10 px-3 py-1 text-sm hover:bg-white/20">
+              Cancel (Esc)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {chainOpen && (
+        <div className="rounded-xl border border-fuchsia-400/40 bg-fuchsia-500/10 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-fuchsia-200">
+              ⛓ Chain ({match.chain.length}) —{' '}
+              {myChainPriority
+                ? 'your priority'
+                : `waiting for ${match.priority != null ? match.players[match.priority].name : '…'}`}
+            </span>
+            {myChainPriority && onPassPriority && (
+              <button
+                onClick={onPassPriority}
+                className="shrink-0 rounded bg-fuchsia-500/30 px-3 py-1 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-500/50"
+              >
+                Pass (A)
+              </button>
+            )}
+          </div>
+          {/* Top of chain is last; show top-first */}
+          <div className="flex flex-col gap-1">
+            {[...match.chain].reverse().map((item, i) => {
+              const card = getCard(item.cardId)
+              return (
+                <div
+                  key={item.id}
+                  className={`fx-slidein flex items-center justify-between gap-2 rounded px-2 py-1 text-xs ${
+                    i === 0 ? 'bg-fuchsia-500/20' : 'bg-black/20'
+                  }`}
+                >
+                  <span>
+                    {i === 0 && <span className="text-fuchsia-300">▶ </span>}
+                    {item.kind === 'counter' ? '✗ Counter: ' : ''}
+                    <span className="font-medium">{card?.name ?? item.cardId}</span>{' '}
+                    <span className="text-white/40">· {match.players[item.controller].name}</span>
+                  </span>
+                  {myChainPriority && onCounter && item.kind === 'spell' && (
+                    <button
+                      onClick={() => onCounter(item.id)}
+                      className="shrink-0 rounded bg-rose-500/20 px-2 py-0.5 text-[10px] text-rose-200 hover:bg-rose-500/40"
+                    >
+                      Counter
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {myChainPriority && (
+            <p className="mt-2 text-[11px] text-white/40">
+              Play a Reaction spell to respond, Counter a spell, or Pass (A) to let the top resolve.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="rounded-xl border border-white/10 bg-[#15151f] p-2">
         <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">Log</div>
         <div className="flex max-h-[55vh] flex-col-reverse gap-0.5 overflow-y-auto text-[11px] text-white/60">
