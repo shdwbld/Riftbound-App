@@ -26,7 +26,7 @@ export default function OverridePanel({
   const [target, setTarget] = useState<PlayerId>(perspective)
   const [query, setQuery] = useState('')
   const [zone, setZone] = useState<string>('hand')
-  const [peek, setPeek] = useState(0)
+  const [browse, setBrowse] = useState(false)
   const [adv, setAdv] = useState(false)
   const p = match.players[target] ?? match.players[perspective]
 
@@ -110,20 +110,25 @@ export default function OverridePanel({
       {/* Deck */}
       <div className={SECTION}>
         <div className={LABEL}>Deck ({p.zones.mainDeck.length})</div>
-        <div className="flex items-center gap-1">
-          <button className={BTN} onClick={() => setPeek((n) => (n ? 0 : 5))}>{peek ? 'Hide top' : 'Peek top 5'}</button>
+        <div className="flex flex-wrap items-center gap-1">
+          <button className={BTN} onClick={() => setBrowse((b) => !b)}>{browse ? 'Hide deck' : 'Browse / tutor'}</button>
           <button className={BTN} onClick={() => ov('shuffle')}>Shuffle</button>
           <button className={BTN} onClick={() => ov('mill', { amount: 1 })}>Mill 1</button>
+          <button className={BTN} onClick={() => ov('readyAll')}>Ready all</button>
         </div>
-        {peek > 0 && (
-          <ol className="space-y-0.5 text-[11px] text-white/70">
-            {p.zones.mainDeck.slice(0, peek).map((c, i) => (
-              <li key={c.iid}>
-                <span className="text-white/30">{i + 1}.</span> {bare(getCard(c.cardId)?.name) || c.cardId}
-              </li>
+        {browse && (
+          <div className="max-h-48 space-y-0.5 overflow-y-auto">
+            {p.zones.mainDeck.map((c, i) => (
+              <div key={c.iid} className="flex items-center gap-1 text-[11px] text-white/70">
+                <span className="w-5 shrink-0 text-white/30">{i + 1}.</span>
+                <span className="min-w-0 flex-1 truncate">{bare(getCard(c.cardId)?.name) || c.cardId}</span>
+                <button className={BTN} title="To hand" onClick={() => ov('move', { iid: c.iid, toZone: 'hand' })}>✋</button>
+                <button className={BTN} title="To bottom" onClick={() => ov('move', { iid: c.iid, toZone: 'mainDeck', bottom: true })}>⤓</button>
+                <button className={BTN} title="Trash" onClick={() => ov('move', { iid: c.iid, toZone: 'trash' })}>🗑</button>
+              </div>
             ))}
-            {p.zones.mainDeck.length === 0 && <li className="text-white/30">empty</li>}
-          </ol>
+            {p.zones.mainDeck.length === 0 && <div className="text-white/30">empty</div>}
+          </div>
         )}
       </div>
 
