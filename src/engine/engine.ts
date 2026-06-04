@@ -1004,6 +1004,7 @@ function deathknellMultiplier(s: MatchState, player: PlayerId): number {
  *  global "when a unit you control dies" triggers (Viktor), and every OTHER
  *  player's "when an enemy unit dies" triggers (Pyke - Returned, Sivir). */
 function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
+  if (defeated.length) s.unitDiedThisTurn = true // gates conditional enter-ready
   const isRecruit = (u: EngineCard) => (getCard(u.cardId)?.tags ?? []).includes('Recruit')
   const fired: FiredTrigger[] = []
   for (const u of defeated) {
@@ -1363,6 +1364,33 @@ function fireAttachEquip(s: MatchState, player: PlayerId, target: EngineCard): M
   tgt.buffs = 1
   emit({ kind: 'buff', iid: tgt.iid, player })
   return log(s, player, `Aphelios - Exalted: buffed ${getCard(tgt.cardId)?.name}.`)
+}
+
+/** Evaluate a CONDITIONAL "I enter ready" guard (the clause containing "I enter
+ *  ready" had an "if …"). Recognized guards: "if you control another <Tag>"
+ *  (Direwing→Dragon, Breakneck→Mech), "if an opponent controls a battlefield"
+ *  (Vayne - Hunter), "if a/friendly unit died this turn" (Towering Pairofant,
+ *  Shadow Watcher), "if you have N or fewer cards in your hand" (Dunebreaker),
+ *  "if you have N or more other units in your base" (Xin Zhao - Vigilant), and
+ *  "if you play me to a battlefield" (Shadow). Unrecognized → false (stay exhausted). */
+function enterReadyConditionMet(s: MatchState, p: PlayerState, clause: string, toBattlefield: number | null): boolean {
+  const t = clause.toLowerCase()
+  const NW: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5 }
+  const toN = (w: string) => NW[w] ?? (parseInt(w, 10) || 0)
+  const controlsTag = (tag: string) =>
+    [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
+      (u) => u.owner === p.id && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
+    )
+  let m = t.match(/if you control (?:another |an? )?([a-z][a-z' -]*?)(?:\.|,| then|$)/)
+  if (m) return controlsTag(m[1].trim())
+  if (/if an opponent controls a battlefield/.test(t)) return s.battlefields.some((b) => b.controller != null && b.controller !== p.id)
+  if (/if a(?:ny)?(?: friendly)? unit died[^.]*this turn/.test(t)) return !!s.unitDiedThisTurn
+  m = t.match(/if you have (\d+|a|an|one|two|three|four|five) or fewer cards? in your hand/)
+  if (m) return p.zones.hand.length <= toN(m[1])
+  m = t.match(/if you have (\d+|a|an|one|two|three|four|five) or more other units? in your base/)
+  if (m) return p.zones.base.filter((u) => getCard(u.cardId)?.type === 'unit').length >= toN(m[1])
+  if (/if you play me to a battlefield/.test(t)) return toBattlefield != null
+  return false
 }
 
 /** Renata Glasc - Industrialist: "Your tokens enter ready." */
@@ -1992,6 +2020,7 @@ export function beginTurn(state: MatchState): MatchState {
   p.pool = { energy: 0, power: {} }
   p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
   p.grantRepeatNextSpell = false
+  s.unitDiedThisTurn = false // reset the "a unit died this turn" gate
 
   // Awaken: ready everything the active player controls.
   if (p.legend) p.legend.exhausted = false
@@ -2029,6 +2058,7 @@ export function beginTurn(state: MatchState): MatchState {
     if (expired.length) {
       bf.units = bf.units.filter((u) => !expired.includes(u))
       for (const u of expired) sendToTrash(p, u)
+      s.unitDiedThisTurn = true // beginning-phase deaths (Shadow Watcher)
       s = log(s, ap, `${expired.length} Temporary unit(s) expired.`)
     }
   }
@@ -3561,7 +3591,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Leona - Zealot: "If an opponent's score is within N points of the Victory
         // Score, I enter ready." — a CONDITIONAL enter-ready, not unconditional.
         const scoreReadyM = (card.text ?? '').toLowerCase().match(/if an opponent'?s score is within (\d+) points? of the victory score, i enter(?:s)? ready/)
-        const baseReady = /\bi enters? ready\b/i.test(card.text ?? '') && !scoreReadyM
+        // The sentence carrying "I enter ready". If it has an "if …" guard, route it
+        // through enterReadyConditionMet instead of treating it as unconditional.
+        const readyClause = (card.text ?? '').split(/[.;]/).find((seg) => /\bi enters? ready\b/i.test(seg)) ?? ''
+        const readyGuarded = /\bif\b/i.test(readyClause)
+        const baseReady = /\bi enters? ready\b/i.test(card.text ?? '') && !scoreReadyM && !readyGuarded
         // Wuju Master: "[Level 11] Your units enter ready." while the controller has 11+ XP.
         const legText = (getCard(p.legend?.cardId ?? '')?.text ?? '').toLowerCase()
         const legReadyM = legText.match(/\[level\s*(\d+)\][^.]*?your units enter(?:s)? ready/)
@@ -3573,7 +3607,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             .some((u) => u.owner !== action.player && u.stunned)
         const leonaReady = !!scoreReadyM
           && s.players.some((pl, i) => i !== action.player && s.pointsToWin - pl.points <= parseInt(scoreReadyM[1], 10))
-        const condReady = monchReady || leonaReady
+        // General conditional enter-ready guard (Direwing, Breakneck Mech, Vayne,
+        // Towering Pairofant, Dunebreaker, Xin Zhao, Shadow Watcher, Shadow).
+        const guardReady = readyGuarded && enterReadyConditionMet(s, p, readyClause, action.toBattlefield ?? null)
+        const condReady = monchReady || leonaReady || guardReady
         const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady
         // Ambush: a Reaction unit enters directly at a contested battlefield.
         const ambushBf = kw.ambush && action.toBattlefield != null ? action.toBattlefield : null

@@ -1301,7 +1301,7 @@ describe('tokens (Recruit)', () => {
     expect(r.error).toBeFalsy()
     const tok = r.state.players[0].zones.base.find((c) => (CARD_INDEX[c.cardId]?.tags ?? []).includes('Mech') && c.cardId !== maker)
     expect(tok).toBeTruthy()
-    expect(CARD_INDEX[tok!.cardId]?.might).toBe(3)
+    expect((CARD_INDEX[tok!.cardId] as { might?: number })?.might).toBe(3)
   })
 
   it('Rumble - Mechanized Menace: your Mechs have [Shield] (+1 while defending)', () => {
@@ -1385,6 +1385,56 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.trash.some((c) => c.cardId === trashMech)).toBe(false) // Mech left trash
     expect(r.state.players[0].zones.base.some((c) => c.cardId === trashMech)).toBe(true) // played to base
     expect(r.state.players[0].zones.mainDeck.some((c) => c.cardId === spare)).toBe(true) // spare recycled
+  })
+
+  // --- Gap 1: conditional enter-ready ---
+  const playReady = (s: MatchState, u: EngineCard) => {
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    return r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.exhausted
+  }
+
+  it('enter-ready guard: "if you control another <Tag>" (Direwing / Breakneck Mech)', () => {
+    const dire = injectCard('cr-dire', 'I enter ready if you control another Dragon.', { type: 'unit', energy: 0, power: {}, tags: ['Dragon'] })
+    const dragon = injectCard('cr-dragon', 'A unit.', { tags: ['Dragon'] })
+    let s = baseState()
+    s.players[0].zones.base.push(mk(dragon, 0))
+    expect(playReady(s, mk(dire, 0))).toBe(false) // another Dragon → ready
+    s = baseState()
+    expect(playReady(s, mk(dire, 0))).toBe(true) // no other Dragon → exhausted
+  })
+
+  it('enter-ready guard: "if a unit died this turn" (Towering Pairofant)', () => {
+    const tow = injectCard('cr-tow', 'If a unit died this turn, I enter ready.', { type: 'unit', energy: 0, power: {} })
+    let s = baseState()
+    s.unitDiedThisTurn = true
+    expect(playReady(s, mk(tow, 0))).toBe(false) // a death occurred → ready
+    s = baseState()
+    expect(playReady(s, mk(tow, 0))).toBe(true) // none → exhausted
+  })
+
+  it('enter-ready guard: "if you have two or fewer cards in your hand" (Dunebreaker)', () => {
+    const dune = injectCard('cr-dune', 'If you have two or fewer cards in your hand, I enter ready.', { type: 'unit', energy: 0, power: {} })
+    let s = baseState()
+    s.players[0].zones.hand.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0)) // after playing Dunebreaker → 2 left
+    expect(playReady(s, mk(dune, 0))).toBe(false)
+    s = baseState()
+    s.players[0].zones.hand.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)) // → 3 left
+    expect(playReady(s, mk(dune, 0))).toBe(true)
+  })
+
+  it('enter-ready guard: "if an opponent controls a battlefield" (Vayne - Hunter)', () => {
+    const vayne = injectCard('cr-vayne', 'If an opponent controls a battlefield, I enter ready.', { type: 'unit', energy: 0, power: {} })
+    let s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 1)], controller: 1 }
+    expect(playReady(s, mk(vayne, 0))).toBe(false) // opponent holds a bf → ready
+    s = baseState()
+    expect(playReady(s, mk(vayne, 0))).toBe(true) // no opponent bf → exhausted
+  })
+
+  it('enter-ready: unconditional "I enter ready" still always enters ready (no regression)', () => {
+    const plain = injectCard('cr-plain', 'I enter ready.', { type: 'unit', energy: 0, power: {} })
+    expect(playReady(baseState(), mk(plain, 0))).toBe(false)
   })
 
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {

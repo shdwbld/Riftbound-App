@@ -248,6 +248,9 @@ export interface MatchState {
   /** Pre-game setup state (turn-order roll, first-player choice, champion +
    *  battlefield selection). Present only while phase === 'setup'. */
   setup?: SetupState
+  /** Whether any unit has died so far this turn (gates conditional enter-ready like
+   *  Towering Pairofant / Shadow Watcher). Reset at the start of each turn. */
+  unitDiedThisTurn?: boolean
   /** Manual-override / sandbox mode: when on, EITHER player may apply manual
    *  OVERRIDE ops (stun / ready / kill / ±Might / move / …) to ANY card at any
    *  time, to fix or override the engine. Shared (synced) game state. */
