@@ -24,9 +24,10 @@ import CardPreview from './CardPreview'
 import CardText, { DomainIcon } from './CardText'
 import PlayedCardSpotlight from './PlayedCardSpotlight'
 import OverridePanel from './OverridePanel'
+import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
 
 /** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
-type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; stepper?: { title: string; make: (n: number) => Action } }
+type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; stepper?: { title: string; make: (n: number) => Action }; openSearch?: { source: SearchSource; owner: PlayerId } }
 /** A drill-down category in the right-click menu (collapses the rest when open). */
 type MenuGroup = { label: string; items: MenuItem[] }
 import FeedbackLayer from './FeedbackLayer'
@@ -168,6 +169,7 @@ export default function MatchBoard({
   const [drill, setDrill] = useState<number | null>(null) // open drill-down category
   const [sub, setSub] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null) // hover flyout (Add status effect)
   const [stepper, setStepper] = useState<{ title: string; value: number; make: (n: number) => Action } | null>(null) // inline −/value/+ set
+  const [searchOverlay, setSearchOverlay] = useState<{ owner: PlayerId; source: SearchSource } | null>(null) // big search/tutor pop-up
   // Keep the right-click menu + status flyout inside the viewport: after each render
   // measure the panel and, if it overflows the bottom/right edge, shift it back in
   // (effectively opening upward / leftward). Runs pre-paint so there's no flash.
@@ -453,20 +455,26 @@ export default function MatchBoard({
 
   /** Right-click a ZONE (not a card) — quick sandbox actions for that pile.
    *  Native menu is already suppressed at the board root; this adds function. */
-  const openZoneMenu = (e: React.MouseEvent, kind: 'deck' | 'runeDeck' | 'base' | 'hand' | 'battlefield', owner: PlayerId) => {
+  const openZoneMenu = (e: React.MouseEvent, kind: 'deck' | 'runeDeck' | 'base' | 'hand' | 'battlefield' | 'trash', owner: PlayerId) => {
     e.preventDefault()
     e.stopPropagation()
     if (!onCardAction || !match.sandbox) return
     const O = (op: OverrideOp, extra: Record<string, unknown> = {}): Action => ({ type: 'OVERRIDE', player: owner, op, ...extra }) as Action
     const items: MenuItem[] = []
     if (kind === 'deck') {
+      items.push({ label: '🔎 Search deck…', openSearch: { source: 'mainDeck', owner } })
+      items.push({ label: '🗂 Manage top cards', openSearch: { source: 'manageTop', owner } })
       items.push({ label: '🛠 Draw 1', action: O('draw') })
       items.push({ label: '🛠 Draw 3', action: O('draw', { amount: 3 }) })
       items.push({ label: '🛠 Mill 1', action: O('mill', { amount: 1 }) })
       items.push({ label: '🛠 Shuffle deck', action: O('shuffle') })
     } else if (kind === 'runeDeck') {
+      items.push({ label: '🔎 Search rune deck…', openSearch: { source: 'runeDeck', owner } })
       items.push({ label: '🛠 Channel 1', action: O('channel') })
       items.push({ label: '🛠 Channel 3', action: O('channel', { amount: 3 }) })
+      items.push({ label: '🛠 Channel 1 (exhausted)', action: O('channelExhausted') })
+    } else if (kind === 'trash') {
+      items.push({ label: '🔎 Search trash…', openSearch: { source: 'trash', owner } })
     } else if (kind === 'hand') {
       items.push({ label: '🛠 Draw 1', action: O('draw') })
       items.push({ label: '🛠 Draw 3', action: O('draw', { amount: 3 }) })
@@ -741,6 +749,7 @@ export default function MatchBoard({
         onConcede={onConcede}
         onContext={onCardAction ? openMenu : undefined}
         onZoneContext={onCardAction && match.sandbox ? (e, kind) => openZoneMenu(e, kind, perspective) : undefined}
+        onOpenSearch={onCardAction && match.sandbox ? (source) => setSearchOverlay({ owner: perspective, source }) : undefined}
         onRevealTop={onCardAction ? () => onCardAction({ type: 'REVEAL_TOP', player: perspective }) : undefined}
         canPlayIid={(iid) => canPlay(match, perspective, iid)}
         fx={fx}
@@ -776,6 +785,8 @@ export default function MatchBoard({
               const run = (it: MenuItem) => {
                 // A stepper item opens the inline −/value/+ panel instead of dispatching.
                 if (it.stepper) { setSub(null); setStepper({ title: it.stepper.title, value: 0, make: it.stepper.make }); return }
+                // A search item opens the big card-search overlay.
+                if (it.openSearch) { setSearchOverlay(it.openSearch); closeAll(); return }
                 if (it.activateIid) onActivateUnit?.(it.activateIid)
                 else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
                 else if (it.action) onCardAction?.(it.action)
@@ -865,6 +876,17 @@ export default function MatchBoard({
             </div>
           )}
         </>
+      )}
+
+      {/* Big search / tutor pop-up (sandbox) — trash / rune deck / main deck. */}
+      {searchOverlay && onCardAction && (
+        <CardSearchOverlay
+          match={match}
+          owner={searchOverlay.owner}
+          source={searchOverlay.source}
+          onAct={onCardAction}
+          onClose={() => setSearchOverlay(null)}
+        />
       )}
 
       {/* Floating feedback toasts */}
@@ -1372,6 +1394,7 @@ function PlayerMat({
   activateLegendLabel,
   onActivateLegendOwn,
   legendOwnLabel,
+  onOpenSearch,
 }: {
   me: PlayerState
   target: number
@@ -1386,7 +1409,9 @@ function PlayerMat({
   endTurnNeedsConfirm?: boolean
   onConcede?: () => void
   onContext?: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'legend' | 'champion') => void
-  onZoneContext?: (e: React.MouseEvent, kind: 'deck' | 'runeDeck' | 'base' | 'hand') => void
+  onZoneContext?: (e: React.MouseEvent, kind: 'deck' | 'runeDeck' | 'base' | 'hand' | 'trash') => void
+  /** Open the big card-search overlay for one of this player's piles (sandbox). */
+  onOpenSearch?: (source: SearchSource) => void
   onRevealTop?: () => void
   canPlayIid: (iid: string) => { valid: boolean; reason?: string }
   fx: Fx
@@ -1696,12 +1721,16 @@ function PlayerMat({
         <div className="pm-zone pm-trash flex flex-col items-center justify-center gap-1">
           <div className="pm-zone-label self-start">Trash</div>
           <div className="flex items-end gap-2">
-            <div
-              className="flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-white/15 text-sm text-white/40"
+            <button
+              type="button"
+              title={onOpenSearch ? 'Search / take back from trash' : undefined}
+              onClick={onOpenSearch ? () => onOpenSearch('trash') : undefined}
+              onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'trash') : undefined}
+              className={`flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-white/15 text-sm text-white/40 ${onOpenSearch ? 'cursor-pointer hover:border-white/40' : ''}`}
               {...dropTgt(dndOn, { toZone: 'trash' }, onMoveOverride)}
             >
               🗑 {me.zones.trash.length}
-            </div>
+            </button>
             {me.banished.length > 0 && (
               <div className="flex flex-col items-center gap-0.5">
                 <div className="flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-fuchsia-400/30 text-sm text-fuchsia-300/60">
