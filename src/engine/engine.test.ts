@@ -5248,4 +5248,41 @@ describe('Manual override — grant flags / setDamage / readyAll', () => {
     expect(r.state.battlefields[0].units[0].exhausted).toBe(false)
     expect(r.state.players[0].zones.base.find((c) => c.iid === b.iid)?.exhausted).toBe(false)
   })
+
+  it('setController sets a battlefield controller and survives the recompute', () => {
+    const s = baseState(); s.sandbox = true
+    // A unit owned by P0 sits here, so the majority recompute would pick P0…
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'setController', toBattlefield: 0, value: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].controller).toBe(1) // …but the manual set wins
+    const cleared = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'setController', toBattlefield: 0, value: -1 })
+    expect(cleared.state.battlefields[0].controller).toBeNull()
+  })
+
+  it('clearTurnState resets a player’s stuck per-turn flags', () => {
+    const s = baseState(); s.sandbox = true
+    s.players[0].cardsPlayedThisTurn = 3
+    s.players[0].playedEquipmentThisTurn = true
+    s.players[0].xpGainedThisTurn = true
+    s.players[0].azirSwappedThisTurn = true
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'clearTurnState' })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].cardsPlayedThisTurn).toBe(0)
+    expect(r.state.players[0].playedEquipmentThisTurn).toBe(false)
+    expect(r.state.players[0].xpGainedThisTurn).toBe(false)
+    expect(r.state.players[0].azirSwappedThisTurn).toBe(false)
+  })
+
+  it('triggerEnterPlay re-fires a unit’s own enter effect', () => {
+    const s = baseState(); s.sandbox = true
+    const id = injectCard('enter-draw', 'When you play me, draw a card.', { might: 2 })
+    const u = mk(id, 0)
+    s.players[0].zones.base.push(u)
+    s.players[0].zones.mainDeck.push(mk(furyRune.id, 0), mk(furyRune.id, 0))
+    const before = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'triggerEnterPlay', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(before + 1)
+  })
 })

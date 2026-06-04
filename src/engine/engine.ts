@@ -5213,6 +5213,48 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         case 'setPhase': if (action.phase) s.phase = action.phase; break
         case 'clearChain': s.chain = []; s.priority = null; s.passes = 0; break
         case 'clearShowdown': s.showdown = null; if (s.phase === 'showdown') s.phase = 'action'; break
+        // Manually set a battlefield's controller (or clear with value < 0). Early
+        // return so the trailing recomputeControllers (which obeys unit majority)
+        // doesn't immediately clobber the manual choice.
+        case 'setController': {
+          if (action.toBattlefield != null && s.battlefields[action.toBattlefield]) {
+            const c = action.value
+            s.battlefields[action.toBattlefield].controller = c == null || c < 0 ? null : (c as PlayerId)
+            const bfName = getCard(s.battlefields[action.toBattlefield].cardId)?.name ?? `Battlefield ${action.toBattlefield + 1}`
+            return ok(log(s, action.player, `Override: set control of ${bfName}.`))
+          }
+          break
+        }
+        // Re-fire a unit's enter-play effect (its own "When you play me, …" plus
+        // other permanents' "when you play a unit" reactions) — a fail-safe for a
+        // trigger that didn't auto-resolve.
+        case 'triggerEnterPlay': {
+          if (!u) break
+          const def = getCard(u.cardId)
+          if (!def) break
+          const bfi = battlefieldOf(s, u.iid)
+          const e = onPlayEffect(def)
+          for (const line of applyParsed(s, s.players[u.owner], e, bfi >= 0 ? bfi : undefined, u.iid)) s = log(s, u.owner, line)
+          s = fireTokenPlay(s, u.owner, tokenUnitsIn(e))
+          s = firePlayTriggers(s, u.owner, u.iid, def)
+          break
+        }
+        // Reset a player's stuck per-turn flags (mirrors beginTurn) so a once-per-turn
+        // ability that got locked by a partial effect can be used again.
+        case 'clearTurnState': {
+          const p = s.players[action.player]
+          if (p) {
+            p.cardsPlayedThisTurn = 0
+            p.playedEquipmentThisTurn = false
+            p.discardedThisTurn = false
+            p.xpGainedThisTurn = false
+            p.zileanDoubledThisTurn = false
+            p.apheliosModesThisTurn = 0
+            p.azirSwappedThisTurn = false
+            p.grantRepeatNextSpell = false
+          }
+          break
+        }
       }
       recomputeControllers(s)
       return ok(log(s, action.player, `Override: ${action.op}${nm ? ` ${nm}` : ''}.`))

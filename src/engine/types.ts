@@ -26,7 +26,7 @@ export type OverrideOp =
   | 'setDamage' | 'grant' | 'readyAll'
   // Advanced game-state overrides (can break a game — that's the point).
   | 'setActive' | 'setTurn' | 'setPointsToWin' | 'setWinner' | 'setPhase'
-  | 'clearChain' | 'clearShowdown'
+  | 'clearChain' | 'clearShowdown' | 'setController' | 'triggerEnterPlay' | 'clearTurnState'
 
 /** A destination zone for a sandbox `move` override (a player zone, the
  *  banishment pile, the legend/champion slot, or — with `toBattlefield` set — a
