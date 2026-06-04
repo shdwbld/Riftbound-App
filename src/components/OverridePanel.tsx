@@ -217,9 +217,10 @@ export default function OverridePanel({
               ))}
               <button className={BTN} onClick={() => ov('setWinner', { value: -1 })}>Clear</button>
             </div>
-            <div className="flex gap-1">
+            <div className="flex flex-wrap gap-1">
               <button className={BTN} onClick={() => ov('clearChain')}>Clear chain</button>
               <button className={BTN} onClick={() => ov('clearShowdown')}>Clear showdown</button>
+              <button className={BTN} title="Reset this player's stuck per-turn flags (cards played, equipment played, XP gained, …)" onClick={() => ov('clearTurnState')}>Clear turn counters</button>
             </div>
           </div>
         )}

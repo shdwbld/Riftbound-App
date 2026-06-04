@@ -164,8 +164,9 @@ export default function MatchBoard({
   const [selectedUnits, setSelectedUnits] = useState<string[]>([])
   const toggleSelected = (iid: string) =>
     setSelectedUnits((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : [...s, iid]))
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; groups?: MenuGroup[] } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; groups?: MenuGroup[]; statuses?: MenuItem[] } | null>(null)
   const [drill, setDrill] = useState<number | null>(null) // open drill-down category
+  const [sub, setSub] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null) // hover flyout (Add status effect)
   const me = match.players[perspective]
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
@@ -342,39 +343,58 @@ export default function MatchBoard({
     // Manual overrides (shared sandbox): full god-mode ops on ANY card for EITHER
     // player, organized into drill-down categories so the menu stays uncluttered.
     const groups: MenuGroup[] = []
+    // Statuses live in a single hover flyout ("Add status effect") rather than two
+    // click-drill categories — toggles show their live on/off state.
+    const statuses: MenuItem[] = []
     if (match.sandbox) {
       const owner = ci.owner
       const ov = (op: OverrideOp, extra: Record<string, unknown> = {}): Action =>
         ({ type: 'OVERRIDE', player: owner, op, iid: ci.iid, ...extra }) as Action
       const mv = (toZone: OverrideZone | undefined, toBattlefield: number | undefined, bottom?: boolean): Action =>
         ({ type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone, toBattlefield, bottom }) as Action
+      const cc = ci as { stunned?: boolean; grantGanking?: boolean; temporary?: boolean; deathShield?: boolean; banishShield?: boolean; token?: boolean; grantAssault?: number; buffs?: number }
+      const mark = (on?: boolean) => (on ? '✓ ' : '○ ')
       if (card?.type === 'unit') {
-        const stunned = (ci as { stunned?: boolean }).stunned
-        groups.push({ label: 'State', items: [
-          { label: stunned ? 'Un-stun' : 'Stun', action: ov(stunned ? 'unstun' : 'stun') },
-          { label: ci.exhausted ? 'Ready' : 'Exhaust', action: ov(ci.exhausted ? 'ready' : 'exhaust') },
-          { label: ci.facedown ? 'Reveal (face-up)' : 'Set facedown', action: ov('grant', { flag: 'facedown' }) },
-          { label: "Clear can't-move", action: ov('grant', { flag: 'cantmove' }) },
+        statuses.push(
+          { label: `${mark(cc.stunned)}Stunned`, action: ov(cc.stunned ? 'unstun' : 'stun') },
+          { label: `${mark(ci.exhausted)}Exhausted`, action: ov(ci.exhausted ? 'ready' : 'exhaust') },
+          { label: `${mark(ci.facedown)}Facedown`, action: ov('grant', { flag: 'facedown' }) },
+          { label: `${mark(cc.grantGanking)}[Ganking]`, action: ov('grant', { flag: 'ganking' }) },
+          { label: `${mark(cc.temporary)}[Temporary]`, action: ov('grant', { flag: 'temporary' }) },
+          { label: `${mark(cc.deathShield)}Death shield`, action: ov('grant', { flag: 'deathShield' }) },
+          { label: `${mark(cc.banishShield)}Banish shield`, action: ov('grant', { flag: 'banishShield' }) },
+          { label: `${mark(cc.token)}Token`, action: ov('grant', { flag: 'token' }) },
+          { label: `[Assault] ${cc.grantAssault ?? 0}　+1`, action: ov('grant', { flag: 'assault', amount: 1 }) },
+          { label: `[Assault] ${cc.grantAssault ?? 0}　−1`, action: ov('grant', { flag: 'assault', amount: -1 }) },
+          { label: `Buff ${cc.buffs ?? 0}　+1`, action: ov('buff') },
+          { label: `Buff ${cc.buffs ?? 0}　−1`, action: ov('unbuff') },
           { label: 'Clear summoning sickness', action: ov('grant', { flag: 'sickness' }) },
-        ] })
+          { label: "Clear can't-move", action: ov('grant', { flag: 'cantmove' }) },
+          { label: '⚡ Re-fire enter triggers', action: ov('triggerEnterPlay') },
+        )
+        if (zone === 'battlefield') statuses.push({ label: '↩ Recall to base (exhaust)', action: ov('toBase') })
         groups.push({ label: 'Might & damage', items: [
           { label: 'Might +1', action: ov('mightUp') },
           { label: 'Might +5', action: ov('mightUp', { amount: 5 }) },
           { label: 'Might −1', action: ov('mightDown') },
-          { label: 'Buff +1 (perm)', action: ov('buff') },
-          { label: 'Buff −1 (perm)', action: ov('unbuff') },
           { label: 'Damage +1', action: ov('damage', { amount: 1 }) },
           { label: 'Damage −1', action: ov('damage', { amount: -1 }) },
-          { label: 'Clear damage', action: ov('setDamage', { value: 0 }) },
+          { label: 'Set damage 0', action: ov('setDamage', { value: 0 }) },
+          { label: 'Set damage 2', action: ov('setDamage', { value: 2 }) },
+          { label: 'Set damage 4', action: ov('setDamage', { value: 4 }) },
+          { label: 'Set damage 6', action: ov('setDamage', { value: 6 }) },
         ] })
-        groups.push({ label: 'Grant keyword', items: [
-          { label: '[Assault] +1', action: ov('grant', { flag: 'assault', amount: 1 }) },
-          { label: 'Toggle [Ganking]', action: ov('grant', { flag: 'ganking' }) },
-          { label: 'Toggle [Temporary]', action: ov('grant', { flag: 'temporary' }) },
-          { label: 'Toggle Death shield', action: ov('grant', { flag: 'deathShield' }) },
-          { label: 'Toggle Banish shield', action: ov('grant', { flag: 'banishShield' }) },
-          { label: 'Toggle Token', action: ov('grant', { flag: 'token' }) },
-        ] })
+        // Manually set who controls the battlefield this unit stands on.
+        if (zone === 'battlefield') {
+          const bfi = match.battlefields.findIndex((b) => b.units.some((x) => x.iid === ci.iid))
+          if (bfi >= 0)
+            groups.push({ label: 'Control battlefield', items: [
+              ...match.players.map((pl, i) => ({ label: `→ ${i === perspective ? 'You' : pl.name.replace(/\s*\([^)]*\)\s*$/, '')}`, action: ({ type: 'OVERRIDE', player: owner, op: 'setController', toBattlefield: bfi, value: i }) as Action })),
+              { label: 'Uncontrolled', action: ({ type: 'OVERRIDE', player: owner, op: 'setController', toBattlefield: bfi, value: -1 }) as Action },
+            ] })
+        }
+      } else if (card?.type === 'rune') {
+        statuses.push({ label: `${mark(ci.exhausted)}Exhausted`, action: ov(ci.exhausted ? 'ready' : 'exhaust') })
       }
       const moveItems: MenuItem[] = []
       if (zone !== 'hand') moveItems.push({ label: 'Hand', action: mv('hand', undefined) })
@@ -401,9 +421,10 @@ export default function MatchBoard({
         { label: 'Ready all units', action: { type: 'OVERRIDE', player: owner, op: 'readyAll' } },
       ] })
     }
-    if (items.length || groups.length) {
+    if (items.length || groups.length || statuses.length) {
       setDrill(null)
-      setMenu({ x: e.clientX, y: e.clientY, items, groups: groups.length ? groups : undefined })
+      setSub(null)
+      setMenu({ x: e.clientX, y: e.clientY, items, groups: groups.length ? groups : undefined, statuses: statuses.length ? statuses : undefined })
     }
   }
 
@@ -673,7 +694,7 @@ export default function MatchBoard({
           expand just its items; ‹ Back returns; click anywhere else closes). */}
       {menu && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null) }} />
+          <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null); setSub(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null); setSub(null) }} />
           <div
             className="fixed z-50 max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-white/15 bg-[#1a1a26] text-sm shadow-xl"
             style={{ left: menu.x, top: menu.y }}
@@ -685,9 +706,10 @@ export default function MatchBoard({
                 else if (it.action) onCardAction?.(it.action)
                 setMenu(null)
                 setDrill(null)
+                setSub(null)
               }
               const Item = (it: MenuItem) => (
-                <button key={it.label} onClick={() => run(it)} className="block w-full px-3 py-1.5 text-left hover:bg-white/10">
+                <button key={it.label} onClick={() => run(it)} onMouseEnter={() => setSub(null)} className="block w-full px-3 py-1.5 text-left hover:bg-white/10">
                   {it.label}
                 </button>
               )
@@ -695,7 +717,7 @@ export default function MatchBoard({
                 const g = menu.groups[drill]
                 return (
                   <>
-                    <button onClick={() => setDrill(null)} className="block w-full border-b border-white/10 px-3 py-1.5 text-left text-white/50 hover:bg-white/10">‹ Back</button>
+                    <button onClick={() => setDrill(null)} onMouseEnter={() => setSub(null)} className="block w-full border-b border-white/10 px-3 py-1.5 text-left text-white/50 hover:bg-white/10">‹ Back</button>
                     {g.items.map(Item)}
                   </>
                 )
@@ -703,10 +725,26 @@ export default function MatchBoard({
               return (
                 <>
                   {menu.items.map(Item)}
+                  {/* Hover flyout entry: opens the status list to the right (Add status effect). */}
+                  {menu.statuses && (
+                    <button
+                      onMouseEnter={(ev) => {
+                        const r = ev.currentTarget.getBoundingClientRect()
+                        const w = 184
+                        const x = r.right + w > window.innerWidth ? r.left - w + 2 : r.right - 2
+                        setSub({ x, y: r.top, items: menu.statuses! })
+                      }}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left font-semibold text-emerald-200 hover:bg-emerald-500/20"
+                    >
+                      <span>✨ Add status effect</span>
+                      <span className="text-white/40">▸</span>
+                    </button>
+                  )}
                   {menu.groups?.map((g, gi) => (
                     <button
                       key={g.label}
                       onClick={() => setDrill(gi)}
+                      onMouseEnter={() => setSub(null)}
                       className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left font-semibold text-fuchsia-200 hover:bg-fuchsia-500/20"
                     >
                       <span>{g.label}</span>
@@ -717,6 +755,24 @@ export default function MatchBoard({
               )
             })()}
           </div>
+          {/* Status-effect flyout — a second panel to the right of the entry. */}
+          {sub && (
+            <div
+              className="fixed z-[51] max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-emerald-400/30 bg-[#13161b] text-sm shadow-xl"
+              style={{ left: sub.x, top: sub.y }}
+              onMouseLeave={() => setSub(null)}
+            >
+              {sub.items.map((it) => (
+                <button
+                  key={it.label}
+                  onClick={() => { if (it.action) onCardAction?.(it.action); setMenu(null); setDrill(null); setSub(null) }}
+                  className="block w-full px-3 py-1.5 text-left hover:bg-emerald-500/15"
+                >
+                  {it.label}
+                </button>
+              ))}
+            </div>
+          )}
         </>
       )}
 
