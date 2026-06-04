@@ -459,6 +459,21 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   const lines: string[] = []
   // A gated effect does nothing when its condition isn't met.
   if (!conditionMet(s, p, e, bfIndex, excess)) return lines
+  // Discard resolves BEFORE the draw so "discard N, then draw N" doesn't toss a
+  // freshly-drawn card. Auto-discards the N lowest-cost cards from hand.
+  if (e.discard) {
+    const hand = p.zones.hand
+    const n = Math.min(e.discard, hand.length)
+    if (n > 0) {
+      const toGo = [...hand].sort((a, b) => cardCost(a) - cardCost(b)).slice(0, n)
+      for (const c of toGo) {
+        const i = hand.findIndex((x) => x.iid === c.iid)
+        if (i >= 0) sendToTrash(p, hand.splice(i, 1)[0])
+      }
+      lines.push(`Discarded ${n} card(s).`)
+      fireDiscard(s, p.id) // Jinx - Rebel reacts; mutations land on shared state
+    }
+  }
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
   if (e.drawPerBattlefield) {
     // "draw 1 for each battlefield you control" (Right of Conquest).

@@ -15,6 +15,11 @@ export type TargetScope = 'enemy' | 'friendly' | 'any' | null
 
 export interface ParsedEffect {
   draw: number
+  /** Cards the controller discards from hand ("discard N", "discard N then draw N"
+   *  — Chemtech Enforcer, Scrapyard Champion, Undercover Agent, Jinx - Demolitionist,
+   *  Ezreal - Prodigy, …). Auto-discards the N lowest-cost cards. Excludes opponent
+   *  discards ("they discard"), optional additional-cost discards, and "discard me". */
+  discard: number
   channel: number
   /** The killed unit's CONTROLLER draws N ("kill a unit. Its controller draws 2"
    *  — Hidden Blade). Distinct from drawOnKill, which the caster draws. */
@@ -163,6 +168,7 @@ export interface ParsedEffect {
 
 const EMPTY_EFFECT = (): ParsedEffect => ({
   draw: 0,
+  discard: 0,
   channel: 0,
   controllerDrawOnKill: 0,
   tempMightFloor: 0,
@@ -217,7 +223,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -275,6 +281,19 @@ function parse(text: string): ParsedEffect {
   // (Void Rush) and similar — a number word must end at a boundary.
   const drawM = tNoCond.match(new RegExp(`draw ${NUM}\\b`))
   if (drawM) { eff.draw += num(drawM[1]); hit = true }
+
+  // "discard N" self-discard (Chemtech Enforcer, Scrapyard, Undercover Agent, Jinx -
+  // Demolitionist, "discard N then draw N"). Skip opponent discards ("they discard")
+  // and optional additional-cost discards ("you may discard … as an additional cost").
+  const dm = t.match(new RegExp(`discard ${NUM}\\b`))
+  if (dm) {
+    const idx = dm.index ?? 0
+    const pre = t.slice(Math.max(0, idx - 14), idx)
+    const post = t.slice(idx, idx + 50)
+    if (!/\bthey\s+$/.test(pre) && !/\bmay\b/.test(pre) && !/as an additional cost/.test(post)) {
+      eff.discard += num(dm[1]); hit = true
+    }
+  }
 
   // Channel ready runes — but NOT the "channel N rune exhausted" variant (Soaring
   // Scout), which the channelExhausted parse below handles as exhausted instead.

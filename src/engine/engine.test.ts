@@ -1162,6 +1162,48 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].apheliosModesThisTurn).toBe(3)
   })
 
+  // --- Discard mechanic ---
+  it('discard: auto-discards the lowest-cost cards from hand', () => {
+    const maker = injectCard('disc-maker', 'When you play me, discard 1.', { type: 'unit', energy: 0, power: {} })
+    const cheap = injectCard('disc-cheap', 'A unit.', { energy: 1 })
+    const dear = injectCard('disc-dear', 'A unit.', { energy: 7 })
+    const s = baseState()
+    const u = mk(maker, 0)
+    s.players[0].zones.hand.push(u, mk(cheap, 0), mk(dear, 0))
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((x) => x.cardId === dear)).toBe(true) // kept
+    expect(r.state.players[0].zones.trash.some((x) => x.cardId === cheap)).toBe(true) // discarded
+  })
+
+  it('discard: "discard N then draw N" discards first, then draws', () => {
+    const maker = injectCard('disc-maker2', 'When you play me, discard 2, then draw 2.', { type: 'unit', energy: 0, power: {} })
+    const j1 = injectCard('disc-j1', 'A unit.', { energy: 1 })
+    const j2 = injectCard('disc-j2', 'A unit.', { energy: 1 })
+    const s = baseState()
+    const u = mk(maker, 0)
+    s.players[0].zones.hand.push(u, mk(j1, 0), mk(j2, 0))
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)]
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.trash.filter((x) => x.cardId === j1 || x.cardId === j2).length).toBe(2) // both discarded
+    expect(r.state.players[0].zones.hand.filter((x) => x.cardId === furyUnit.id).length).toBe(2) // drew 2
+  })
+
+  it('Jinx - Rebel (champion): readies and gains +1 Might this turn when you discard', () => {
+    const jinx = 'ogn-202-298'
+    if (!CARD_INDEX[jinx]) return
+    const maker = injectCard('disc-maker3', 'When you play me, discard 1.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    const jx = mk(jinx, 0, { exhausted: true })
+    s.players[0].zones.base.push(jx)
+    const u = mk(maker, 0)
+    s.players[0].zones.hand.push(u, mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    const jxAfter = r.state.players[0].zones.base.find((x) => x.iid === jx.iid)
+    expect(jxAfter?.exhausted).toBe(false) // readied
+    expect(jxAfter?.tempMight).toBe(1) // +1 Might this turn
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
