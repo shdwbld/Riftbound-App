@@ -228,3 +228,23 @@ The engine auto-resolves a broad slice of card text via three layers: a regex ef
 - ❌ **Shadow Watcher** (unl-037-219) — _Enters ready only if a friendly unit died during the controller's Beginning Phase this turn; exhausted otherwise._ → baseReady regex matches 'I enter ready' unconditionally (line 3564). The condition requires both a turn-phase check (Beginning Phase) and a death-this-turn flag, neither of which exist in MatchState as queried here. Shadow Watcher always enters ready.
 - ❌ **Shadow** (unl-194-219) — _Enters ready only when played directly to a battlefield (not to base); exhausted otherwise. Shadow has no [Ambush] keyword so it cannot actually be directed to a battlefield via PLAY_UNIT, making the condition permanently false._ → baseReady regex matches 'I enter ready' in Shadow's text unconditionally (line 3564). Shadow's condition is 'If you play me to a battlefield, I enter ready' — but without [Ambush] there is no engine path to play Shadow to a battlefield via PLAY_UNIT (toBattlefield is rejected unless kw.ambush). The correct behavior is: Shadow enters base exhausted in all normal play. Instead, the engine puts it into base ready every time.
 
+
+---
+
+## Implementation status (2026-06-04 follow-up)
+
+All 13 prioritized gaps were worked top-to-bottom. Status per gap:
+
+- **Gap 1 (HIGH) — Conditional enter-ready** — ✅ Done (`enterReadyConditionMet`).
+- **Gap 2 (HIGH) — Tribe/tag counting & conditions** — ✅ Done.
+- **Gap 3 (HIGH) — effectiveCostOf cost-reduction shapes** — ✅ Done.
+- **Gap 4 (MED) — Required "kill a unit" additional play cost** — ✅ Stalking Wolf (tribe kill + enters at the killed unit's bf) and Cruel Patron (friendly kill) enforced in PLAY_UNIT. ⏸ Deferred: Bard - Mercurial's optional exhaust-legend cost + "move any number of units to an open battlefield" (needs a placement-choice flow).
+- **Gap 5 (MED) — Play-spell-from-trash** — ✅ `playSpellFromTrash` + `replaySpellFromTrash` (Fizz - Trickster on play, Kai'Sa - Evolutionary on conquer); Hallowed Tomb returns the Chosen Champion on hold.
+- **Gap 6 (MED) — Recruit "here" placement** — ✅ `recruitsHere` (Noxian Drummer, Corina Veraza); Assembly Rig "Recycle a unit" cost relaxed.
+- **Gap 7 (MED) — Positional keyword auras** — ✅ Captain Farron [Assault] / Taric - Protector [Shield] via `unitGrantedKeywordHere`; Azir → Sand Soldiers Weaponmaster grant honored. ⏸ Deferred: Jax - Unmatched "Your Equipment everywhere have [Quick-Draw]" (gear-play mechanic).
+- **Gap 8 (MED) — Conditional/dynamic keywords** — ✅ Raging Soul (discard-gated [Assault]/[Ganking] via `discardedThisTurn`), Ancient Warmonger (Assault = enemy-unit count here). ⏸ Deferred: Wily Newtfish "gained XP this turn" (no flag yet).
+- **Gap 9 (MED) — Missing TriggerEvents** — ✅ attach-Equipment self-trigger (Jax - Unrelenting, generalized `fireAttachEquip`); gear-ability-use (Prize of Progress, `fireGearAbilityUse`). ⏸ Deferred: Sivir - Battle Mistress recycle-rune (spammy), Karma - Channeler recycle-card, Fae Dragon spend-buff, Teemo - Strategist played-from-Hidden.
+- **Gap 10 (MED) — Gear self-on-play effects** — ✅ Forge of the Future, Shurelya's Requiem (+ `readyAllUnits`), Edge of Night facedown auto-attach, Gutter Palace discard activated-ability cost.
+- **Gap 11 (MED) — Opponent-directed spawns / opponent-turn gate** — ✅ Viktor - Innovator opponent-turn gate, Walking Roost opponent token (`namedToken.opponent`), Noxus Saboteur REVEAL restriction, `gainXp` parse+apply, Scuttle Crab Deathknell-clause separation (also fixes the Gap-13 LeBlanc/Rift Herald leak).
+- **Gap 12 (LOW) — 2nd activated ability / Weaponmaster re-seat** — ⏸ Deferred (bespoke; Jax - Grandmaster's second ability + Azir - Ascendant swap need action/UI-layer changes; Armed Assailant / Sentinel Adept already work via the existing Weaponmaster path).
+- **Gap 13 (LOW) — One-off bespoke cards** — ✅ LeBlanc - Fragmented / Rift Herald Deathknell-string leak fixed (Gap 11 marker change) + regression test. ⏸ Deferred (true one-offs, each needs a dedicated handler with low play impact): Twisted Fate - Gambler, Heimerdinger - Inventor, Gearhead (blocked on a separate `gearMight` static-grant fix — all +Might gear use icon form which the regex's trailing `\b` never matches, and broadening it would false-positive on triggered/buff gear like Spirit's Refuge), Svellsongur, Strike Down, Rell - Magnetic, Royal Entourage, Ivern - Green Father, Adaptatron, Blitzcrank - Impassive, Rek'Sai - Breacher, Ember Monk.
