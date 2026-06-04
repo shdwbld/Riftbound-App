@@ -371,7 +371,7 @@ export type Action =
    *  `move` uses `toBattlefield` (a battlefield) or `toZone` (a player zone /
    *  banished) to relocate the card at `iid`. */
   | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number; toZone?: OverrideZone }
-  | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number }
+  | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number; /** Opt in to the card's optional "you may pay X as an additional cost to play me" (gates the "if you paid" bonus). */ payAdditionalCost?: boolean }
   | {
       type: 'PLAY_SPELL'
       player: PlayerId

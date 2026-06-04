@@ -253,6 +253,30 @@ export function repeatCost(card: Card | undefined): KeywordCost | null {
   return { energy, power }
 }
 
+/** The OPTIONAL rune/energy additional cost a card lets you pay AT PLAY — "You may
+ *  pay X as an additional cost to play me. When you play me, if you paid the
+ *  additional cost, …" (Clockwork Keeper, Blast Corps Cadet, Frostcoat Cub, Sea
+ *  Monkey, Akshan - Mischievous). Distinct from [Accelerate] (which reads "to have
+ *  me enter ready") and [Repeat] (spells). Null if none, or if the cost isn't a
+ *  plain rune/energy cost (exhaust-legend / spend-buff / discard / kill cases stay
+ *  hand-coded). The UI uses this to offer a Pay / Skip prompt at play time. */
+export function optionalPlayCost(card: Card | undefined): KeywordCost | null {
+  const text = card?.text ?? ''
+  const m = text.match(/you may pay ([^.]*?) as an additional cost to play (?:me|this)\b/i)
+  if (!m) return null
+  const seg = m[1]
+  let energy = 0
+  const power: Partial<Record<Domain, number>> = {}
+  const eM = seg.match(/:rb_energy_(\d+):/)
+  if (eM) energy = parseInt(eM[1], 10)
+  for (const rm of seg.matchAll(/:rb_rune_([a-z]+):/gi)) {
+    const d = rm[1].toLowerCase() as Domain
+    power[d] = (power[d] ?? 0) + 1
+  }
+  if (energy === 0 && Object.keys(power).length === 0) return null
+  return { energy, power }
+}
+
 /** One-line rules definitions for keyword tooltips. Keyed by the bare keyword
  *  name (lowercased, no number) so a label like "Shield 2" still resolves. */
 export const KEYWORD_DEFS: Record<string, string> = {

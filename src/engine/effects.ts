@@ -788,7 +788,21 @@ export function onPlayEffect(card: Card): ParsedEffect {
   // precedes the marker.
   const dkIdx = t.search(/\[deathknell\]/)
   const onPlayIdx = t.search(/when you play (?:me|this)|when i(?:'m| am)? (?:played|enter)/)
-  return parse(dkIdx > onPlayIdx && onPlayIdx >= 0 ? full.slice(0, dkIdx) : full)
+  const base = dkIdx > onPlayIdx && onPlayIdx >= 0 ? full.slice(0, dkIdx) : full
+  // Strip the "if you paid the additional cost, …" bonus — it's gated and applied
+  // separately (paidBonusEffect) only when the optional additional cost was paid,
+  // so it must NOT resolve unconditionally here.
+  return parse(base.replace(/(?:when you play (?:me|this),?\s*)?if you paid the additional cost,[^.]*\.?/i, ''))
+}
+
+/** The on-play bonus a card grants ONLY when its optional additional cost was paid
+ *  ("When you play me, if you paid the additional cost, <X>") — Clockwork Keeper
+ *  (draw 1), Blast Corps Cadet (deal 2), Frostcoat Cub (−2 Might), Sea Monkey
+ *  (buff me), Akshan (move an enemy gear). Empty if the card has no such clause. */
+export function paidBonusEffect(card: Card): ParsedEffect {
+  const m = (card.text ?? '').match(/if you paid the additional cost,\s*([^.]+)\.?/i)
+  if (!m) return EMPTY_EFFECT()
+  return parse(m[1])
 }
 
 /** A permanent's "At the end of your turn, …" effect (Dazzling Aurora), or empty. */

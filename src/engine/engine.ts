@@ -16,7 +16,7 @@ import {
   fail,
 } from './types'
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
-import { parseKeywords, keywordsAt, accelerateCost, repeatCost, levelBonus } from './keywords'
+import { parseKeywords, keywordsAt, accelerateCost, repeatCost, levelBonus, optionalPlayCost } from './keywords'
 import { addCost, costOf, effectiveCostOf, autoPayEff, autoPay, costIsFree } from './autopay'
 import { bfScript, bfScriptAt, battlefieldOf, type BfApi } from './battlefieldScripts'
 
@@ -25,7 +25,7 @@ function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
   const rank = (player - s.firstPlayer + s.players.length) % s.players.length
   return Math.floor((s.turn - 1 - rank) / s.players.length) + 1
 }
-import { spellEffect, onPlayEffect, endOfTurnEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, parseEffectText, type ParsedEffect } from './effects'
+import { spellEffect, onPlayEffect, paidBonusEffect, endOfTurnEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, parseEffectText, type ParsedEffect } from './effects'
 import { triggersFor, parseTriggers, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
 import { battlefieldPassive } from './battlefields'
 
@@ -4236,6 +4236,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const repeatAvail = action.type === 'PLAY_SPELL' ? repeatCostFor(s, action.player, card) : null
       const repeatChosen = action.type === 'PLAY_SPELL' && !!action.repeat && !!repeatAvail
       if (repeatChosen) effCost = addCost(effCost, repeatAvail!)
+      // Optional "you may pay X as an additional cost to play me" (Clockwork Keeper,
+      // Blast Corps Cadet, Frostcoat Cub, Sea Monkey, Akshan). Opt-in via the action;
+      // fold the cost in now and gate the "if you paid" bonus on `paidAdditional`.
+      const optPlayCost = action.type === 'PLAY_UNIT' ? optionalPlayCost(card) : null
+      const paidAdditional = action.type === 'PLAY_UNIT' && !!action.payAdditionalCost && !!optPlayCost
+      if (paidAdditional) effCost = addCost(effCost, optPlayCost!)
       const err = applyPayment(p, effCost, action.payment)
       if (err) return fail(state, err)
       // Recap signal: how this play was paid (runes exhausted / recycled). Emitted
@@ -4340,6 +4346,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         } else {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
         }
+        // Optional additional-cost bonus — only applied when the player paid it
+        // ("When you play me, if you paid the additional cost, …"). Reuses the same
+        // applyParsed path the on-play effect uses (so targeting is unchanged).
+        if (paidAdditional) {
+          s1 = log(s1, action.player, `${card.name}: paid the additional cost.`)
+          const pb = paidBonusEffect(card)
+          for (const line of applyParsed(s1, p, pb, ambushBf ?? undefined, ci.iid)) s1 = log(s1, action.player, line)
+          s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(pb))
+        }
         // Keeper of Masks: when played, play two Reflection copies of itself here.
         if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Keeper of Masks' && !legionGated) {
           const dest = ambushBf != null ? s1.battlefields[ambushBf].units : s1.players[action.player].zones.base
@@ -4360,11 +4375,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
         }
         // Bard - Mercurial: "You may exhaust your legend as an additional cost … if
-        // you paid, move any number of your units to an open battlefield." Auto-
-        // resolved (pure benefit): if the legend is ready and there's an open
-        // (uncontrolled + empty) battlefield with a ready base unit to send, exhaust
-        // the legend and move that unit there (conquering the open battlefield).
-        if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial' && /exhaust your legend as an additional cost/i.test(card.text ?? '') && !legionGated) {
+        // you paid, move any number of your units to an open battlefield." Opt-in via
+        // action.payAdditionalCost: if chosen and the legend is ready and there's an
+        // open (uncontrolled + empty) battlefield with a ready base unit to send,
+        // exhaust the legend and move that unit there (conquering the open battlefield).
+        if (action.payAdditionalCost && card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial' && /exhaust your legend as an additional cost/i.test(card.text ?? '') && !legionGated) {
           const legend = p.legend
           const openBf = s1.battlefields.findIndex((b) => b.controller == null && b.units.length === 0)
           const mover = p.zones.base.find((u) => u.iid !== ci.iid && !u.exhausted && getCard(u.cardId)?.type === 'unit')

@@ -1524,11 +1524,25 @@ describe('tokens (Recruit)', () => {
     s.players[0].zones.base.push(mover)
     const b = mk(bard, 0)
     s.players[0].zones.hand.push(b)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: b.iid, payment: { exhaust: [], recycle: [] } })
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: b.iid, payment: { exhaust: [], recycle: [] }, payAdditionalCost: true })
     expect(r.error).toBeUndefined()
     expect(r.state.players[0].legend?.exhausted).toBe(true) // additional cost paid
     expect(r.state.battlefields[0].units.some((x) => x.iid === mover.iid)).toBe(true) // moved to bf0
     expect(r.state.battlefields[0].controller).toBe(0) // conquered the open battlefield
+  })
+
+  it('Bard - Mercurial: declining the legend-exhaust skips both the cost and the bonus', () => {
+    const bard = injectCard('bard-merc-t2', 'You may exhaust your legend as an additional cost to play me. When you play me, if you paid the additional cost, move any number of your units to an open battlefield.', { name: 'Bard - Mercurial', type: 'unit', energy: 0, power: {}, might: 4 })
+    const s = baseState()
+    s.players[0].legend = mk(furyUnit.id, 0)
+    const mover = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(mover)
+    const b = mk(bard, 0)
+    s.players[0].zones.hand.push(b)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: b.iid, payment: { exhaust: [], recycle: [] } }) // no opt-in
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].legend?.exhausted).toBeFalsy() // cost NOT paid
+    expect(r.state.battlefields[0].units.some((x) => x.iid === mover.iid)).toBe(false) // bonus NOT applied
   })
 
   it('Azir - Ascendant: swap locations with a friendly unit, steal its Equipment, once per turn (P4)', () => {
@@ -5018,6 +5032,40 @@ describe('Playtest Pass 2 — combat/conquer detection', () => {
     expect(r.error).toBeUndefined()
     expect(r.state.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(true) // pulled in
     expect(r.state.phase).toBe('showdown') // combat initiated
+  })
+})
+
+describe('Playtest Pass 2 — optional additional cost (you may pay X to play me)', () => {
+  // Clockwork Keeper template: pay 1 rune → draw 1; skip → no draw, no rune spent.
+  const TEXT = 'You may pay :rb_rune_fury: as an additional cost to play me. When you play me, if you paid the additional cost, draw 1.'
+  function setup() {
+    const keeper = injectCard('opt-keeper', TEXT, { type: 'unit', energy: 0, power: {}, might: 3 })
+    const s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0)) // cards to draw
+    const rune = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(rune) // a fury rune to pay the optional cost
+    const u = mk(keeper, 0)
+    s.players[0].zones.hand.push(u)
+    return { s, u, rune }
+  }
+
+  it('pays the rune and grants the bonus when opted in', () => {
+    const { s, u, rune } = setup()
+    const hand0 = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [rune.iid] }, payAdditionalCost: true })
+    expect(r.error).toBeUndefined()
+    // played (−1 from hand) then drew 1 (+1) → net same count, and a rune was recycled
+    expect(r.state.players[0].zones.hand.length).toBe(hand0)
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === rune.iid)).toBe(false) // rune spent
+  })
+
+  it('skips the cost and the bonus by default (no free draw)', () => {
+    const { s, u, rune } = setup()
+    const hand0 = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } }) // no opt-in
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.hand.length).toBe(hand0 - 1) // played, did NOT draw
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === rune.iid)).toBe(true) // rune NOT spent
   })
 })
 
