@@ -1799,6 +1799,22 @@ function isEquipment(c: EngineCard): boolean {
   return d?.type === 'gear' && parseKeywords(d).equip
 }
 
+/** Every Equipment a player controls — detached in base AND already attached to
+ *  their units — as attach-choice options. Lets "attach an Equipment you control
+ *  to a unit" re-seat already-attached gear (Jax - Grandmaster's 2nd ability). */
+function controlledEquipOptions(s: MatchState, player: PlayerId): { iid: string; label: string }[] {
+  const out: { iid: string; label: string }[] = []
+  for (const c of s.players[player].zones.base) if (isEquipment(c)) out.push({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid })
+  for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
+    if (u.owner !== player) continue
+    for (const ref of u.attached) {
+      const [cid, iid] = ref.split('|')
+      if (getCard(cid)?.type === 'gear') out.push({ iid, label: `${getCard(cid)?.name ?? cid} (on ${getCard(u.cardId)?.name})` })
+    }
+  }
+  return out
+}
+
 /** Units a player controls (base + battlefields). */
 function unitsControlledBy(s: MatchState, player: PlayerId): EngineCard[] {
   return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
@@ -4571,15 +4587,26 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           return ok(s)
         }
         case 'forgePickTarget': {
-          // Attach the carried Equipment to the chosen unit.
+          // Attach the carried Equipment to the chosen unit. The Equipment is either
+          // detached in base or already attached to another friendly unit (re-seat —
+          // Jax - Grandmaster's 2nd ability); detach it from its current host first.
           const equipIid = pc.payload
           const target = findUnitAnywhere(s, action.iid)
           if (!equipIid || !target || target.owner !== action.player) return fail(state, 'Invalid attach target.')
+          let gearCardId: string | undefined
           const gi = s.players[action.player].zones.base.findIndex((c) => c.iid === equipIid)
-          if (gi < 0) return fail(state, 'That Equipment is no longer available.')
-          const [gear] = s.players[action.player].zones.base.splice(gi, 1)
-          target.attached = [...target.attached, `${gear.cardId}|${gear.iid}`]
-          return ok(fireAttachEquip(log(s, action.player, `Forge of the Fluft: attached ${getCard(gear.cardId)?.name} to ${getCard(target.cardId)?.name}.`), action.player, target))
+          if (gi >= 0) {
+            gearCardId = s.players[action.player].zones.base.splice(gi, 1)[0].cardId
+          } else {
+            for (const host of [...s.players[action.player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
+              if (host.owner !== action.player) continue
+              const ai = host.attached.findIndex((r) => r.split('|')[1] === equipIid)
+              if (ai >= 0) { gearCardId = host.attached.splice(ai, 1)[0].split('|')[0]; break }
+            }
+          }
+          if (!gearCardId) return fail(state, 'That Equipment is no longer available.')
+          target.attached = [...target.attached, `${gearCardId}|${equipIid}`]
+          return ok(fireAttachEquip(log(s, action.player, `Attached ${getCard(gearCardId)?.name} to ${getCard(target.cardId)?.name}.`), action.player, target))
         }
         case 'orbMinusMight': {
           // Orb of Regret: -N Might this turn, to a minimum of 1 current Might.
@@ -4626,7 +4653,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       }
       // forgeAttach: exhaust the legend, then prompt to pick an Equipment.
       p.legend!.exhausted = true
-      const equips = p.zones.base.filter(isEquipment).map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid }))
+      const equips = controlledEquipOptions(s, action.player)
       offerChoice(s, { player: action.player, kind: 'forgePickEquip', bfIndex: -1, prompt: 'Forge of the Fluft — choose an Equipment to attach.', options: equips })
       return ok(log(s, action.player, `Forge of the Fluft: exhausted your legend to attach an Equipment.`))
     }
@@ -4657,8 +4684,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // "Attach an Equipment you control to a unit you control" (Jax) — a
       // two-step pick-equip → pick-target, reusing the Forge choice flow.
       if (/attach\b[^.]*\bequipment\b[^.]*\bto a unit/i.test(ab.effectText)) {
-        const equips = p.zones.base.filter(isEquipment).map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid }))
-        if (!equips.length) return fail(state, 'No detached Equipment you control to attach.')
+        const equips = controlledEquipOptions(s1, action.player)
+        if (!equips.length) return fail(state, 'No Equipment you control to attach.')
         offerChoice(s1, { player: action.player, kind: 'forgePickEquip', bfIndex: -1, prompt: `${name} — choose an Equipment to attach.`, options: equips })
         return ok(s1)
       }

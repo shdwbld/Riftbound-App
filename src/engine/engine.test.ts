@@ -1393,6 +1393,26 @@ describe('tokens (Recruit)', () => {
     expect(reduce(r.state, { type: 'ACTIVATE_UNIT', player: 0, iid: azir.iid, targets: [ally.iid] }).error).toBeTruthy() // once per turn
   })
 
+  it('Jax - Grandmaster At Arms: re-seats an already-attached Equipment to another unit (P4)', () => {
+    const jax = injectCard('jax-gm-t', ':rb_energy_1:, :rb_exhaust:: Attach a detached Equipment you control to a unit you control.:rb_exhaust:: Attach an attached Equipment you control to a unit you control.', { name: 'Jax - Grandmaster At Arms', type: 'legend' })
+    const gearId = injectCard('jax-gm-gear', '+1 :rb_might:', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].legend = mk(jax, 0)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 Energy for the ability cost
+    const g = mk(gearId, 0)
+    const unitA = mk(furyUnit.id, 0, { attached: [`${gearId}|${g.iid}`] })
+    const unitB = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(unitA, unitB)
+    let r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend!.iid, targets: [] })
+    expect(r.error).toBeUndefined()
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: g.iid }) // pick the attached gear
+    expect(r.error).toBeUndefined()
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: unitB.iid }) // re-seat to unit B
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === unitB.iid)?.attached.some((a) => a.startsWith(`${gearId}|`))).toBe(true) // re-seated to B
+    expect(r.state.players[0].zones.base.find((x) => x.iid === unitA.iid)?.attached.length).toBe(0) // taken from A
+  })
+
   it('Ahri - Nine-Tailed Fox (legend): an enemy attacking your battlefield gets -1 Might (min 1)', () => {
     const ahri9 = 'ogn-255-298'
     if (!CARD_INDEX[ahri9]) return
