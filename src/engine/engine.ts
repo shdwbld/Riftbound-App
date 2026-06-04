@@ -3830,8 +3830,28 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const guardReady = readyGuarded && enterReadyConditionMet(s, p, readyClause, action.toBattlefield ?? null)
         const condReady = monchReady || leonaReady || guardReady
         const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady
-        // Ambush: a Reaction unit enters directly at a contested battlefield.
-        const ambushBf = kw.ambush && action.toBattlefield != null ? action.toBattlefield : null
+        // Required additional cost "As an additional cost to play me, kill a <X>
+        // you control" (Stalking Wolf → Bird/Cat/Dog/Poro; Cruel Patron → any
+        // friendly unit). Pick the lowest-Might qualifier now (the kill resolves
+        // after placement); if none exists the cost can't be paid → reject.
+        let killCostBf = -1
+        let killCostVictim: string | null = null
+        const ctext = (card.text ?? '').toLowerCase()
+        if (/as an additional cost to play me, kill /.test(ctext)) {
+          const tribes = ['bird', 'cat', 'dog', 'poro']
+          const wantsTribe = tribes.some((t) => new RegExp(`kill[^.]*\\b${t}\\b`).test(ctext))
+          const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((x) =>
+            x.owner === action.player && getCard(x.cardId)?.type === 'unit' &&
+            (wantsTribe ? (getCard(x.cardId)?.tags ?? []).some((tag) => tribes.includes(tag.toLowerCase())) : true),
+          )
+          if (!candidates.length) return fail(state, `Can't play ${card.name}: no valid unit to kill for its additional cost.`)
+          const victim = candidates.reduce((lo, x) => (mightOf(x) < mightOf(lo) ? x : lo))
+          killCostVictim = victim.iid
+          killCostBf = battlefieldOf(s, victim.iid) // Stalking Wolf may enter at its battlefield
+        }
+        // Ambush: a Reaction unit enters directly at a contested battlefield. Stalking
+        // Wolf may also enter at the battlefield of the unit it killed (even alone).
+        const ambushBf = kw.ambush ? (action.toBattlefield ?? (killCostBf >= 0 ? killCostBf : null)) : null
         if (ambushBf != null) {
           s.battlefields[ambushBf].units.push({ ...ci, exhausted: false, enteredTurn: s.turn })
           recomputeControllers(s)
@@ -3845,6 +3865,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           action.player,
           `Played ${card.name}${ambushBf != null ? ' (Ambush)' : accelChosen ? ' (ready Â· Accelerate)' : levelReady ? ' (ready Â· Level)' : ''}.`,
         )
+        // Pay the required kill cost now that the unit is in play.
+        if (killCostVictim) {
+          const vName = getCard(findUnitAnywhere(s1, killCostVictim)?.cardId ?? '')?.name ?? 'a unit'
+          s1 = fireDeaths(s1, killTarget(s1, killCostVictim))
+          s1 = log(s1, action.player, `${card.name}: killed ${vName} as an additional cost.`)
+        }
         const e = onPlayEffect(card)
         const legionGated = kw.legion && !legionActive
         if (!legionGated) {

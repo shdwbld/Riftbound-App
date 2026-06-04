@@ -784,6 +784,43 @@ describe('tokens (Recruit)', () => {
     expect(r.state.battlefields[0].units.find((x) => x.iid === pz.iid)?.tempMight).toBe(1)
   })
 
+  it('Stalking Wolf: required kill of a tribe unit; enters at its battlefield (Gap 4)', () => {
+    const wolf = injectCard('stalking-wolf-t', "[Ambush] As an additional cost to play me, kill a Bird, Cat, Dog, or Poro you control. You may play me to its battlefield (even if you don't have other units there).", { type: 'unit', energy: 0, power: {}, might: 6 })
+    const poro = injectCard('sw-poro', 'A unit.', { might: 1, tags: ['Poro'] })
+    const s = baseState()
+    const por = mk(poro, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [por], controller: 0 }
+    const w = mk(wolf, 0)
+    s.players[0].zones.hand.push(w)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: w.iid, toBattlefield: 0, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === por.iid)).toBe(false) // Poro killed as cost
+    expect(r.state.battlefields[0].units.some((x) => x.iid === w.iid)).toBe(true) // Wolf entered here
+  })
+
+  it('Stalking Wolf: cannot be played without a tribe unit to kill (Gap 4)', () => {
+    const wolf = injectCard('stalking-wolf-t2', '[Ambush] As an additional cost to play me, kill a Bird, Cat, Dog, or Poro you control.', { type: 'unit', energy: 0, power: {}, might: 6 })
+    const s = baseState()
+    const w = mk(wolf, 0)
+    s.players[0].zones.hand.push(w)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: w.iid, toBattlefield: 0, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeTruthy() // no Poro/Bird/Cat/Dog to pay the cost
+  })
+
+  it('Cruel Patron: required kill of a friendly unit on play (Gap 4)', () => {
+    const patron = injectCard('cruel-patron-t', 'As an additional cost to play me, kill a friendly unit.', { type: 'unit', energy: 0, power: {}, might: 4 })
+    const ally = injectCard('cp-ally', 'A unit.', { might: 1 })
+    const s = baseState()
+    const a = mk(ally, 0)
+    s.players[0].zones.base.push(a)
+    const c = mk(patron, 0)
+    s.players[0].zones.hand.push(c)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: c.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.some((x) => x.iid === a.iid)).toBe(false) // ally killed
+    expect(r.state.players[0].zones.base.some((x) => x.iid === c.iid)).toBe(true) // Patron in play
+  })
+
   it('Dazzling Aurora: at end of turn, reveal-until-unit → play it free, recycle the rest', () => {
     const aurora = injectCard('aurora-gear', 'At the end of your turn, reveal cards from the top of your Main Deck until you reveal a unit and banish it. Play it, ignoring its cost, and recycle the rest.', { type: 'gear' })
     const spellId = injectCard('aurora-spell', 'Deal 1.', { type: 'spell', energy: 1, power: {} })
