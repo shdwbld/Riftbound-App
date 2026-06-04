@@ -48,8 +48,13 @@ interface Pattern {
 // Order matters only for readability; each pattern is tested independently.
 const PATTERNS: Pattern[] = [
   { event: 'death', scope: 'self', re: /when(?:ever)?\s+(?:i['’]?m|i am|this(?:\s+unit)?\s+is|this(?:\s+unit)?)\s+(?:defeated|killed|destroyed|dies)/i },
-  // "When another non-Recruit unit you control dies" (Viktor - Leader) — global.
-  { event: 'death', scope: 'global', re: /when(?:ever)?\s+(?:another\s+|an?\s+)?(?:non-recruit\s+)?units?\s+you\s+control\s+(?:dies|is\s+defeated|are\s+defeated)/i },
+  // "When another non-Recruit unit you control dies" (Viktor - Leader), "when
+  // another friendly unit dies" (Spectral Centaur), "when a buffed friendly unit
+  // dies" (Vanguard Helm) — global. "you control" / "friendly" / "buffed" are all
+  // optional; the death resolver only fires this for the dying unit's controller,
+  // so it's friendly-scoped either way. (Won't match "an enemy unit dies" — that
+  // qualifier isn't allowed between the article and "unit".)
+  { event: 'death', scope: 'global', re: /when(?:ever)?\s+(?:another\s+|an?\s+)?(?:buffed\s+)?(?:non-recruit\s+)?(?:friendly\s+)?units?\s+(?:you\s+control\s+)?(?:dies|is\s+defeated|are\s+defeated)/i },
   // "When an enemy unit dies" / "When one or more enemy units die" (Pyke -
   // Returned, Sivir - Battle Mistress). Scope 'global' — fired for the controller
   // of the source by the death resolver, off the OTHER players' permanents.

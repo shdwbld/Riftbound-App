@@ -146,6 +146,10 @@ export interface ParsedEffect {
   /** Signed Might-this-turn applied to ALL the controller's units ("give
    *  friendly units +5 Might this turn" — Grand Strategem). */
   tempMightAll: number
+  /** Signed Might-this-turn applied to ALL enemy units ("give enemy units -3 Might
+   *  this turn, to a minimum of 1" — Thousand-Tailed Watcher). Floored by
+   *  `tempMightFloor`. */
+  tempMightAllEnemy: number
   /** Extra cards drawn if a chosen target dies during this resolution. */
   drawOnKill: number
   /** Who the targeted part may hit. */
@@ -209,6 +213,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   channelExhausted: 0,
   tempMightSelf: 0,
   tempMightAll: 0,
+  tempMightAllEnemy: 0,
   drawOnKill: 0,
   targetScope: null,
   targetCount: 0,
@@ -223,7 +228,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -544,6 +549,14 @@ function parse(text: string): ParsedEffect {
   const tmAllM = t.match(new RegExp(`give (?:all |your )?(?:other )?(?:friendly )?units(?:\\s+(?:here|there))? (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
   if (tmAllM) {
     eff.tempMightAll += (tmAllM[1] === '-' ? -1 : 1) * parseInt(tmAllM[2], 10)
+    hit = true
+  }
+
+  // Signed Might-this-turn to ALL ENEMY units: "give (all) enemy units -N Might this
+  // turn (to a minimum of 1)" (Thousand-Tailed Watcher). Floored by tempMightFloor.
+  const tmEnemyM = t.match(new RegExp(`give (?:all )?enemy units?(?:\\s+(?:here|there))? (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
+  if (tmEnemyM) {
+    eff.tempMightAllEnemy += (tmEnemyM[1] === '-' ? -1 : 1) * parseInt(tmEnemyM[2], 10)
     hit = true
   }
 

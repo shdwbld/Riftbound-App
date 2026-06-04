@@ -668,6 +668,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     for (const u of units) u.tempMight = (u.tempMight ?? 0) + e.tempMightAll
     if (units.length) lines.push(`${e.tempMightAll > 0 ? '+' : ''}${e.tempMightAll} Might this turn to ${units.length} unit(s).`)
   }
+  if (e.tempMightAllEnemy) {
+    // Board-wide temp Might to all ENEMY units (Thousand-Tailed Watcher: -3, min 1).
+    const enemies = [...s.players.flatMap((pl) => pl.zones.base), ...s.battlefields.flatMap((b) => b.units)].filter(
+      (u) => u.owner !== p.id && getCard(u.cardId)?.type === 'unit',
+    )
+    let n = 0
+    for (const u of enemies) { applyTempMight(s, u.iid, e.tempMightAllEnemy, e.tempMightFloor); n++ }
+    if (n) lines.push(`${e.tempMightAllEnemy > 0 ? '+' : ''}${e.tempMightAllEnemy} Might this turn to ${n} enemy unit(s).`)
+  }
   if (e.readyUnits) {
     // Surface a "choose which unit(s) to ready" prompt for the player.
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
@@ -974,9 +983,11 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
       if (perm.iid === u.iid) continue // "another" — not the dying unit itself
       for (const ab of triggersFor(def(perm), 'death')) {
         if (ab.scope !== 'global') continue
-        // "non-Recruit" gate (the qualifier sits in the trigger phrase, so check
-        // the source card's full text, not the parsed clause).
-        if (/non-recruit/i.test(getCard(perm.cardId)?.text ?? '') && isRecruit(u)) continue
+        // "non-Recruit" / "buffed" gates (the qualifier sits in the trigger phrase,
+        // so check the source card's full text, not the parsed clause).
+        const srcText = getCard(perm.cardId)?.text ?? ''
+        if (/non-recruit/i.test(srcText) && isRecruit(u)) continue
+        if (/buffed [^.]*?units?[^.]*?(?:dies|defeated)/i.test(srcText) && !(u.buffs ?? 0)) continue // Vanguard Helm
         fired.push({ player: u.owner, ability: ab, sourceIid: perm.iid })
       }
     }

@@ -1204,6 +1204,54 @@ describe('tokens (Recruit)', () => {
     expect(jxAfter?.tempMight).toBe(1) // +1 Might this turn
   })
 
+  // --- Buff/Might sweep: triggered + on-play stragglers ---
+  it('Spectral Centaur: +2 Might this turn when another friendly unit dies', () => {
+    const sc = injectCard('sc-test', 'When another friendly unit dies, give me +2 :rb_might: this turn.', { type: 'unit', energy: 0, power: {}, might: 3 })
+    const s = baseState()
+    s.sandbox = true
+    const centaur = mk(sc, 0)
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(centaur, ally)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: ally.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.find((u) => u.iid === centaur.iid)?.tempMight).toBe(2)
+  })
+
+  it('Thousand-Tailed Watcher: on play gives all enemy units -3 Might this turn (min 1)', () => {
+    const watcher = injectCard('ttw-test', 'When you play me, give enemy units -3 :rb_might: this turn, to a minimum of 1 :rb_might:.', { type: 'unit', energy: 0, power: {} })
+    const big = mk(injectCard('ttw-e1', 'A unit.', { might: 10 }), 1)
+    const small = mk(injectCard('ttw-e2', 'A unit.', { might: 2 }), 1)
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [big, small], controller: 1 }
+    const u = mk(watcher, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.battlefields[0].units.find((x) => x.iid === big.iid)?.tempMight).toBe(-3) // 10 → 7
+    expect(r.state.battlefields[0].units.find((x) => x.iid === small.iid)?.tempMight).toBe(-1) // 2 → floored at 1
+  })
+
+  it('Vanguard Helm: buffs another friendly only when a BUFFED friendly unit dies', () => {
+    const helm = injectCard('vh-test', 'When a buffed friendly unit dies, buff another friendly unit. (If it doesn\'t have a buff, it gets a +1 :rb_might: buff.)', { type: 'gear', energy: 0, power: {} })
+    // A buffed unit dies → another friendly gets a +1 buff.
+    let s = baseState()
+    s.sandbox = true
+    s.players[0].zones.base.push(mk(helm, 0))
+    const buffed = mk(furyUnit.id, 0, { buffs: 1 })
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(buffed, ally)
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: buffed.iid })
+    expect(r.state.battlefields[0].units.find((u) => u.iid === ally.iid)?.buffs).toBe(1)
+    // An UNbuffed unit dies → no buff (the "buffed" qualifier isn't met).
+    s = baseState()
+    s.sandbox = true
+    s.players[0].zones.base.push(mk(helm, 0))
+    const plain = mk(furyUnit.id, 0)
+    const ally2 = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(plain, ally2)
+    r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: plain.iid })
+    expect(r.state.battlefields[0].units.find((u) => u.iid === ally2.iid)?.buffs ?? 0).toBe(0)
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
