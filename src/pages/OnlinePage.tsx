@@ -698,7 +698,7 @@ export default function OnlinePage() {
       )}
       {match.readyChoice && match.readyChoice.player === seat && (() => {
         const units = [...match.players[seat].zones.base, ...match.battlefields.flatMap((b) => b.units)].filter(
-          (u) => u.owner === seat && u.exhausted && getCard(u.cardId)?.type === 'unit',
+          (u) => u.owner === seat && u.exhausted && getCard(u.cardId)?.type === 'unit' && u.iid !== match.readyChoice!.excludeIid,
         )
         return units.length ? (
           <ChoiceModal

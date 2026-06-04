@@ -85,6 +85,9 @@ export interface ParsedEffect {
   buffSelf: boolean
   /** A targeted buff that must not pick the source ("buff ANOTHER unit"). */
   buffExcludesSelf: boolean
+  /** A "ready ANOTHER unit" effect (First Mate) — the ready picker must exclude the
+   *  source unit. */
+  readyExcludesSelf: boolean
   /** An area buff: 'all' = every friendly unit you control ("buff all friendly
    *  units" — Overt Operation); 'here' = friendly units at the source's
    *  battlefield ("buff all units here" — Enthusiastic Promoter, Peak Guardian).
@@ -223,6 +226,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   buff: 0,
   buffSelf: false,
   buffExcludesSelf: false,
+  readyExcludesSelf: false,
   buffAll: null,
   readySelf: false,
   spendBuff: false,
@@ -410,6 +414,7 @@ function parse(text: string): ParsedEffect {
   if (readyM && !/\b(?:a|an) ready\b/.test(t)) {
     const w = readyM[1].toLowerCase()
     eff.readyUnits += /^(a|an|another|target|one)$/.test(w) ? 1 : num(w)
+    if (w === 'another') eff.readyExcludesSelf = true // "ready ANOTHER unit" (First Mate)
     hit = true
   }
 

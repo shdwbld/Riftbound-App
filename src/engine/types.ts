@@ -242,7 +242,7 @@ export interface MatchState {
   vision?: { player: PlayerId; cardId: string }
   /** A pending "ready a unit" choice: the player picks which exhausted unit(s)
    *  to ready, one at a time, until `count` reaches 0. */
-  readyChoice?: { player: PlayerId; count: number }
+  readyChoice?: { player: PlayerId; count: number; excludeIid?: string }
   /** A pending optional battlefield choice (Reaver's Row, Amateur Recital,
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {

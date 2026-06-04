@@ -746,13 +746,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     else if (p.legend?.exhausted) { p.legend.exhausted = false; lines.push(`Readied your legend.`) }
   }
   if (e.readyUnits) {
-    // Surface a "choose which unit(s) to ready" prompt for the player.
+    // Surface a "choose which unit(s) to ready" prompt for the player. "ready
+    // ANOTHER unit" (First Mate) excludes the source unit from the choices.
+    const excludeIid = e.readyExcludesSelf ? sourceIid : undefined
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => u.owner === p.id && u.exhausted && getCard(u.cardId)?.type === 'unit',
+      (u) => u.owner === p.id && u.exhausted && getCard(u.cardId)?.type === 'unit' && u.iid !== excludeIid,
     )
     const cnt = Math.min(e.readyUnits, exhausted.length)
     if (cnt > 0) {
-      s.readyChoice = { player: p.id, count: (s.readyChoice?.player === p.id ? s.readyChoice.count : 0) + cnt }
+      s.readyChoice = { player: p.id, count: (s.readyChoice?.player === p.id ? s.readyChoice.count : 0) + cnt, excludeIid }
       lines.push(`Ready ${cnt} unit(s) — choose which.`)
     }
   }
@@ -2086,6 +2088,12 @@ function returnUnitToHand(s: MatchState, bfIndex: number, iid: string): EngineCa
   if (idx < 0) return null
   const rippersBay = bfBaseNameAt(s, bfIndex) === "Ripper's Bay"
   const [u] = bf.units.splice(idx, 1)
+  // Attached gear can't go to hand with the unit — detach each to its owner's base
+  // (a card returning to hand sheds its Equipment, same as a manual Detach).
+  for (const ref of u.attached) {
+    const [gCardId, gIid] = ref.split('|')
+    if (gCardId) s.players[u.owner].zones.base.push({ iid: gIid || `${u.owner}:gear:${gCardId}`, cardId: gCardId, owner: u.owner, exhausted: false, damage: 0, attached: [] })
+  }
   s.players[u.owner].zones.hand.push({ iid: u.iid, cardId: u.cardId, owner: u.owner, exhausted: false, damage: 0, attached: [] })
   recomputeControllers(s)
   if (rippersBay && makeBfApi(s).payEnergy(u.owner, 1)) {
@@ -2122,6 +2130,7 @@ function bounceUnitToHand(s: MatchState, iid: string, by: PlayerId, spellName: s
     s.players[owner].zones.base.push({ iid: gIid || `${owner}:gear:${gCardId}`, cardId: gCardId, owner, exhausted: false, damage: 0, attached: [] })
     s = log(s, owner, `${spellName}: ${getCard(gCardId)?.name ?? 'Gear'} detached to base.`)
   }
+  u.attached = [] // already detached above — prevent returnUnitToHand from re-detaching
   const bfi = s.battlefields.findIndex((b) => b.units.some((x) => x.iid === iid))
   if (bfi >= 0) {
     if (isToken) {
@@ -2548,9 +2557,10 @@ function finishBeginning(s: MatchState): MatchState {
       script.onHold(makeBfApi(s), ap, s.battlefields.indexOf(bf))
       continue
     }
-    // Amateur Recital: on hold, you may move any unit at a battlefield to base.
+    // Amateur Recital: on hold, you may move one of YOUR units at a battlefield to
+    // its base (own units only — "to its base" = the unit owner's base).
     if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'Amateur Recital') {
-      const opts = s.battlefields.flatMap((b) => b.units).map((u) => unitOpt(u))
+      const opts = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === ap).map((u) => unitOpt(u))
       offerChoice(s, { player: ap, kind: 'moveAnyToBase', bfIndex: s.battlefields.indexOf(bf), prompt: 'Amateur Recital — move a unit at a battlefield to its base?', options: opts })
       continue
     }
@@ -4628,13 +4638,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     case 'READY_UNIT': {
       if (!state.readyChoice || state.readyChoice.player !== action.player)
         return fail(state, 'No unit to ready right now.')
+      if (state.readyChoice.excludeIid === action.iid)
+        return fail(state, 'That unit can\'t be readied by this effect (ready another unit).')
       const s = clone(state)
       const u = findUnitAnywhere(s, action.iid)
       if (!u || u.owner !== action.player || !u.exhausted)
         return fail(state, 'Choose one of your exhausted units.')
       u.exhausted = false
       emit({ kind: 'buff', iid: u.iid, player: action.player })
-      s.readyChoice = s.readyChoice!.count > 1 ? { player: action.player, count: s.readyChoice!.count - 1 } : undefined
+      s.readyChoice = s.readyChoice!.count > 1 ? { player: action.player, count: s.readyChoice!.count - 1, excludeIid: s.readyChoice!.excludeIid } : undefined
       return ok(log(s, action.player, `Readied ${getCard(u.cardId)?.name}.`))
     }
 

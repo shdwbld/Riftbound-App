@@ -4917,3 +4917,52 @@ describe('Ivern - Green Father (legend conquer/hold → Brush token)', () => {
     expect(after.players[0].legend?.exhausted).toBe(true)
   })
 })
+
+describe('Playtest Pass 1 fixes', () => {
+  it('First Mate: "ready another unit" excludes itself from the ready choice', () => {
+    const fm = injectCard('first-mate-t', 'When you play me, ready another unit.', { name: 'First Mate', type: 'unit', energy: 0, power: {}, might: 3 })
+    const s = baseState()
+    const other = mk(furyUnit.id, 0, { exhausted: true })
+    s.players[0].zones.base.push(other)
+    const f = mk(fm, 0)
+    s.players[0].zones.hand.push(f)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: f.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.readyChoice?.excludeIid).toBe(f.iid)
+    expect(reduce(r.state, { type: 'READY_UNIT', player: 0, iid: f.iid }).error).toBeTruthy() // can't ready itself
+    r = reduce(r.state, { type: 'READY_UNIT', player: 0, iid: other.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === other.iid)?.exhausted).toBe(false)
+  })
+
+  it('Amateur Recital: move-to-base offers only your own units', () => {
+    const s = baseState()
+    s.activePlayer = 0
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)]
+    s.players[0].zones.runeDeck = [mk(furyRune.id, 0)]
+    const mine = mk(furyUnit.id, 0), enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: 'unl-207-219', units: [mine, mk(furyUnit.id, 0), enemy], controller: 0 } // p0 controls (2 vs 1)
+    const after = beginTurn(s)
+    const pc = after.pendingChoice
+    expect(pc?.kind).toBe('moveAnyToBase')
+    expect(pc?.options.some((o) => o.iid === enemy.iid)).toBe(false) // enemy not offered
+    expect(pc?.options.some((o) => o.iid === mine.iid)).toBe(true)
+  })
+
+  it('Bouncing an equipped unit detaches its gear to base exactly once (no double-detach)', () => {
+    const spell = injectCard('bounce-t', "Return a unit to its owner's hand.", { type: 'spell', energy: 0, power: {} })
+    const gear = injectCard('bounce-gear', 'A gear.', { type: 'gear', energy: 0, power: {} })
+    const g = mk(gear, 0)
+    const u = mk(furyUnit.id, 0, { attached: [`${gear}|${g.iid}`] })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    const sp = mk(spell, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [u.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.filter((x) => x.cardId === gear).length).toBe(1) // gear in base exactly once
+    expect(r.state.players[0].zones.hand.some((x) => x.cardId === furyUnit.id)).toBe(true) // unit returned to hand
+  })
+})
