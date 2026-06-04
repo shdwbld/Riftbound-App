@@ -5116,8 +5116,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         case 'unstun': if (u) u.stunned = false; break
         case 'ready': if (u) u.exhausted = false; break
         case 'exhaust': if (u) u.exhausted = true; break
-        case 'buff': if (u) u.buffs = (u.buffs ?? 0) + 1; break
-        case 'unbuff': if (u) u.buffs = Math.max(0, (u.buffs ?? 0) - 1); break
+        case 'buff': if (u) u.buffs = (u.buffs ?? 0) + (action.amount ?? 1); break
+        case 'unbuff': if (u) u.buffs = Math.max(0, (u.buffs ?? 0) - (action.amount ?? 1)); break
         case 'mightUp': if (u) u.tempMight = (u.tempMight ?? 0) + (action.amount ?? 1); break
         case 'mightDown': if (u) u.tempMight = (u.tempMight ?? 0) - (action.amount ?? 1); break
         case 'kill': if (action.iid) s = fireDeaths(s, killTarget(s, action.iid)); break
@@ -5172,6 +5172,27 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         case 'shuffle': { const p = s.players[action.player]; if (p) p.zones.mainDeck = shuffle(p.zones.mainDeck); break }
         case 'mill': { const p = s.players[action.player]; const n = action.amount ?? 1; if (p) for (let i = 0; i < n && p.zones.mainDeck.length; i++) p.zones.trash.push(p.zones.mainDeck.shift()!); break }
         case 'damage': { if (u) u.damage = Math.max(0, (u.damage ?? 0) + (action.amount ?? 1)); break }
+        case 'setDamage': { if (u) u.damage = Math.max(0, action.value ?? 0); break }
+        case 'grant': {
+          if (!u) break
+          switch (action.flag) {
+            case 'assault': u.grantAssault = Math.max(0, (u.grantAssault ?? 0) + (action.amount ?? 1)); break
+            case 'ganking': u.grantGanking = !u.grantGanking; break
+            case 'temporary': u.temporary = !u.temporary; break
+            case 'deathShield': u.deathShield = !u.deathShield; break
+            case 'banishShield': u.banishShield = !u.banishShield; break
+            case 'token': u.token = !u.token; break
+            case 'facedown': u.facedown = !u.facedown; break
+            case 'sickness': u.enteredTurn = 0; break // clear summoning sickness (entered long ago)
+            case 'cantmove': u.cantMoveTurn = undefined; break
+          }
+          break
+        }
+        case 'readyAll': {
+          for (const unit of [...s.players[action.player].zones.base, ...s.battlefields.flatMap((b) => b.units)])
+            if (unit.owner === action.player) unit.exhausted = false
+          break
+        }
         case 'spawn': {
           if (!action.cardId) break
           const card: EngineCard = { iid: `${action.player}:ov:${action.cardId}#${(tokenCounter++).toString(36)}`, cardId: action.cardId, owner: action.player, exhausted: false, damage: 0, attached: [] }

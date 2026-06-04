@@ -24,6 +24,11 @@ import CardPreview from './CardPreview'
 import CardText, { DomainIcon } from './CardText'
 import PlayedCardSpotlight from './PlayedCardSpotlight'
 import OverridePanel from './OverridePanel'
+
+/** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
+type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string }
+/** A drill-down category in the right-click menu (collapses the rest when open). */
+type MenuGroup = { label: string; items: MenuItem[] }
 import FeedbackLayer from './FeedbackLayer'
 
 /** Name of a unit anywhere on the board, by iid (for combat banners). */
@@ -159,7 +164,8 @@ export default function MatchBoard({
   const [selectedUnits, setSelectedUnits] = useState<string[]>([])
   const toggleSelected = (iid: string) =>
     setSelectedUnits((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : [...s, iid]))
-  const [menu, setMenu] = useState<{ x: number; y: number; items: { label: string; action?: Action; activateIid?: string; attachGearIid?: string }[] } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; groups?: MenuGroup[] } | null>(null)
+  const [drill, setDrill] = useState<number | null>(null) // open drill-down category
   const me = match.players[perspective]
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
@@ -334,44 +340,71 @@ export default function MatchBoard({
       items.push({ label: '🗑 Trash', action: { type: 'TRASH_CARD', player: perspective, iid: ci.iid } })
     }
     // Manual overrides (shared sandbox): full god-mode ops on ANY card for EITHER
-    // player, to fix or force a board state the engine doesn't model.
+    // player, organized into drill-down categories so the menu stays uncluttered.
+    const groups: MenuGroup[] = []
     if (match.sandbox) {
       const owner = ci.owner
-      const ov = (op: OverrideOp): Action => ({ type: 'OVERRIDE', player: owner, op, iid: ci.iid })
+      const ov = (op: OverrideOp, extra: Record<string, unknown> = {}): Action =>
+        ({ type: 'OVERRIDE', player: owner, op, iid: ci.iid, ...extra }) as Action
+      const mv = (toZone: OverrideZone | undefined, toBattlefield: number | undefined, bottom?: boolean): Action =>
+        ({ type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone, toBattlefield, bottom }) as Action
       if (card?.type === 'unit') {
         const stunned = (ci as { stunned?: boolean }).stunned
-        items.push({ label: stunned ? '🛠 Un-stun' : '🛠 Stun', action: ov(stunned ? 'unstun' : 'stun') })
-        items.push({ label: ci.exhausted ? '🛠 Ready' : '🛠 Exhaust', action: ov(ci.exhausted ? 'ready' : 'exhaust') })
-        items.push({ label: '🛠 Might +1', action: ov('mightUp') })
-        items.push({ label: '🛠 Might −1', action: ov('mightDown') })
-        items.push({ label: '🛠 Buff +1 (perm)', action: ov('buff') })
-        items.push({ label: '🛠 Buff −1 (perm)', action: ov('unbuff') })
-        items.push({ label: '🛠 Damage +1', action: { type: 'OVERRIDE', player: owner, op: 'damage', iid: ci.iid, amount: 1 } })
-        items.push({ label: '🛠 Heal −1', action: { type: 'OVERRIDE', player: owner, op: 'damage', iid: ci.iid, amount: -1 } })
-        items.push({ label: '🛠 To base', action: ov('toBase') })
-        items.push({ label: '🛠 Kill', action: ov('kill') })
+        groups.push({ label: 'State', items: [
+          { label: stunned ? 'Un-stun' : 'Stun', action: ov(stunned ? 'unstun' : 'stun') },
+          { label: ci.exhausted ? 'Ready' : 'Exhaust', action: ov(ci.exhausted ? 'ready' : 'exhaust') },
+          { label: ci.facedown ? 'Reveal (face-up)' : 'Set facedown', action: ov('grant', { flag: 'facedown' }) },
+          { label: "Clear can't-move", action: ov('grant', { flag: 'cantmove' }) },
+          { label: 'Clear summoning sickness', action: ov('grant', { flag: 'sickness' }) },
+        ] })
+        groups.push({ label: 'Might & damage', items: [
+          { label: 'Might +1', action: ov('mightUp') },
+          { label: 'Might +5', action: ov('mightUp', { amount: 5 }) },
+          { label: 'Might −1', action: ov('mightDown') },
+          { label: 'Buff +1 (perm)', action: ov('buff') },
+          { label: 'Buff −1 (perm)', action: ov('unbuff') },
+          { label: 'Damage +1', action: ov('damage', { amount: 1 }) },
+          { label: 'Damage −1', action: ov('damage', { amount: -1 }) },
+          { label: 'Clear damage', action: ov('setDamage', { value: 0 }) },
+        ] })
+        groups.push({ label: 'Grant keyword', items: [
+          { label: '[Assault] +1', action: ov('grant', { flag: 'assault', amount: 1 }) },
+          { label: 'Toggle [Ganking]', action: ov('grant', { flag: 'ganking' }) },
+          { label: 'Toggle [Temporary]', action: ov('grant', { flag: 'temporary' }) },
+          { label: 'Toggle Death shield', action: ov('grant', { flag: 'deathShield' }) },
+          { label: 'Toggle Banish shield', action: ov('grant', { flag: 'banishShield' }) },
+          { label: 'Toggle Token', action: ov('grant', { flag: 'token' }) },
+        ] })
       }
-      items.push({ label: '🛠 Banish', action: ov('banish') })
-      items.push({ label: '🛠 Trash', action: ov('trash') })
-      // Move this card to any zone / battlefield (also available via drag-drop).
-      const mv = (toZone: OverrideZone | undefined, toBattlefield: number | undefined): Action =>
-        ({ type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone, toBattlefield })
-      if (zone !== 'hand') items.push({ label: '🛠→ Hand', action: mv('hand', undefined) })
-      if (zone !== 'base') items.push({ label: '🛠→ Base', action: mv('base', undefined) })
+      const moveItems: MenuItem[] = []
+      if (zone !== 'hand') moveItems.push({ label: 'Hand', action: mv('hand', undefined) })
+      if (zone !== 'base') moveItems.push({ label: 'Base', action: mv('base', undefined) })
       for (let i = 0; i < match.battlefields.length; i++)
         if (!(zone === 'battlefield' && match.battlefields[i].units.some((u) => u.iid === ci.iid)))
-          items.push({ label: `🛠→ Battlefield ${i + 1}`, action: mv(undefined, i) })
-      items.push({ label: '🛠→ Deck (top)', action: mv('mainDeck', undefined) })
-      items.push({ label: '🛠→ Deck (bottom)', action: { type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone: 'mainDeck', bottom: true } })
-      if (card?.type === 'rune') items.push({ label: '🛠→ Rune deck (top)', action: mv('runeDeck', undefined) })
-      items.push({ label: '🛠→ Trash', action: mv('trash', undefined) })
-      items.push({ label: '🛠→ Banished', action: mv('banished', undefined) })
-      if (zone !== 'legend') items.push({ label: '🛠→ Legend zone', action: mv('legend', undefined) })
-      if (zone !== 'champion') items.push({ label: '🛠→ Champion zone', action: mv('champion', undefined) })
-      items.push({ label: `🛠 ${getCard(ci.cardId)?.name ?? 'Owner'} draws 1`, action: { type: 'OVERRIDE', player: owner, op: 'draw' } })
-      items.push({ label: '🛠 Owner channels 1', action: { type: 'OVERRIDE', player: owner, op: 'channel' } })
+          moveItems.push({ label: `Battlefield ${i + 1}`, action: mv(undefined, i) })
+      moveItems.push({ label: 'Deck (top)', action: mv('mainDeck', undefined) })
+      moveItems.push({ label: 'Deck (bottom)', action: mv('mainDeck', undefined, true) })
+      if (card?.type === 'rune') moveItems.push({ label: 'Rune deck (top)', action: mv('runeDeck', undefined) })
+      moveItems.push({ label: 'Trash', action: mv('trash', undefined) })
+      moveItems.push({ label: 'Banished', action: mv('banished', undefined) })
+      if (zone !== 'legend') moveItems.push({ label: 'Legend zone', action: mv('legend', undefined) })
+      if (zone !== 'champion') moveItems.push({ label: 'Champion zone', action: mv('champion', undefined) })
+      groups.push({ label: 'Move to…', items: moveItems })
+      groups.push({ label: 'Remove', items: [
+        { label: 'Kill', action: ov('kill') },
+        { label: 'Banish', action: ov('banish') },
+        { label: 'Trash', action: ov('trash') },
+      ] })
+      groups.push({ label: 'Owner', items: [
+        { label: 'Draw 1', action: { type: 'OVERRIDE', player: owner, op: 'draw' } },
+        { label: 'Channel 1', action: { type: 'OVERRIDE', player: owner, op: 'channel' } },
+        { label: 'Ready all units', action: { type: 'OVERRIDE', player: owner, op: 'readyAll' } },
+      ] })
     }
-    if (items.length) setMenu({ x: e.clientX, y: e.clientY, items })
+    if (items.length || groups.length) {
+      setDrill(null)
+      setMenu({ x: e.clientX, y: e.clientY, items, groups: groups.length ? groups : undefined })
+    }
   }
   // Opponents in seating order, starting just after the local player.
   const opponents: PlayerState[] = []
@@ -608,28 +641,53 @@ export default function MatchBoard({
         }
       />
 
-      {/* Right-click context menu */}
+      {/* Right-click context menu — categorized drill-down (click a category to
+          expand just its items; ‹ Back returns; click anywhere else closes). */}
       {menu && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null) }} />
+          <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null) }} />
           <div
-            className="fixed z-50 min-w-32 overflow-hidden rounded-lg border border-white/15 bg-[#1a1a26] text-sm shadow-xl"
+            className="fixed z-50 max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-white/15 bg-[#1a1a26] text-sm shadow-xl"
             style={{ left: menu.x, top: menu.y }}
           >
-            {menu.items.map((it) => (
-              <button
-                key={it.label}
-                onClick={() => {
-                  if (it.activateIid) onActivateUnit?.(it.activateIid)
-                  else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
-                  else if (it.action) onCardAction?.(it.action)
-                  setMenu(null)
-                }}
-                className="block w-full px-3 py-1.5 text-left hover:bg-white/10"
-              >
-                {it.label}
-              </button>
-            ))}
+            {(() => {
+              const run = (it: MenuItem) => {
+                if (it.activateIid) onActivateUnit?.(it.activateIid)
+                else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
+                else if (it.action) onCardAction?.(it.action)
+                setMenu(null)
+                setDrill(null)
+              }
+              const Item = (it: MenuItem) => (
+                <button key={it.label} onClick={() => run(it)} className="block w-full px-3 py-1.5 text-left hover:bg-white/10">
+                  {it.label}
+                </button>
+              )
+              if (drill != null && menu.groups?.[drill]) {
+                const g = menu.groups[drill]
+                return (
+                  <>
+                    <button onClick={() => setDrill(null)} className="block w-full border-b border-white/10 px-3 py-1.5 text-left text-white/50 hover:bg-white/10">‹ Back</button>
+                    {g.items.map(Item)}
+                  </>
+                )
+              }
+              return (
+                <>
+                  {menu.items.map(Item)}
+                  {menu.groups?.map((g, gi) => (
+                    <button
+                      key={g.label}
+                      onClick={() => setDrill(gi)}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left font-semibold text-fuchsia-200 hover:bg-fuchsia-500/20"
+                    >
+                      <span>{g.label}</span>
+                      <span className="text-white/40">▸</span>
+                    </button>
+                  ))}
+                </>
+              )
+            })()}
           </div>
         </>
       )}

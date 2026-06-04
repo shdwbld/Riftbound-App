@@ -23,6 +23,7 @@ export type OverrideOp =
   | 'draw' | 'channel' | 'move'
   // Manual fail-safe ops (sandbox). Player-scoped use `action.player` as target.
   | 'points' | 'xp' | 'energy' | 'power' | 'shuffle' | 'mill' | 'damage' | 'spawn'
+  | 'setDamage' | 'grant' | 'readyAll'
   // Advanced game-state overrides (can break a game — that's the point).
   | 'setActive' | 'setTurn' | 'setPointsToWin' | 'setWinner' | 'setPhase'
   | 'clearChain' | 'clearShowdown'

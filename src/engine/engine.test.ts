@@ -5222,3 +5222,30 @@ describe('Manual override — legend/champion + deck-bottom moves', () => {
     expect(deck[deck.length - 1].iid).toBe(u.iid) // landed on the bottom
   })
 })
+
+describe('Manual override — grant flags / setDamage / readyAll', () => {
+  it('grants instance keywords/flags', () => {
+    const s = baseState(); s.sandbox = true
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'grant', iid: u.iid, flag: 'assault', amount: 2 })
+    expect(r.state.battlefields[0].units[0].grantAssault).toBe(2)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'grant', iid: u.iid, flag: 'temporary' })
+    expect(r.state.battlefields[0].units[0].temporary).toBe(true)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'grant', iid: u.iid, flag: 'token' })
+    expect(r.state.battlefields[0].units[0].token).toBe(true)
+  })
+
+  it('setDamage clears damage; readyAll readies every unit', () => {
+    const s = baseState(); s.sandbox = true
+    const u = mk(furyUnit.id, 0, { damage: 3, exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    const b = mk(furyUnit.id, 0, { exhausted: true })
+    s.players[0].zones.base.push(b)
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'setDamage', iid: u.iid, value: 0 })
+    expect(r.state.battlefields[0].units[0].damage).toBe(0)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'readyAll' })
+    expect(r.state.battlefields[0].units[0].exhausted).toBe(false)
+    expect(r.state.players[0].zones.base.find((c) => c.iid === b.iid)?.exhausted).toBe(false)
+  })
+})
