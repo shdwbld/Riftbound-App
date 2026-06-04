@@ -922,6 +922,14 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         did = true
       }
     }
+    // "You may play a spell from your trash, then recycle it" (Kai'Sa -
+    // Evolutionary on conquer). State-threaded replay with auto-targets at the
+    // relevant battlefield.
+    if (e.playSpellFromTrash && !gated) {
+      const bi = isConquer ? (bfIndex ?? -1) : sourceIid ? battlefieldOf(s, sourceIid) : -1
+      s = replaySpellFromTrash(s, player, e.playSpellFromTrash, bi)
+      did = true
+    }
     // --- Hand-coded champion/legend handlers (the parser can't express these
     // unique abilities; per-card code keeps the marquee cards correct). ---
     let handled = false
@@ -2240,6 +2248,19 @@ function finishBeginning(s: MatchState): MatchState {
       offerChoice(s, { player: ap, kind: 'moveAnyToBase', bfIndex: s.battlefields.indexOf(bf), prompt: 'Amateur Recital â€” move a unit at a battlefield to its base?', options: opts })
       continue
     }
+    // Hallowed Tomb: on hold, return your Chosen Champion from trash to your
+    // Champion Zone if it is empty (pure benefit → auto-resolved).
+    if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'Hallowed Tomb') {
+      if (!p.champion) {
+        const champ = p.zones.trash.find((c) => getCard(c.cardId)?.supertype === 'champion' && c.owner === ap)
+        if (champ) {
+          removeFromZone(p, 'trash', champ.iid)
+          p.champion = { ...champ, damage: 0, exhausted: false, attached: [], buffs: 0, tempMight: 0, stunned: false }
+          s = log(s, ap, `Hallowed Tomb (hold): returned ${getCard(champ.cardId)?.name} to your Champion Zone.`)
+        }
+      }
+      continue
+    }
     // Vaults of Helia: your non-token units cost 1 more to play this turn.
     if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'Vaults of Helia') {
       p.unitCostBump = (p.unitCostBump ?? 0) + 1
@@ -3301,6 +3322,59 @@ function resolveSpellEffects(
   return s
 }
 
+/** Auto-pick targets for a spell being auto-resolved (Fizz / Kai'Sa replay): the
+ *  strongest enemy (damage/kill/stun) or a friendly unit (buff / +Might), up to the
+ *  spell's targetCount, preferring units at `bfIndex` then anywhere. */
+function autoSpellTargets(s: MatchState, player: PlayerId, card: Card, bfIndex: number): string[] {
+  const e = spellEffect(card)
+  if (!hasTargetedPart(e)) return []
+  const here = bfIndex >= 0 ? s.battlefields[bfIndex].units : []
+  const all = s.battlefields.flatMap((b) => b.units)
+  const want = e.targetScope === 'friendly' ? 'friendly' : 'enemy'
+  const pool = want === 'friendly'
+    ? [...s.players[player].zones.base, ...all].filter((u) => u.owner === player && def(u)?.type === 'unit')
+    : (here.some((u) => u.owner !== player) ? here : all).filter((u) => u.owner !== player && def(u)?.type === 'unit')
+  const ranked = [...pool].sort((a, b) => mightOf(b) - mightOf(a))
+  return ranked.slice(0, Math.max(1, e.targetCount || 1)).map((u) => u.iid)
+}
+
+/** Play the best qualifying spell from your trash, then recycle it — Fizz -
+ *  Trickster (Energy ≤ N) / Kai'Sa - Evolutionary (Energy < your points). The
+ *  Energy cost is ignored (Power still paid). State-threaded: call from PLAY_UNIT
+ *  / fireTriggers, NOT applyParsed. */
+function replaySpellFromTrash(
+  s: MatchState,
+  player: PlayerId,
+  spec: NonNullable<ParsedEffect['playSpellFromTrash']>,
+  bfIndex: number,
+): MatchState {
+  const p = s.players[player]
+  const cap = spec.dynamicCap === 'points' ? p.points : spec.maxEnergy
+  const energyOf = (c: EngineCard) => (getCard(c.cardId) as { energy?: number } | undefined)?.energy ?? 0
+  const qualifies = (c: EngineCard) => {
+    if (getCard(c.cardId)?.type !== 'spell') return false
+    if (cap == null) return true
+    return spec.dynamicCap === 'points' ? energyOf(c) < cap : energyOf(c) <= cap
+  }
+  const pick = p.zones.trash.filter(qualifies).sort((a, b) => energyOf(b) - energyOf(a))[0]
+  if (!pick) return s // optional ("you may") — nothing to replay
+  const card = getCard(pick.cardId)!
+  // The Energy cost is waived; the Power cost is still due. Abort if it can't be paid.
+  const powerDue = spec.energyOnly
+    ? Object.values((card as { power?: Record<string, number> }).power ?? {}).reduce((a, b) => a + (b || 0), 0)
+    : 0
+  if (powerDue > 0 && !makeBfApi(s).payPowerAny(player, powerDue))
+    return log(s, player, `Couldn't replay ${card.name} from trash — can't pay its Power cost.`)
+  const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
+  const [spell] = p.zones.trash.splice(i, 1)
+  s = log(s, player, `Replayed ${card.name} from trash (Energy ignored${powerDue ? `, paid ${powerDue} Power` : ''}).`)
+  s = resolveSpellEffects(s, player, card, autoSpellTargets(s, player, card, bfIndex))
+  // Recycle it (to the Main Deck) after resolving, per the card text.
+  if (spec.recycleAfter) s.players[player].zones.mainDeck.push({ ...spell, damage: 0, exhausted: false, attached: [] })
+  else sendToTrash(s.players[player], spell)
+  return s
+}
+
 /** Outright kill a unit anywhere by iid (no damage roll). Returns it for death
  *  triggers. */
 function killTarget(s: MatchState, iid: string): EngineCard[] {
@@ -3732,6 +3806,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (!legionGated) {
           for (const line of applyParsed(s1, p, e, undefined, ci.iid)) s1 = log(s1, action.player, line)
           s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(e)) // Lillia: token-unit play synergy
+          // Fizz - Trickster: "When you play me, you may play a spell from your trash…"
+          if (e.playSpellFromTrash) s1 = replaySpellFromTrash(s1, action.player, e.playSpellFromTrash, ambushBf ?? -1)
         } else {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
         }

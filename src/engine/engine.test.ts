@@ -645,6 +645,61 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.trash.some((x) => x.iid === dead2.iid)).toBe(true)
   })
 
+  it('parse: playSpellFromTrash (Fizz fixed cap, Kai\'Sa dynamic "points") (Gap 5)', async () => {
+    const { onPlayEffect, parseEffectText } = await import('./effects')
+    const mkCard = (text: string) =>
+      ({ id: 'x', name: 'x', type: 'unit', domains: ['fury'], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {}, might: 3 }) as never
+    expect(onPlayEffect(mkCard('When you play me, you may play a spell from your trash with Energy cost no more than :rb_energy_3:, ignoring its Energy cost. Recycle that spell after you play it.')).playSpellFromTrash)
+      .toEqual({ maxEnergy: 3, dynamicCap: null, energyOnly: true, recycleAfter: true })
+    // Kai'Sa is a conquer-trigger clause (parsed by parseEffectText, not on-play).
+    expect(parseEffectText('play a spell from your trash with Energy cost less than your points without paying its Energy cost').playSpellFromTrash)
+      .toEqual({ maxEnergy: null, dynamicCap: 'points', energyOnly: true, recycleAfter: true })
+  })
+
+  it('Fizz - Trickster: on play, replays a spell from trash then recycles it (Gap 5)', () => {
+    const drawSpell = injectCard('fizz-draw-t', 'Draw 2.', { type: 'spell', energy: 2, power: {} })
+    const fizz = injectCard('fizz-t', 'When you play me, you may play a spell from your trash with Energy cost no more than :rb_energy_3:, ignoring its Energy cost. Recycle that spell after you play it.', { type: 'unit', energy: 0, power: {}, might: 3 })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0), mk(furyUnit.id, 0)] // 2 to draw
+    s.players[0].zones.trash = [mk(drawSpell, 0)]
+    const f = mk(fizz, 0)
+    s.players[0].zones.hand.push(f)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: f.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.hand.length).toBe(2) // replayed Draw 2 → drew 2
+    expect(r.state.players[0].zones.trash.some((c) => c.cardId === drawSpell)).toBe(false) // recycled out of trash
+    expect(r.state.players[0].zones.mainDeck.some((c) => c.cardId === drawSpell)).toBe(true) // recycled to deck
+  })
+
+  it("Kai'Sa - Evolutionary: on conquer, replays a trash spell costing < your points (Gap 5)", () => {
+    const drawSpell = injectCard('kaisa-draw-t', 'Draw 1.', { type: 'spell', energy: 2, power: {} })
+    const kaisa = injectCard('kaisa-t', 'When I conquer, you may play a spell from your trash with Energy cost less than your points without paying its Energy cost. Then recycle it.', { type: 'unit', energy: 0, power: {}, might: 6 })
+    const s = baseState()
+    s.players[0].points = 5
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)]
+    s.players[0].zones.trash = [mk(drawSpell, 0)]
+    const k = mk(kaisa, 0)
+    s.players[0].zones.base.push(k)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: k.iid, toBattlefield: 0 }) // uncontested conquer
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(1) // replayed Draw 1
+    expect(r.state.players[0].zones.mainDeck.some((c) => c.cardId === drawSpell)).toBe(true) // recycled
+  })
+
+  it('Hallowed Tomb: on hold, returns your Chosen Champion from trash to Champion Zone (Gap 5)', () => {
+    const champ = CARDS.find((c) => c.supertype === 'champion')!
+    const s = baseState()
+    s.activePlayer = 0
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0)]
+    s.players[0].zones.runeDeck = [mk(furyRune.id, 0)]
+    s.players[0].champion = null // Champion Zone empty
+    s.players[0].zones.trash = [mk(champ.id, 0)]
+    s.battlefields[0] = { cardId: 'ogn-281-298', units: [mk(furyUnit.id, 0)], controller: 0 } // holding Hallowed Tomb
+    const after = beginTurn(s)
+    expect(after.players[0].champion?.cardId).toBe(champ.id)
+    expect(after.players[0].zones.trash.some((c) => c.cardId === champ.id)).toBe(false)
+  })
+
   it('Dazzling Aurora: at end of turn, reveal-until-unit → play it free, recycle the rest', () => {
     const aurora = injectCard('aurora-gear', 'At the end of your turn, reveal cards from the top of your Main Deck until you reveal a unit and banish it. Play it, ignoring its cost, and recycle the rest.', { type: 'gear' })
     const spellId = injectCard('aurora-spell', 'Deal 1.', { type: 'spell', energy: 1, power: {} })

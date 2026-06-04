@@ -121,6 +121,10 @@ export interface ParsedEffect {
    *  `energyOnly` = "ignoring its ENERGY cost" (still pay Power) vs "ignoring its
    *  cost" (free). */
   playUnitFromTrash: { maxEnergy: number | null; maxPower: number | null; energyOnly: boolean } | null
+  /** Play a SPELL from your trash, then recycle it — Fizz - Trickster (Energy cost
+   *  ≤ maxEnergy), Kai'Sa - Evolutionary (`dynamicCap:'points'` = Energy cost <
+   *  your points). `energyOnly` ignores only the Energy cost (still pay Power). */
+  playSpellFromTrash: { maxEnergy: number | null; dynamicCap: 'points' | null; energyOnly: boolean; recycleAfter: boolean } | null
   /** Reveal from the top of your Main Deck until a unit, play that unit ignoring
    *  its cost, and recycle the rest to the bottom (Dazzling Aurora). */
   revealPlayFromDeck: boolean
@@ -220,6 +224,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   banishOnDeath: false,
   returnFromTrash: null,
   playUnitFromTrash: null,
+  playSpellFromTrash: null,
   revealPlayFromDeck: false,
   peekDraw: null,
   peekToHand: null,
@@ -500,6 +505,23 @@ function parse(text: string): ParsedEffect {
     // "ignoring its ENERGY cost" (The Harrowing, Soulgorger) still charges the
     // Power cost; "ignoring its cost" (Spectral Matron, Glasc) waives everything.
     eff.playUnitFromTrash = { maxEnergy: me ? parseInt(me[1], 10) : null, maxPower: mp || null, energyOnly: !!putM[1] }
+    hit = true
+  }
+  // Play a SPELL from your trash, then recycle it — Fizz - Trickster ("Energy cost
+  // no more than :rb_energy_3:"), Kai'Sa - Evolutionary ("Energy cost less than
+  // your points"). Both ignore the Energy cost (still pay Power).
+  const pstM = t.match(/play a spell from your trash[^.]*?(?:ignoring its energy cost|without paying its energy cost)/)
+  if (pstM) {
+    const me = pstM[0].match(/no more than :rb_energy_(\d+):/)
+    eff.playSpellFromTrash = {
+      maxEnergy: me ? parseInt(me[1], 10) : null,
+      dynamicCap: /less than your points/.test(pstM[0]) ? 'points' : null,
+      energyOnly: true,
+      // Both cards recycle the spell afterward; the "Then recycle it" sentence can
+      // be truncated off a trigger clause, so default true (leaving it in trash
+      // would let it be replayed every turn).
+      recycleAfter: true,
+    }
     hit = true
   }
   // "reveal cards from the top of your Main Deck until you reveal a unit … play
