@@ -64,6 +64,11 @@ export interface ParsedEffect {
   buffSelf: boolean
   /** A targeted buff that must not pick the source ("buff ANOTHER unit"). */
   buffExcludesSelf: boolean
+  /** An area buff: 'all' = every friendly unit you control ("buff all friendly
+   *  units" — Overt Operation); 'here' = friendly units at the source's
+   *  battlefield ("buff all units here" — Enthusiastic Promoter, Peak Guardian).
+   *  Each target is still capped at one buff. */
+  buffAll: 'all' | 'here' | null
   /** Ready the SOURCE unit itself ("ready me"). Distinct from `readyUnits`,
    *  which lets the controller choose which exhausted units to ready. */
   readySelf: boolean
@@ -156,6 +161,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   buff: 0,
   buffSelf: false,
   buffExcludesSelf: false,
+  buffAll: null,
   readySelf: false,
   spendBuff: false,
   kill: 0,
@@ -185,7 +191,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || e.score > 0
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -413,25 +419,40 @@ function parse(text: string): ParsedEffect {
   const chExM = t.match(new RegExp(`channels? ${NUM} runes? exhausted`))
   if (chExM) { eff.channelExhausted += num(chExM[1]); hit = true }
 
-  // Signed Might-this-turn to a target unit: "give a unit -1 Might this turn".
-  const tmTargetM = t.match(new RegExp(`give (?:a|an|target|another) (?:friendly |enemy )?unit (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
+  // Signed Might-this-turn to a CHOSEN target: "give a/an/target/another unit … +N
+  // Might this turn", "give it +N …" (the previously-chosen unit), "give one of
+  // your other units … +N". Allow location/qualifier words between the noun and
+  // the value ("…at a battlefield +2", "…they control here +1").
+  const tmTargetM = t.match(new RegExp(`give (?:it|a|an|target|another|one of (?:your )?other) (?:friendly |enemy )?(?:units?)?[^.+]*?(-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
   if (tmTargetM) {
     const sign = tmTargetM[1] === '-' ? -1 : 1
     eff.tempMight += sign * parseInt(tmTargetM[2], 10)
     hit = true
   }
 
-  // Signed Might-this-turn to self: "give me +1 Might this turn".
-  const tmSelfM = t.match(new RegExp(`give me (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
+  // "give N (friendly) units each +M Might this turn" — M to each of N chosen
+  // units (Back to Back, Bonds of Strength). targetCount is set by `multiM` below.
+  const tmEachM = t.match(new RegExp(`give ${NUM} (?:friendly )?units? each (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
+  if (tmEachM) { eff.tempMight += (tmEachM[2] === '-' ? -1 : 1) * parseInt(tmEachM[3], 10); hit = true }
+
+  // Signed Might-this-turn to self: "give me +1 Might this turn". Guard against a
+  // cost-gated activated clause ("Spend my buff: Give me +4 Might this turn" —
+  // Sett - Brawler): that effect only happens when the ability is ACTIVATED (the
+  // activated path parses the post-cost clause), not on play. `costGated` is only
+  // true when parsing the whole card text, which still has the "spend … buff:" cost.
+  const costGated = /spend (?:my|a|an|its|the) buffs?\s*:/.test(t)
+  const tmSelfM = costGated ? null : t.match(new RegExp(`give me (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
   if (tmSelfM) {
     const sign = tmSelfM[1] === '-' ? -1 : 1
     eff.tempMightSelf += sign * parseInt(tmSelfM[2], 10)
     hit = true
   }
 
-  // Signed Might-this-turn to ALL your units: "give friendly units +5 Might this
-  // turn" (Grand Strategem). Plural "units" — a board-wide buff, no target.
-  const tmAllM = t.match(new RegExp(`give (?:all |your )?friendly units (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
+  // Signed Might-this-turn to ALL your units: "give (all/your/other) friendly
+  // units (here/there) +N Might this turn" (Grand Strategem, Undertitan, Siphon
+  // Power). Plural "units" — board-wide, no target. (Tag-scoped "your Mechs +N"
+  // is intentionally NOT matched — it would over-buff non-Mechs; left manual.)
+  const tmAllM = t.match(new RegExp(`give (?:all |your )?(?:other )?(?:friendly )?units(?:\\s+(?:here|there))? (-|\\+)?(\\d+)\\s*${MIGHT} this turn`))
   if (tmAllM) {
     eff.tempMightAll += (tmAllM[1] === '-' ? -1 : 1) * parseInt(tmAllM[2], 10)
     hit = true
@@ -445,20 +466,32 @@ function parse(text: string): ParsedEffect {
   }
 
   // The Riftbound "buff" action (give a +1 Might buff token; max one per unit).
-  // "buff me/this" buffs the source; "buff a/another friendly unit" buffs a
-  // chosen friendly unit. The alternation requires a determiner/pronoun right
-  // after "buff ", so "spend a buff" (a cost) and "Buffs give"/"buffed"
-  // (adjectives) don't match. Skip when already captured as a "gains +N" self-buff.
+  // Normalize the "[Buff]" word-backer bracket form ("[Buff] a unit") to plain
+  // "buff" so the regexes below fire. "buff me/this" buffs the source; "buff
+  // all (friendly) units (here)" is an area buff; "buff a/another friendly unit"
+  // buffs a chosen friendly unit. Skip when already a "gains +N" self-buff.
+  const bt = t.replace(/\[buff\]/g, 'buff')
   if (!eff.buff) {
-    if (/\bbuff (?:me|myself|this)\b/.test(t)) {
+    if (/\bbuff (?:me|myself|this)\b/.test(bt)) {
       eff.buff += 1; eff.buffSelf = true; hit = true
-    } else {
-      const bm = t.match(
-        new RegExp(`\\bbuff (?:up to ${NUM} )?(?:a|an|another|the chosen|target|one|two|\\d+)?\\s*(?:other )?(?:friendly )?units?`),
+    }
+    // Area buff: "buff all (other) (friendly) units (here/there/at …)" /
+    // "buff all units here". "here"/"there"/"at" scopes it to the source's bf.
+    const allM = bt.match(/\bbuff all (?:other )?(?:friendly )?units?(?:\s+(here|there|at))?/)
+    if (allM) { eff.buffAll = allM[1] ? 'here' : 'all'; hit = true }
+    // "buff it/them" — a contextual target (Nami "ready it and [Buff] it"). The
+    // engine can't track "it", so applyBuff picks a friendly unit (highest Might).
+    else if (!eff.buffSelf && /\bbuff (?:it|them)\b/.test(bt)) { eff.buff += 1; hit = true }
+    // Targeted single/multi buff (only if it wasn't a self- or area-buff). Allow
+    // one adjective ("an EXHAUSTED friendly unit") between determiner and noun.
+    if (!eff.buffSelf && !eff.buffAll) {
+      const bm = bt.match(
+        new RegExp(`\\bbuff (?:up to ${NUM} )?(?:a|an|another|the chosen|target|one|two|\\d+)?\\s*(?:[a-z]+ )?(?:other )?(?:friendly )?units?`),
       )
       if (bm) {
         eff.buff += bm[1] ? num(bm[1]) : 1
-        if (/\banother\b/.test(t)) eff.buffExcludesSelf = true
+        // "buff ANOTHER / OTHER friendly unit" excludes the source from candidates.
+        if (/\b(?:another|other)\b/.test(bm[0])) eff.buffExcludesSelf = true
         hit = true
       }
     }
@@ -468,12 +501,13 @@ function parse(text: string): ParsedEffect {
   // choose-which-to-ready effect that needs a unit noun).
   if (/\bready (?:me|myself|this)\b/.test(t)) { eff.readySelf = true; hit = true }
 
-  // "spend a buff to …" — a cost paid by removing a buff from one of your units
-  // (Wildclaw Shaman). The actual effect after "to" supplies the `hit`.
-  if (/\bspend a buff to\b/.test(t)) eff.spendBuff = true
+  // "spend a/its/my/N buff(s)" — a cost paid by removing buff counters (Wildclaw
+  // Shaman, Monastery of Hirana, Call to Glory, Kraken Hunter, …). The actual
+  // effect supplies the `hit`.
+  if (/\bspend (?:a|an|its|my|the|any number of|\d+) buffs?\b/.test(t)) eff.spendBuff = true
 
-  // Multi-target count: "each of up to two units" / "up to 2 units".
-  const multiM = t.match(new RegExp(`(?:each of )?up to ${NUM} units?`)) || t.match(new RegExp(`each of ${NUM} units?`))
+  // Multi-target count: "each of up to two units" / "up to 2 units" / "N units each".
+  const multiM = t.match(new RegExp(`(?:each of )?up to ${NUM} units?`)) || t.match(new RegExp(`each of ${NUM} units?`)) || t.match(new RegExp(`give ${NUM} (?:friendly )?units? each`))
 
   // Resolve targeting metadata for any targeted part.
   if (hasTargetedPart(eff)) {

@@ -10,7 +10,7 @@ import {
   type OverrideZone,
   type GameEvent,
 } from '../engine/types'
-import { canPlay, combatMight, matchUsesXp, grantedAbilityFor, canActivateUnit } from '../engine/engine'
+import { canPlay, combatMight, matchUsesXp, grantedAbilityFor, canActivateUnit, auraMightFor } from '../engine/engine'
 import { parseKeywords, keywordsAt } from '../engine/keywords'
 import { RULES } from '../engine/setup'
 import MechanicTooltip from './MechanicTooltip'
@@ -1035,7 +1035,7 @@ function BattlefieldZone({
                       title={canGank ? 'Ganking — can move directly to another battlefield' : u.facedown ? 'Your Hidden unit — right-click to Reveal' : undefined}
                       className={`relative ${u.owner === perspective ? '' : 'opacity-90'} ${u.facedown ? 'rounded ring-2 ring-amber-300/60' : ''} ${canGank ? 'fx-gank rounded' : ''}`}
                     >
-                      <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={match.players[u.owner].xp} />
+                      <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={match.players[u.owner].xp} auraBonus={auraMightFor(match, i, u)} />
                       {canGank && (
                         <span className="absolute -right-1 -top-1 z-10 rounded-full bg-fuchsia-500/90 px-1 text-[8px] font-bold text-white shadow">⚡G</span>
                       )}

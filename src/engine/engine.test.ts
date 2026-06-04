@@ -3155,3 +3155,76 @@ describe('champion suite — state-aware Might & conditional ready', () => {
     expect(play(6)).toBe(false) // opponent at 6/8 (within 3) → enters ready
   })
 })
+
+describe('buffs & Might — application + parser coverage', () => {
+  it('[Buff] bracket form parses as a buff action (incl. "buff it")', async () => {
+    const { parseEffectText } = await import('./effects')
+    expect(parseEffectText('[Buff] a friendly unit.').buff).toBe(1)
+    expect(parseEffectText('Ready it and [Buff] it.').buff).toBe(1) // Nami - Headstrong
+    expect(parseEffectText('Buffed units have [Deflect].').buff).toBe(0) // adjective, not an action
+  })
+
+  it('area buff parses with scope; Peak Guardian is self + here', async () => {
+    const { parseEffectText } = await import('./effects')
+    expect(parseEffectText('Buff all friendly units.').buffAll).toBe('all')
+    expect(parseEffectText('[Buff] all units here.').buffAll).toBe('here')
+    const peak = parseEffectText('Buff me. Then, if I am at a battlefield, buff all other friendly units there.')
+    expect(peak.buffSelf).toBe(true)
+    expect(peak.buffAll).toBe('here')
+  })
+
+  it('exclude-self on "other"; adjective allowed between determiner and noun', async () => {
+    const { parseEffectText } = await import('./effects')
+    const kink = parseEffectText('Buff up to two other friendly units.')
+    expect(kink.buff).toBe(2)
+    expect(kink.buffExcludesSelf).toBe(true)
+    expect(parseEffectText('Buff an exhausted friendly unit.').buff).toBe(1)
+  })
+
+  it('Sett - Brawler: cost-gated "Spend my buff: Give me +4 this turn" not auto-applied', async () => {
+    const { parseEffectText } = await import('./effects')
+    const e = parseEffectText("When I'm played, buff me. Spend my buff: Give me +4 :rb_might: this turn.")
+    expect(e.buffSelf).toBe(true)
+    expect(e.tempMightSelf).toBe(0)
+  })
+
+  it('spendBuff detection broadened (its/my/additional cost)', async () => {
+    const { parseEffectText } = await import('./effects')
+    expect(parseEffectText('Spend its buff to ready it.').spendBuff).toBe(true)
+    expect(parseEffectText('You may spend a buff as an additional cost.').spendBuff).toBe(true)
+  })
+
+  it('temporary +Might phrasings parse (it / your other units / each)', async () => {
+    const { parseEffectText } = await import('./effects')
+    expect(parseEffectText('Give it +1 :rb_might: this turn.').tempMight).toBe(1)
+    expect(parseEffectText('Give your other units +2 :rb_might: this turn.').tempMightAll).toBe(2)
+    const each = parseEffectText('Give two friendly units each +2 :rb_might: this turn.')
+    expect(each.tempMight).toBe(2)
+    expect(each.targetCount).toBe(2)
+  })
+
+  it('[Buff] on-play buffs a friendly unit and respects the 1-buff cap', () => {
+    const id = injectCard('buff-onplay', 'When you play me, [Buff] a friendly unit.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const s = baseState()
+    const ally = mk(injectCard('buff-ally', 'A unit.', { might: 4 }), 0, { buffs: 0 })
+    s.players[0].zones.base.push(ally)
+    const u = mk(id, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === ally.iid)?.buffs).toBe(1)
+  })
+
+  it('Draven - Showboat reflected in mightBreakdownAt', async () => {
+    const { mightBreakdownAt } = await import('./engine')
+    const id = 'ogn-028-298'
+    if (!CARD_INDEX[id]) return
+    const s = baseState()
+    const d = mk(id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [d], controller: 0 }
+    s.players[0].points = 4
+    const bd = mightBreakdownAt(s, 0, d)!
+    expect(bd.effective).toBe(bd.base + 4)
+    expect(bd.mods).toBe(4)
+  })
+})

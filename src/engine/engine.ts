@@ -397,7 +397,7 @@ function makeReflection(source: EngineCard, owner: PlayerId, turn: number, ready
  *  buffed units gain nothing, and a fat target also turns on Lee Sin's auras. No
  *  manual prompt (abilities auto-resolve). */
 function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: string): string[] {
-  if (!e.buff) return []
+  if (!e.buff && !e.buffAll) return []
   const lines: string[] = []
   const give = (u: EngineCard | undefined) => {
     if (!u || u.owner !== p.id || (u.buffs ?? 0) >= 1) return false
@@ -407,15 +407,22 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
     for (const l of fireBuffReactions(s, p, u.iid)) lines.push(l)
     return true
   }
-  if (e.buffSelf) {
-    give(sourceIid ? findUnitAnywhere(s, sourceIid) : undefined)
-    return lines
+  if (e.buffSelf) give(sourceIid ? findUnitAnywhere(s, sourceIid) : undefined)
+  // Area buff: every friendly unit ('all'), or those at the source's battlefield
+  // ('here'). Each is still capped at one buff by `give`. (Peak Guardian also has
+  // buffSelf above; the cap makes the overlap a no-op.)
+  if (e.buffAll) {
+    const hereBf = e.buffAll === 'here' && sourceIid ? bfIndexOfUnit(s, sourceIid) : -1
+    const pool = hereBf >= 0 ? (s.battlefields[hereBf]?.units ?? []) : [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+    for (const u of pool) if (u.owner === p.id && def(u)?.type === 'unit' && u.iid !== sourceIid) give(u)
   }
-  const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-    .filter((u) => u.owner === p.id && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
-    .filter((u) => !(e.buffExcludesSelf && u.iid === sourceIid))
-    .sort((a, b) => (def(b)?.type === 'unit' ? (def(b) as { might: number }).might : 0) - (def(a)?.type === 'unit' ? (def(a) as { might: number }).might : 0))
-  for (let i = 0; i < e.buff && i < candidates.length; i++) give(candidates[i])
+  if (!e.buffSelf && !e.buffAll && e.buff) {
+    const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+      .filter((u) => u.owner === p.id && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
+      .filter((u) => !(e.buffExcludesSelf && u.iid === sourceIid))
+      .sort((a, b) => (def(b)?.type === 'unit' ? (def(b) as { might: number }).might : 0) - (def(a)?.type === 'unit' ? (def(a) as { might: number }).might : 0))
+    for (let i = 0; i < e.buff && i < candidates.length; i++) give(candidates[i])
+  }
   return lines
 }
 
@@ -1853,9 +1860,11 @@ function finishBeginning(s: MatchState): MatchState {
       for (const line of applyParsed(s, p, passive.onHold))
         s = log(s, ap, `${bfName} (hold): ${line}`)
     if (passive.buffOnHold) {
-      const target = bf.units.find((u) => u.owner === ap)
+      // Pick an UN-buffed friendly unit here (a buff is capped at one per unit, so
+      // holding repeatedly must not stack on the same unit).
+      const target = bf.units.find((u) => u.owner === ap && (u.buffs ?? 0) < 1)
       if (target) {
-        target.buffs = (target.buffs ?? 0) + 1
+        target.buffs = 1
         s = log(s, ap, `${bfName} (hold): buffed ${getCard(target.cardId)?.name} (+1).`)
       }
     }
@@ -2099,6 +2108,34 @@ export function mightBreakdown(ci: EngineCard, xp = 0): MightBreakdown | null {
   }
 }
 
+/** State-aware Might for the UI side indicator. `effective` is the unit's current
+ *  Might INCLUDING state auras the plain `mightBreakdown` can't see — Draven points,
+ *  Dr. Mundo trash (auraMightBonus), Garen/Lee Sin "here" auras (auraMightHere),
+ *  and always-on conditional auras (Meditative runes, Sett - Kingpin for-each).
+ *  `mods` is the signed stat-modifier total EXCLUDING damage (the ± counter; damage
+ *  has its own UI). Combat-role-only bonuses (Shield/Assault/Fiora 1v1) are omitted
+ *  — they only exist in a showdown. Pass bfIndex < 0 for base/champion/legend zones. */
+/** The always-on, state-aware Might auras on a unit that `displayMight` can't see
+ *  (owner-wide self-scalers, "here" auras, and role-independent conditionals). The
+ *  UI passes this to BoardCard as `auraBonus`; pass bfIndex < 0 off a battlefield. */
+export function auraMightFor(s: MatchState, bfIndex: number, u: EngineCard): number {
+  const here = bfIndex >= 0 ? (s.battlefields[bfIndex]?.units ?? []) : []
+  return auraMightBonus(s, u) + (bfIndex >= 0 ? auraMightHere(here, u) : 0) + conditionalMight(s, u, null, false)
+}
+
+export function mightBreakdownAt(
+  s: MatchState,
+  bfIndex: number,
+  u: EngineCard,
+): { base: number; effective: number; mods: number } | null {
+  const d = getCard(u.cardId)
+  if (!d || d.type !== 'unit') return null
+  const xp = s.players[u.owner]?.xp ?? 0
+  const level = levelBonus(d, xp).might
+  const mods = (u.buffs ?? 0) + (u.tempMight ?? 0) + gearMight(u) + level + auraMightFor(s, bfIndex, u)
+  return { base: d.might, effective: Math.max(0, d.might + mods - u.damage), mods }
+}
+
 /** True if any card across the match's zones cares about XP (Hunt / Level), so
  *  the UI only shows the XP meter when it's actually relevant. */
 export function matchUsesXp(state: MatchState): boolean {
@@ -2238,6 +2275,30 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   // Self: "While you have N+ runes, I have +X Might." (Master Yi - Meditative)
   const runeM = text.match(/while you have (\d+)\+? (?:or more )?runes?, i have \+(\d+)\s*(?::rb_might:|might)/)
   if (runeM && owner.zones.runePool.length >= parseInt(runeM[1], 10)) b += parseInt(runeM[2], 10)
+  // Self-scaling aura: "I have/get +N Might for each <X>" — Sett - Kingpin (buffed
+  // friendly units here), Ornn - Forge God (friendly gear), Petal Pixie ([Temporary]
+  // units here), or "enemy unit here". Continuous, so it lives in the Might path.
+  const feM = text.match(/i (?:have|get) \+(\d+)\s*(?::rb_might:|might) for each ([a-z '\[\]-]+)/)
+  if (feM) {
+    const per = parseInt(feM[1], 10)
+    const what = feM[2]
+    const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
+    const here = bi >= 0 ? s.battlefields[bi].units : []
+    const friendly = [...owner.zones.base, ...s.battlefields.flatMap((bf) => bf.units)].filter((x) => x.owner === u.owner)
+    let count = 0
+    if (/buffed friendly unit/.test(what)) {
+      const pool = /at my battlefield|here/.test(what) ? here : friendly
+      count = pool.filter((x) => x.owner === u.owner && x.iid !== u.iid && (x.buffs ?? 0) > 0).length
+    } else if (/gear/.test(what)) {
+      count = owner.zones.base.filter((x) => def(x)?.type === 'gear').length + friendly.reduce((n, x) => n + (x.attached?.length ?? 0), 0)
+    } else if (/temporary/.test(what)) {
+      const pool = /here/.test(what) ? here : friendly
+      count = pool.filter((x) => x.owner === u.owner && (parseKeywords(def(x)).temporary || x.token)).length
+    } else if (/enemy unit/.test(what)) {
+      count = (/here/.test(what) ? here : s.battlefields.flatMap((bf) => bf.units)).filter((x) => x.owner !== u.owner).length
+    }
+    b += per * count
+  }
   // Self: "While I'm buffed, I have an additional +N Might." (Wizened Elder)
   if ((u.buffs ?? 0) > 0) {
     const bm = text.match(/while (?:i'm|i am) buffed,? i have (?:an? )?(?:additional )?\+(\d+)\s*(?::rb_might:|might)/)
@@ -3650,10 +3711,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (!isValidTarget(s1, t)) continue
           if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true))
           if (ab.effect.tempMight) s1 = fireDeaths(s1, applyTempMight(s1, t, ab.effect.tempMight, ab.effect.tempMightFloor))
-          // "Buff a friendly unit" (Lee Sin) — a permanent +1 Might counter.
+          // "Buff a friendly unit" (Lee Sin) — a permanent +1 Might counter, capped
+          // at one per unit (buffing an already-buffed unit does nothing).
           if (ab.effect.buff) {
             const tu = findUnitAnywhere(s1, t)
-            if (tu) { tu.buffs = (tu.buffs ?? 0) + ab.effect.buff; emit({ kind: 'buff', iid: tu.iid, player: action.player }) }
+            if (tu && (tu.buffs ?? 0) < 1) { tu.buffs = 1; emit({ kind: 'buff', iid: tu.iid, player: action.player }) }
           }
           // "Move a friendly unit … to its base" (The Syren, Yasuo pull-back).
           if (/\bmove\b/i.test(ab.effectText) && /\bbase\b/i.test(ab.effectText) && battlefieldOf(s1, t) >= 0)

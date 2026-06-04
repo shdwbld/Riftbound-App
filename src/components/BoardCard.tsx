@@ -47,6 +47,7 @@ export default function BoardCard({
   dim = false,
   glow,
   xp = 0,
+  auraBonus = 0,
 }: {
   ci: CardInstance
   selected?: boolean
@@ -61,6 +62,10 @@ export default function BoardCard({
   glow?: 'ready' | 'playable' | 'target'
   /** Controlling player's XP — drives [Level N] activation + bonus Might. */
   xp?: number
+  /** State-aware Might auras the card can't compute itself (Draven points, Mundo
+   *  trash, Garen "here", Meditative runes, …) — from `auraMightFor` at the call
+   *  site that has MatchState + battlefield index. Folded into the displayed Might. */
+  auraBonus?: number
 }) {
   const def = card(ci)
   const w = size === 'sm' ? 'w-12' : 'w-[68px]'
@@ -105,8 +110,9 @@ export default function BoardCard({
       {def && isUnit(def) && !faceDown && (() => {
         const base = effectiveMight(ci, def.might)
         const lvl = levelBonus(def, xp)
-        const might = base.might + lvl.might
-        const boosted = base.boosted || lvl.might > 0
+        const aura = auraBonus ?? 0
+        const might = Math.max(0, base.might + lvl.might + aura)
+        const boosted = base.boosted || lvl.might > 0 || aura > 0
         const x = ci as CardInstance & { buffs?: number; attached?: string[]; stunned?: boolean; tempMight?: number }
         // Might breakdown for the tooltip: "2 + 1 = 3 (this turn)".
         let gear = 0
@@ -114,10 +120,15 @@ export default function BoardCard({
           const m = (getCard(gid.split('|')[0])?.text ?? '').match(/\+(\d+)\s*Might/i)
           if (m) gear += parseInt(m[1], 10)
         }
+        // The ± Might counter: all stat modifiers vs printed base, EXCLUDING damage
+        // (damage has its own marker). "this turn" cue when a temp modifier is live.
+        const mods = (x.buffs ?? 0) + (x.tempMight ?? 0) + gear + lvl.might + aura
+        const thisTurn = (x.tempMight ?? 0) !== 0
         const parts: string[] = [`${def.might} base`]
         if ((x.buffs ?? 0) > 0) parts.push(`+${x.buffs} buff`)
         if (gear > 0) parts.push(`+${gear} gear`)
         if (lvl.might > 0) parts.push(`+${lvl.might} Level`)
+        if (aura !== 0) parts.push(`${aura > 0 ? '+' : ''}${aura} aura`)
         if ((x.tempMight ?? 0) !== 0) parts.push(`${(x.tempMight ?? 0) > 0 ? '+' : ''}${x.tempMight} this turn`)
         if (ci.damage > 0) parts.push(`−${ci.damage} damage`)
         const mightTitle = `Might: ${parts.join(' ')} = ${might}`
@@ -133,6 +144,17 @@ export default function BoardCard({
             >
               {might}⚔{ci.damage ? <span className="text-rose-200" title={`${ci.damage} damage marked`}>−{ci.damage}</span> : null}
             </span>
+            {/* Side ±Might counter — clean pill on the right edge, vertically centered. */}
+            {mods !== 0 && (
+              <span
+                title={mightTitle}
+                className={`absolute right-0 top-1/2 -translate-y-1/2 rounded-l px-1 text-[9px] font-bold leading-tight shadow ${
+                  mods > 0 ? 'bg-emerald-500/95 text-black' : 'bg-rose-600/95 text-white'
+                } ${thisTurn ? 'ring-1 ring-white/70' : ''}`}
+              >
+                {mods > 0 ? '+' : '−'}{Math.abs(mods)}
+              </span>
+            )}
             {/* status badges: Mighty / gear / Gold / buff / stun */}
             <span className="absolute left-0 top-0 flex flex-col gap-px text-[8px]">
               {might >= 5 && (
