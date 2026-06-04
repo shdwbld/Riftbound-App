@@ -153,6 +153,10 @@ export interface ParsedEffect {
   /** Tag-scoped Might-this-turn: "give your Mechs +N Might this turn" (Danger Zone).
    *  Applies `amount` to every friendly unit carrying `tag`. */
   tempMightTag: { tag: string; amount: number } | null
+  /** Multiply a per-unit effect (currently the chosen target's +Might) by the count
+   *  of distinct tribe tags (Bird/Cat/Dog/Poro) among your units — "for each of the
+   *  following tags … Bird, Cat, Dog, and Poro" (Friendship). */
+  tribeTagCount: boolean
   /** Extra cards drawn if a chosen target dies during this resolution. */
   drawOnKill: number
   /** Who the targeted part may hit. */
@@ -168,7 +172,7 @@ export interface ParsedEffect {
    *  needs the relevant battlefield's index, supplied at the trigger site.
    *  `xpAtLeast` gates a `[Level N][>]` effect on the controller's XP (Wuju
    *  Apprentice — "[Level 6][>] … draw 1"). */
-  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast' | 'excessAtLeast'; value: number } | null
+  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast' | 'excessAtLeast' | 'controlsTribe' | 'allTribeTags' | 'wasMighty' | 'diedAlone' | 'diedNotAlone'; value: number; tag?: string } | null
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
@@ -218,6 +222,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   tempMightAll: 0,
   tempMightAllEnemy: 0,
   tempMightTag: null,
+  tribeTagCount: false,
   drawOnKill: 0,
   targetScope: null,
   targetCount: 0,
@@ -272,6 +277,21 @@ function parse(text: string): ParsedEffect {
   // "if you assigned 3 or more excess damage" (Vi - Piltover Enforcer, Yeti Brawler).
   const condExcess = t.match(/if you assigned (\d+)\+? (?:or more )?excess damage/)
   if (condExcess) eff.condition = { kind: 'excessAtLeast', value: parseInt(condExcess[1], 10) }
+  // Tribe/tag conditions. "if you control a Poro" (Poro Herder) — controlsTribe.
+  const condTribe = t.match(/if you control an? (bird|cat|dog|poro|dragon|mech)\b/)
+  if (condTribe) eff.condition = { kind: 'controlsTribe', value: 1, tag: condTribe[1] }
+  // "your units have all (4 / of the following) tags … Bird … Poro" — allTribeTags
+  // (Ivern - Friend to All score; Daisy! attack-stun).
+  if (/all (?:4|four) tags/.test(t) || /all of the following tags[^.]*?\bporo\b/.test(t)) eff.condition = { kind: 'allTribeTags', value: 4 }
+  // Deathknell state gates (evaluated at death in fireDeaths; conditionMet passes).
+  // "[Mighty]" is stripped to "" in Deathknell clauses, leaving "if i was , draw 2",
+  // so match both the full phrase and that residue.
+  if (/if i was[^.]*mighty/.test(t) || /if i was\s*,/.test(t)) eff.condition = { kind: 'wasMighty', value: 5 }
+  if (/if i did(?:n'?t| not) die alone/.test(t)) eff.condition = { kind: 'diedNotAlone', value: 0 }
+  else if (/if i died alone/.test(t)) eff.condition = { kind: 'diedAlone', value: 0 }
+  // "+N Might … for each of the following tags … Bird … Poro" (Friendship) — the
+  // chosen target's temp-Might is multiplied by the live distinct-tribe count.
+  if (/for each of the following tags[^.]*?\bporo\b/.test(t)) eff.tribeTagCount = true
 
   // Conditional draw on a kill ("if this kills it … draw 1"); detected first so
   // its "draw N" isn't also counted as an unconditional draw.
@@ -331,7 +351,9 @@ function parse(text: string): ParsedEffect {
 
   // Named unit tokens: "play a 2 :rb_might: Sand Soldier unit token",
   // "play a ready 3 Sprite unit token", "play a 1 Might Bird unit token".
-  const namedM = t.match(/play (?:a |an |(\d+|two|three) )?(?:ready |exhausted )?[^.]*?\b(sprite|sand soldier|bird|mech)\b[^.]*?tokens?(?:\s+with\s+\[temporary\])?/)
+  // The (?!me\b|this\b) skips "when you play me" so the count anchors on the real
+  // "play <N> <token>" clause (e.g. "play me, play four Bird tokens").
+  const namedM = t.match(/play (?!me\b|this\b)(?:a |an |(\d+|two|three|four|five|six) )?(?:ready |exhausted )?[^.]*?\b(sprite|sand soldier|bird|mech)\b[^.]*?tokens?(?:\s+with\s+\[temporary\])?/)
   if (namedM) {
     eff.namedToken = {
       name: namedM[2],

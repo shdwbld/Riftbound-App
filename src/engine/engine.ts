@@ -358,8 +358,29 @@ function bfIndexOfUnit(s: MatchState, iid: string | undefined): number {
  *  `bfIndex` is the relevant battlefield for "units at that battlefield"
  *  conditions (supplied by conquer triggers); without it such a condition
  *  cannot be satisfied. */
+const TRIBE_TAGS = ['Bird', 'Cat', 'Dog', 'Poro']
+/** Distinct tribe tags (Bird/Cat/Dog/Poro) among a player's units (0-4). */
+function tribeTagCount(s: MatchState, player: PlayerId): number {
+  const present = new Set<string>()
+  for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
+    if (u.owner !== player) continue
+    for (const tag of getCard(u.cardId)?.tags ?? []) if (TRIBE_TAGS.includes(tag)) present.add(tag)
+  }
+  return present.size
+}
+/** Whether a player controls a unit carrying `tag` (case-insensitive). */
+function controlsTribeTag(s: MatchState, player: PlayerId, tag: string): boolean {
+  return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
+    (u) => u.owner === player && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag.toLowerCase()),
+  )
+}
+
 function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, excess = 0): boolean {
   if (!e.condition) return true
+  // Death-state gates are pre-evaluated at death time in fireDeaths; pass here.
+  if (e.condition.kind === 'wasMighty' || e.condition.kind === 'diedAlone' || e.condition.kind === 'diedNotAlone') return true
+  if (e.condition.kind === 'controlsTribe') return controlsTribeTag(s, p.id, e.condition.tag ?? '')
+  if (e.condition.kind === 'allTribeTags') return tribeTagCount(s, p.id) >= 4
   if (e.condition.kind === 'unitsHereAtLeast') {
     if (bfIndex == null) return false
     const count = s.battlefields[bfIndex]?.units.filter((u) => u.owner === p.id).length ?? 0
@@ -872,8 +893,9 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     }
     // ("give me +N Might this turn" is applied inside applyParsed above.)
     // Stun from a trigger ("When I attack, [Stun] an enemy unit here" — Vi -
-    // Peacekeeper): auto-stun an enemy unit at the source's battlefield.
-    if (e.stun && sourceIid) {
+    // Peacekeeper): auto-stun an enemy unit at the source's battlefield. Respects a
+    // gating condition (Daisy! — only "while your units have all 4 tags").
+    if (e.stun && sourceIid && !gated) {
       const bi = battlefieldOf(s, sourceIid)
       const target = bi >= 0 ? s.battlefields[bi].units.find((u) => u.owner !== player && !u.stunned) : undefined
       if (target) {
@@ -1006,13 +1028,31 @@ function deathknellMultiplier(s: MatchState, player: PlayerId): number {
 function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
   if (defeated.length) s.unitDiedThisTurn = true // gates conditional enter-ready
   const isRecruit = (u: EngineCard) => (getCard(u.cardId)?.tags ?? []).includes('Recruit')
+  // At-death snapshots for Deathknell state gates (the dying unit's stats are still
+  // intact). "Mighty" ignores the lethal damage (its Might stat was 5+). "Alone" =
+  // no other friendly units at its battlefield (survivors + same-batch casualties).
+  const mightyAtDeath = (u: EngineCard) => {
+    const d = getCard(u.cardId)
+    return !!d && d.type === 'unit' && d.might + (u.buffs ?? 0) + (u.tempMight ?? 0) + gearMight(u) + levelBonus(d, s.players[u.owner]?.xp ?? 0).might >= 5
+  }
+  const aloneAtDeath = (u: EngineCard) => {
+    const bf = u.diedAtBf != null ? s.battlefields[u.diedAtBf] : null
+    const survivors = bf ? bf.units.filter((x) => x.owner === u.owner && x.iid !== u.iid).length : 0
+    const otherDead = defeated.filter((x) => x.iid !== u.iid && x.owner === u.owner && x.diedAtBf === u.diedAtBf).length
+    return survivors + otherDead === 0
+  }
   const fired: FiredTrigger[] = []
   for (const u of defeated) {
     // Self death triggers (Deathknell) — fired an extra time per Karthus - Eternal.
     const mult = deathknellMultiplier(s, u.owner)
-    for (const ab of triggersFor(def(u), 'death'))
-      if (ab.scope !== 'global')
-        for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex: u.diedAtBf })
+    for (const ab of triggersFor(def(u), 'death')) {
+      if (ab.scope === 'global') continue
+      const ck = ab.effect.condition?.kind // Unsung Hero / Lonely & Loyal Poro gates
+      if (ck === 'wasMighty' && !mightyAtDeath(u)) continue
+      if (ck === 'diedAlone' && !aloneAtDeath(u)) continue
+      if (ck === 'diedNotAlone' && aloneAtDeath(u)) continue
+      for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex: u.diedAtBf })
+    }
     // Global "when a unit you control dies" triggers (Viktor - Leader), on the
     // dead unit's controller's other permanents.
     for (const perm of controlledPermanents(s, u.owner)) {
@@ -3150,9 +3190,11 @@ function resolveSpellEffects(
         }
       }
       if (e.tempMight) {
-        const more = applyTempMight(s, t, e.tempMight, e.tempMightFloor)
+        // Friendship: "+1 Might for each of Bird/Cat/Dog/Poro among your units."
+        const amt = e.tribeTagCount ? e.tempMight * tribeTagCount(s, controller) : e.tempMight
+        const more = applyTempMight(s, t, amt, e.tempMightFloor)
         dead = dead.concat(more)
-        s = log(s, controller, `${card.name}: ${e.tempMight > 0 ? '+' : ''}${e.tempMight} Might this turn.`)
+        s = log(s, controller, `${card.name}: ${amt > 0 ? '+' : ''}${amt} Might this turn.`)
       }
       if (e.bounce) s = bounceUnitToHand(s, t, controller, card.name, e.channelExhausted)
       if (e.moveToBase) {

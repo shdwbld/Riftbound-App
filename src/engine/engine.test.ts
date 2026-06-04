@@ -1437,6 +1437,112 @@ describe('tokens (Recruit)', () => {
     expect(playReady(baseState(), mk(plain, 0))).toBe(false)
   })
 
+  // --- Gap 2: tribe/tag counting & conditions ---
+  it('Poro Herder: buffs self + draws only if you control a Poro', () => {
+    const ph = injectCard('ph-test', 'When you play me, if you control a Poro, buff me and draw 1.', { type: 'unit', energy: 0, power: {} })
+    const poro = injectCard('ph-poro', 'A unit.', { tags: ['Poro'] })
+    let s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    s.players[0].zones.base.push(mk(poro, 0))
+    let u = mk(ph, 0)
+    s.players[0].zones.hand.push(u)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.buffs).toBe(1)
+    expect(r.state.players[0].zones.hand.length).toBe(1)
+    s = baseState() // no Poro
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    u = mk(ph, 0)
+    s.players[0].zones.hand.push(u)
+    r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.buffs ?? 0).toBe(0)
+    expect(r.state.players[0].zones.hand.length).toBe(0)
+  })
+
+  it('Friendship: gives a unit +1 Might per distinct tribe tag among your units', () => {
+    const fr = injectCard('fr-test', 'Choose a unit. Give it +1 :rb_might: this turn for each of the following tags among your units — Bird, Cat, Dog, and Poro.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.base.push(mk(injectCard('fr-bird', 'A unit.', { tags: ['Bird'] }), 0), mk(injectCard('fr-cat', 'A unit.', { tags: ['Cat'] }), 0))
+    const target = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(target)
+    const sp = mk(fr, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [target.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.battlefields[0].units.find((x) => x.iid === target.iid)?.tempMight).toBe(2) // 2 distinct tribes
+  })
+
+  it('Flurry of Feathers: plays four Bird tokens', () => {
+    const fl = injectCard('fl-test', 'When you play me, play four 1 :rb_might: Bird unit tokens with [Deflect].', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    const u = mk(fl, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.base.filter((c) => c.cardId === 'tok-bird').length).toBe(4)
+  })
+
+  it('Unsung Hero: Deathknell draws 2 only if it was Mighty (5+ Might)', () => {
+    const mighty = injectCard('uh-m', '[Deathknell] — If I was [Mighty], draw 2.', { might: 5 })
+    const weak = injectCard('uh-w', '[Deathknell] — If I was [Mighty], draw 2.', { might: 3 })
+    let s = baseState()
+    s.sandbox = true
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    let u = mk(mighty, 0)
+    s.battlefields[0].units.push(u)
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.state.players[0].zones.hand.length).toBe(2) // was Mighty → drew 2
+    s = baseState()
+    s.sandbox = true
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    u = mk(weak, 0)
+    s.battlefields[0].units.push(u)
+    r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.state.players[0].zones.hand.length).toBe(0) // not Mighty → no draw
+  })
+
+  it('Lonely / Loyal Poro: Deathknell gated on dying alone vs not alone', () => {
+    const lonely = injectCard('lonely-test', '[Deathknell] — If I died alone, draw 1.', {})
+    const loyal = injectCard('loyal-test', '[Deathknell] — If I didn\'t die alone, draw 1.', {})
+    // Lonely, alone → draws.
+    let s = baseState()
+    s.sandbox = true
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    let u = mk(lonely, 0)
+    s.battlefields[0].units.push(u)
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.state.players[0].zones.hand.length).toBe(1)
+    // Lonely, with an ally here → no draw.
+    s = baseState()
+    s.sandbox = true
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    u = mk(lonely, 0)
+    s.battlefields[0].units.push(u, mk(furyUnit.id, 0))
+    r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.state.players[0].zones.hand.length).toBe(0)
+    // Loyal, with an ally here → draws.
+    s = baseState()
+    s.sandbox = true
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    u = mk(loyal, 0)
+    s.battlefields[0].units.push(u, mk(furyUnit.id, 0))
+    r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.state.players[0].zones.hand.length).toBe(1)
+  })
+
+  it('Ivern - Friend to All: conquer scores 1 only with all 4 tribe tags', () => {
+    const iv = injectCard('iv-fta', 'When I conquer, score 1 point if your units have all of the following tags among them — Bird, Cat, Dog, and Poro.', { type: 'unit', energy: 0, power: {}, might: 3 })
+    const tribes = ['Bird', 'Cat', 'Dog', 'Poro'].map((t) => injectCard('iv-' + t, 'A unit.', { tags: [t] }))
+    const run = (withAll: boolean) => {
+      const s = baseState()
+      for (const t of withAll ? tribes : tribes.slice(0, 3)) s.players[0].zones.base.push(mk(t, 0))
+      const ivern = mk(iv, 0)
+      s.players[0].zones.base.push(ivern)
+      s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null } // empty → conquer
+      return reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [ivern.iid], toBattlefield: 0 }).state.players[0].points
+    }
+    expect(run(true) - run(false)).toBe(1) // the all-4-tags score adds exactly 1
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
