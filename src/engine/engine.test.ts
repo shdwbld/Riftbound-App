@@ -700,6 +700,60 @@ describe('tokens (Recruit)', () => {
     expect(after.players[0].zones.trash.some((c) => c.cardId === champ.id)).toBe(false)
   })
 
+  it("Viktor - Innovator: play-trigger does NOT fire on your own turn (Gap 11)", () => {
+    const viktor = injectCard('viktor-innov-t', "When you play a card on an opponent's turn, play a 1 :rb_might: Recruit unit token in your base.", { type: 'unit', energy: 0, power: {}, might: 3 })
+    const vanilla = injectCard('viktor-vanilla', 'A unit.', { type: 'unit', energy: 0, power: {}, might: 2 })
+    const s = baseState() // activePlayer 0 — it's player 0's own turn
+    s.players[0].zones.base.push(mk(viktor, 0))
+    const u = mk(vanilla, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    // Own turn → no Recruit token created.
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === TOKEN_PILE_IDS[0])).toBe(false)
+  })
+
+  it('Walking Roost: on play, the OPPONENT gets a Bird token in their base (Gap 11)', () => {
+    const roost = injectCard('walking-roost-t', 'When you play me, choose an opponent. They play a 1 :rb_might: Bird unit token with [Deflect].', { type: 'unit', energy: 0, power: {}, might: 3 })
+    const s = baseState()
+    const u = mk(roost, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[1].zones.base.some((x) => x.cardId === TOKEN_BY_NAME['bird'])).toBe(true) // opponent got it
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === TOKEN_BY_NAME['bird'])).toBe(false) // not me
+  })
+
+  it("Noxus Saboteur: an opponent can't reveal a Hidden card where you control it (Gap 11)", () => {
+    const sab = injectCard('noxus-sab-t', "Your opponents' [Hidden] cards can't be revealed here.", { type: 'unit', might: 3 })
+    const hid = injectCard('sab-hidden', '[Hidden]', { type: 'spell', energy: 1, power: {} })
+    const s = baseState()
+    s.turn = 6
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(sab, 0)], controller: 0 }
+    s.battlefields[0].facedown = mk(hid, 1, { facedown: true, hiddenTurn: 4 })
+    // Player 1 tries to reveal at bf0 where player 0 controls a Saboteur → blocked.
+    const r = reduce(s, { type: 'REVEAL', player: 1, iid: s.battlefields[0].facedown!.iid })
+    expect(r.error).toBeTruthy()
+  })
+
+  it('Scuttle Crab: on-play draws (no XP); Deathknell gains 1 XP (no draw) (Gap 11)', () => {
+    const crab = injectCard('scuttle-crab-t', 'When you play me, draw 1.[Deathknell][&gt;] Choose an opponent. They reveal their hand. Gain 1 XP.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const s = baseState()
+    s.sandbox = true
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const u = mk(crab, 0)
+    s.players[0].zones.hand.push(u)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.hand.length).toBe(1) // drew 1 on play
+    expect(r.state.players[0].xp).toBe(0) // XP is Deathknell-only, not on-play
+    // Now kill it → Deathknell gains 1 XP (and does not draw again).
+    const inPlay = r.state.players[0].zones.base.find((x) => x.cardId === crab)!
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'kill', iid: inPlay.iid })
+    expect(r.state.players[0].xp).toBe(1) // Deathknell XP
+    expect(r.state.players[0].zones.hand.length).toBe(1) // no extra draw
+  })
+
   it('Dazzling Aurora: at end of turn, reveal-until-unit → play it free, recycle the rest', () => {
     const aurora = injectCard('aurora-gear', 'At the end of your turn, reveal cards from the top of your Main Deck until you reveal a unit and banish it. Play it, ignoring its cost, and recycle the rest.', { type: 'gear' })
     const spellId = injectCard('aurora-spell', 'Deal 1.', { type: 'spell', energy: 1, power: {} })
@@ -1836,11 +1890,11 @@ describe('tokens (Recruit)', () => {
     const mkCard = (text: string) =>
       ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
     const sand = spellEffect(mkCard('Play a 2 :rb_might: Sand Soldier unit token.')).namedToken
-    expect(sand).toEqual({ name: 'sand soldier', count: 1, exhausted: true, temporary: false, here: false })
+    expect(sand).toEqual({ name: 'sand soldier', count: 1, exhausted: true, temporary: false, here: false, opponent: false })
     const bird = spellEffect(mkCard('Play three Bird unit tokens.')).namedToken
-    expect(bird).toEqual({ name: 'bird', count: 3, exhausted: true, temporary: false, here: false })
+    expect(bird).toEqual({ name: 'bird', count: 3, exhausted: true, temporary: false, here: false, opponent: false })
     const mech = spellEffect(mkCard('Play a ready 3 :rb_might: Mech unit token.')).namedToken
-    expect(mech).toEqual({ name: 'mech', count: 1, exhausted: false, temporary: false, here: false })
+    expect(mech).toEqual({ name: 'mech', count: 1, exhausted: false, temporary: false, here: false, opponent: false })
   })
 
   it('spawns a named token onto the base when an on-play effect resolves', () => {

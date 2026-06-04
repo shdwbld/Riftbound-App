@@ -128,8 +128,12 @@ export function parseTriggers(card: Card | undefined): TriggeredAbility[] {
       })
     }
     // [Deathknell] keyword implies a death trigger even without explicit wording.
+    // The death effect is the text AFTER the [Deathknell] marker — anything before
+    // it (e.g. Scuttle Crab's on-play "draw 1") must not bleed into the death clause.
     if (parseKeywords(card).deathknell && !out.some((a) => a.event === 'death')) {
-      const stripped = text.replace(/\[[^\]]*\]/g, '').trim()
+      const dkIdx = text.search(/\[deathknell\]/i)
+      const after = dkIdx >= 0 ? text.slice(dkIdx) : text
+      const stripped = after.replace(/\[[^\]]*\]/g, '').trim()
       out.push({ event: 'death', scope: 'self', optional: false, effect: parseEffectText(stripped), text: stripped })
     }
   }

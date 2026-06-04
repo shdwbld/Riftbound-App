@@ -32,6 +32,8 @@ export interface ParsedEffect {
   stun: number
   /** Points scored directly ("you score N point" — Ahri, Draven - Audacious). */
   score: number
+  /** XP gained directly ("gain N XP" — Scuttle Crab, Right of Conquest). */
+  gainXp: number
   /** An alternate action taken on the stun target if it was ALREADY stunned,
    *  instead of stunning it: 'bounce' = return it to hand (Existential Dread),
    *  'kill' = kill it (Solari Chief). Null = always just stun. */
@@ -61,7 +63,7 @@ export interface ParsedEffect {
   goldTokens: number
   /** A named unit token to create (Sprite / Sand Soldier / Bird / Mech).
    *  `here` = play it at the source unit's battlefield ("… here"), not base. */
-  namedToken: { name: string; count: number; exhausted: boolean; temporary: boolean; here: boolean } | null
+  namedToken: { name: string; count: number; exhausted: boolean; temporary: boolean; here: boolean; opponent: boolean } | null
   /** Number of your units to ready (un-exhaust) — the player chooses which. */
   readyUnits: number
   /** Ready ALL your units, no choice ("ready your units" — Shurelya's Requiem). */
@@ -195,6 +197,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   cullEachPlayer: false,
   stun: 0,
   score: 0,
+  gainXp: 0,
   ifTargetStunned: null,
   killMightMax: null,
   drawPerBattlefield: 0,
@@ -375,6 +378,9 @@ function parse(text: string): ParsedEffect {
       // "play a … token here" → at the source's battlefield. \bhere\b excludes
       // "there" (whose origin-placement stays at base, correct for base→bf moves).
       here: /\bhere\b/.test(t),
+      // "choose an opponent. They play a … token" (Walking Roost) → the OPPONENT
+      // gets the token in THEIR base.
+      opponent: /\bthey play\b/.test(t),
     }
     hit = true
   }
@@ -430,6 +436,10 @@ function parse(text: string): ParsedEffect {
   // "Victory Score") — requires a number + "point(s)".
   const scoreM = t.match(new RegExp(`score ${NUM} points?`))
   if (scoreM) { eff.score += num(scoreM[1]); hit = true }
+
+  // Direct XP gain: "gain 1 XP" / "gain :rb_xp: 2" (Scuttle Crab, Right of Conquest).
+  const xpGainM = t.match(/gain (\d+)\s*(?::rb_xp:|xp)/)
+  if (xpGainM) { eff.gainXp += parseInt(xpGainM[1], 10); hit = true }
 
   // Temporary keyword grants "this turn". Targeted: "give a unit [Assault N] (and
   // [Ganking]) this turn" (Square Up, Vault Breaker). Area: "give your other
@@ -752,9 +762,15 @@ export function needsTarget(card: Card): boolean {
 
 /** On-play effect for a unit/gear — only the unambiguous on-play triggers. */
 export function onPlayEffect(card: Card): ParsedEffect {
-  const t = (card.text ?? '').toLowerCase()
+  const full = card.text ?? ''
+  const t = full.toLowerCase()
   if (!ON_PLAY.test(t)) return EMPTY_EFFECT()
-  return parse(card.text ?? '')
+  // Exclude a trailing [Deathknell] ability from the on-play clause (Scuttle Crab's
+  // "Gain 1 XP" is a death effect, not on-play) — only when the on-play wording
+  // precedes the marker.
+  const dkIdx = t.search(/\[deathknell\]/)
+  const onPlayIdx = t.search(/when you play (?:me|this)|when i(?:'m| am)? (?:played|enter)/)
+  return parse(dkIdx > onPlayIdx && onPlayIdx >= 0 ? full.slice(0, dkIdx) : full)
 }
 
 /** A permanent's "At the end of your turn, …" effect (Dazzling Aurora), or empty. */

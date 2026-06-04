@@ -513,6 +513,8 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     lines.push(`Scored ${e.score} point(s).`)
     if (s.winner == null && p.points >= s.pointsToWin) { s.winner = p.id; s.phase = 'gameover' }
   }
+  // Direct XP gain ("gain N XP" — Scuttle Crab Deathknell, Right of Conquest).
+  if (e.gainXp) { p.xp = (p.xp ?? 0) + e.gainXp; lines.push(`Gained ${e.gainXp} XP (now ${p.xp}).`) }
   // Recruit / named tokens are token UNITS — Zilean doubles the count (once/turn)
   // and Renata makes them enter ready. Gold are gear tokens (Renata-ready only).
   if (e.recruits) {
@@ -526,15 +528,28 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   }
   if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
   if (e.namedToken) {
-    // "… here" plays the token at the source unit's battlefield; otherwise base.
-    const hereBf = e.namedToken.here ? bfIndexOfUnit(s, sourceIid) : -1
-    const dest = hereBf >= 0 ? s.battlefields[hereBf].units : undefined
-    const exh = e.namedToken.exhausted && !tokensEnterReady(s, p.id)
-    const made = spawnNamedToken(p, e.namedToken.name, zileanDouble(s, p.id, e.namedToken.count), s.turn, exh, e.namedToken.temporary, dest)
-    if (made) {
-      if (hereBf >= 0) recomputeControllers(s)
-      const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
-      lines.push(`Created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}${hereBf >= 0 ? ' here' : ''}.`)
+    // "choose an opponent. They play a … token" (Walking Roost) → spawn into the
+    // chosen opponent's Base (auto-pick the first opponent still in the match).
+    if (e.namedToken.opponent) {
+      const foe = s.players.find((pl) => pl.id !== p.id && !pl.out)
+      if (foe) {
+        const made = spawnNamedToken(foe, e.namedToken.name, e.namedToken.count, s.turn, e.namedToken.exhausted, e.namedToken.temporary)
+        if (made) {
+          const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
+          lines.push(`Opponent created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}.`)
+        }
+      }
+    } else {
+      // "… here" plays the token at the source unit's battlefield; otherwise base.
+      const hereBf = e.namedToken.here ? bfIndexOfUnit(s, sourceIid) : -1
+      const dest = hereBf >= 0 ? s.battlefields[hereBf].units : undefined
+      const exh = e.namedToken.exhausted && !tokensEnterReady(s, p.id)
+      const made = spawnNamedToken(p, e.namedToken.name, zileanDouble(s, p.id, e.namedToken.count), s.turn, exh, e.namedToken.temporary, dest)
+      if (made) {
+        if (hereBf >= 0) recomputeControllers(s)
+        const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
+        lines.push(`Created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}${hereBf >= 0 ? ' here' : ''}.`)
+      }
     }
   }
   if (e.returnFromTrash) {
@@ -1000,12 +1015,8 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       }
       handled = true
     }
-    // Kha'Zix - Voidreaver (legend): "When you win a combat, gain 1 XP."
-    if (ability.event === 'winCombat' && srcName === "Kha'Zix - Voidreaver") {
-      p.xp += 1
-      s = log(s, player, `${label}: ${srcName} gained 1 XP (now ${p.xp}).`)
-      handled = true
-    }
+    // (Kha'Zix - Voidreaver's "When you win a combat, gain 1 XP" is now handled by
+    // the generic gainXp parse in applyParsed above.)
     if (ability.event === 'death' && sourceCardId) {
       const baseName = srcName
       if (baseName === "Kog'Maw - Caustic" && deathBf != null && s.battlefields[deathBf]) {
@@ -1137,7 +1148,8 @@ function playTriggerMatches(text: string, card: Card, cost?: number): boolean {
 
 /** Token UNITS in a parsed effect (Recruit + named Sprite/Sand Soldier/etc.). */
 function tokenUnitsIn(e: ParsedEffect): number {
-  return e.recruits + (e.namedToken?.count ?? 0)
+  // Opponent-directed tokens (Walking Roost) don't count toward YOUR token synergy.
+  return e.recruits + (e.namedToken && !e.namedToken.opponent ? e.namedToken.count : 0)
 }
 
 /** Fire "when you play a token unit" global triggers (e.g. Lillia - Protector of
@@ -1163,6 +1175,9 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   // cost-gated and handled explicitly (Chemtech Cask), not auto-resolved here —
   // otherwise they'd fire for free on every spell.
   fired = fired.filter((f) => !/exhaust me\b|exhaust this\b/i.test(f.ability.text))
+  // "When you play a card on an opponent's turn" (Viktor - Innovator) — only fires
+  // while it's NOT the controller's turn.
+  fired = fired.filter((f) => !/on an opponent'?s turn/i.test(f.ability.text) || s.activePlayer !== player)
   if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost))
   return fireTriggers(s, fired)
 }
@@ -4044,6 +4059,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (bfi < 0) return fail(state, 'No facedown card of yours to reveal.')
       const fd = s.battlefields[bfi].facedown!
       if ((fd.hiddenTurn ?? -1) >= s.turn) return fail(state, "You can't reveal a card the turn you hid it.")
+      // Noxus Saboteur: "Your opponents' [Hidden] cards can't be revealed here."
+      if (s.battlefields[bfi].units.some((u) => u.owner !== action.player && /your opponents'? \[hidden\] cards can'?t be revealed here/i.test(getCard(u.cardId)?.text ?? '')))
+        return fail(state, 'An opponent\'s Noxus Saboteur prevents revealing Hidden cards here.')
       const card = getCard(fd.cardId)
       if (!card) return fail(state, 'Unknown card.')
       s.battlefields[bfi].facedown = null
