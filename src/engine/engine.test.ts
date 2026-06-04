@@ -163,6 +163,35 @@ describe('resource payment', () => {
     })
     expect(error).toBeDefined()
   })
+
+  it('emits a payment event with the right exhaust/recycle counts when a unit is played', () => {
+    const s = baseState()
+    const unitCard = furyUnit as Extract<typeof furyUnit, { type: 'unit' }>
+    const energy = unitCard.energy
+    const power = unitCard.power.fury ?? 0
+    const unit = mk(unitCard.id, 0)
+    s.players[0].zones.hand.push(unit)
+    const runes: EngineCard[] = []
+    for (let i = 0; i < energy + power; i++) {
+      const r = mk(furyRune.id, 0)
+      s.players[0].zones.runePool.push(r)
+      runes.push(r)
+    }
+    const payment = {
+      exhaust: runes.slice(0, energy).map((r) => r.iid),
+      recycle: runes.slice(energy, energy + power).map((r) => r.iid),
+    }
+    const { error, events } = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: unit.iid, payment })
+    expect(error).toBeUndefined()
+    const pay = events?.find((e) => e.kind === 'payment')
+    expect(pay).toBeDefined()
+    expect(pay!.player).toBe(0)
+    expect(pay!.cardId).toBe(unitCard.id)
+    expect(pay!.exhaust).toBe(energy)
+    expect(pay!.recycle).toBe(power)
+    // And the matching 'play' event is still emitted alongside it.
+    expect(events?.some((e) => e.kind === 'play' && e.cardId === unitCard.id)).toBe(true)
+  })
 })
 
 describe('turn flow', () => {

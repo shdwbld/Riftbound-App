@@ -437,6 +437,9 @@ export type GameEventKind =
   | 'conquer'
   | 'counter'
   | 'channel'
+  /** A card's cost was paid: carries how many runes were exhausted / recycled
+   *  (for the end-of-turn recap). Emitted alongside the matching 'play' event. */
+  | 'payment'
 
 export interface GameEvent {
   kind: GameEventKind
@@ -448,6 +451,10 @@ export interface GameEvent {
   amount?: number
   /** Underlying card id, for display. */
   cardId?: string
+  /** Runes exhausted to pay (for 'payment' events). */
+  exhaust?: number
+  /** Runes recycled to pay (for 'payment' events). */
+  recycle?: number
 }
 
 export interface EngineResult {

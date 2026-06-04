@@ -20,7 +20,62 @@ import VisionPrompt from '../components/VisionPrompt'
 import SetupScreen from '../components/SetupScreen'
 import DamageAssignModal from '../components/DamageAssignModal'
 import BattleSummary, { worthSummarizing } from '../components/BattleSummary'
+import TurnRecapBanner, { type TurnRecapData } from '../components/TurnRecapBanner'
 import HotkeyHelp from '../components/HotkeyHelp'
+
+/** Accumulate this-turn events into a buffer; when the turn flips, build a
+ *  recap from the just-ended turn's buffer and reset to the new turn. Shared by
+ *  hotseat (MatchPage) and online (OnlinePage). Returns recap data, or null if
+ *  the turn didn't change. Mutates `buf` in place. */
+export function accumulateTurnRecap(
+  buf: { turn: number; events: GameEvent[] },
+  match: MatchState,
+  events: GameEvent[] | undefined,
+): TurnRecapData | null {
+  // First observation: seed the buffer to the current turn, no recap yet.
+  if (buf.turn < 0) {
+    buf.turn = match.turn
+    buf.events = events?.length ? [...events] : []
+    return null
+  }
+  // Same turn: keep buffering.
+  if (buf.turn === match.turn) {
+    if (events?.length) buf.events.push(...events)
+    return null
+  }
+  // Turn flipped — summarize the buffer that belongs to the just-ended turn.
+  const ended = buf.events
+  let spells = 0
+  let units = 0
+  let exhausted = 0
+  let recycled = 0
+  let points = 0
+  for (const e of ended) {
+    if (e.kind === 'play' && e.cardId) {
+      const t = getCard(e.cardId)?.type
+      if (t === 'spell') spells++
+      else if (t === 'unit') units++
+    } else if (e.kind === 'payment') {
+      exhausted += e.exhaust ?? 0
+      recycled += e.recycle ?? 0
+    } else if (e.kind === 'score') {
+      points += e.amount ?? 0
+    }
+  }
+  const recapKey = buf.turn
+  // Reset the buffer to the new turn, seeding it with this action's events.
+  buf.turn = match.turn
+  buf.events = events?.length ? [...events] : []
+  return {
+    key: recapKey,
+    nextPlayer: match.players[match.activePlayer]?.name ?? 'Next player',
+    spells,
+    units,
+    exhausted,
+    recycled,
+    points,
+  }
+}
 
 type PlayType = 'PLAY_UNIT' | 'PLAY_GEAR' | 'PLAY_SPELL'
 
@@ -58,6 +113,9 @@ export default function MatchPage() {
   const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean } | null>(null)
   // Animated battle summary after a combat / chain resolution.
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
+  // End-of-turn recap banner + per-turn event buffer (keyed by match.turn).
+  const [recap, setRecap] = useState<TurnRecapData | null>(null)
+  const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
   // Pending Ambush battlefield choice.
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending Deflect surcharge payment (after a spell's targets are chosen).
@@ -83,6 +141,8 @@ export default function MatchPage() {
       if (historyRef.current.length > 100) historyRef.current.shift()
       setLastEvents(events)
       if (worthSummarizing(events)) setSummary({ events: events!, token: state.seq })
+      const r = accumulateTurnRecap(recapBufRef.current, state, events)
+      if (r) setRecap(r)
       setMatch(state)
     },
     [flash],
@@ -427,6 +487,7 @@ export default function MatchPage() {
       {summary && (
         <BattleSummary match={match} events={summary.events} token={summary.token} onClose={() => setSummary(null)} />
       )}
+      <TurnRecapBanner data={recap} />
       {match.vision && match.vision.player === controlling && (
         <VisionPrompt
           cardId={match.vision.cardId}

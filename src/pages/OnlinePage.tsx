@@ -24,6 +24,8 @@ import ChoiceModal from '../components/ChoiceModal'
 import VisionPrompt from '../components/VisionPrompt'
 import DamageAssignModal from '../components/DamageAssignModal'
 import BattleSummary, { worthSummarizing } from '../components/BattleSummary'
+import TurnRecapBanner, { type TurnRecapData } from '../components/TurnRecapBanner'
+import { accumulateTurnRecap } from './MatchPage'
 
 type PlayType = 'PLAY_UNIT' | 'PLAY_GEAR' | 'PLAY_SPELL'
 
@@ -80,6 +82,9 @@ export default function OnlinePage() {
   // The pending play awaiting a chosen rune payment (the overlay).
   const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean } | null>(null)
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
+  // End-of-turn recap banner + per-turn event buffer (keyed by match.turn).
+  const [recap, setRecap] = useState<TurnRecapData | null>(null)
+  const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; options: { label: string; value: number }[] } | null>(null)
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
@@ -197,6 +202,12 @@ export default function OnlinePage() {
   // Replay combat/chain resolutions (host, guest, or local all flow through lastEvents).
   useEffect(() => {
     if (worthSummarizing(lastEvents)) setSummary({ events: lastEvents!, token: matchRef.current?.seq ?? 0 })
+    // Accumulate the turn's events; show the recap banner when the turn flips.
+    const m = matchRef.current
+    if (m) {
+      const r = accumulateTurnRecap(recapBufRef.current, m, lastEvents)
+      if (r) setRecap(r)
+    }
   }, [lastEvents])
 
   function startMatchAsHost(t: Transport) {
@@ -677,6 +688,7 @@ export default function OnlinePage() {
       {summary && (
         <BattleSummary match={match} events={summary.events} token={summary.token} onClose={() => setSummary(null)} />
       )}
+      <TurnRecapBanner data={recap} />
       {match.vision && match.vision.player === seat && (
         <VisionPrompt
           cardId={match.vision.cardId}

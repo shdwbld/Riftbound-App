@@ -4159,6 +4159,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (repeatChosen) effCost = addCost(effCost, repeatAvail!)
       const err = applyPayment(p, effCost, action.payment)
       if (err) return fail(state, err)
+      // Recap signal: how this play was paid (runes exhausted / recycled). Emitted
+      // once per play (unit/gear/spell), alongside the 'play' event(s) below.
+      emit({
+        kind: 'payment',
+        player: action.player,
+        cardId: card.id,
+        exhaust: action.payment.exhaust.length,
+        recycle: action.payment.recycle.length,
+      })
       // A card's "cost" for threshold triggers (Lux — "a spell that costs 5+") is
       // total Energy + Power, not just Energy.
       const effTotal = effCost.energy + Object.values(effCost.power).reduce((a, b) => a + (b ?? 0), 0)
