@@ -754,6 +754,36 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.hand.length).toBe(1) // no extra draw
   })
 
+  it('Jax - Unrelenting: draw 1 (pay 1 Energy) when an Equipment is attached (Gap 9)', () => {
+    const jax = injectCard('jax-unrel-t', 'When you attach an Equipment to me, you may pay :rb_energy_1: to draw 1.', { type: 'unit', might: 5 })
+    const gear = injectCard('jax-gear-t', '+1 Might', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const j = mk(jax, 0)
+    s.players[0].zones.base.push(j)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 ready rune for the draw cost
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0)) // a card to draw
+    const g = mk(gear, 0)
+    s.players[0].zones.hand.push(g)
+    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, targetIid: j.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.hand.length).toBe(1) // gear left hand, drew 1
+    expect(r.state.players[0].zones.runePool.every((x) => x.exhausted)).toBe(true) // paid 1 Energy
+  })
+
+  it('Prize of Progress: +1 Might this turn when you use a gear ability (Gap 9)', () => {
+    const prize = injectCard('prize-prog-t', 'When you use an activated ability of a gear, give me +1 :rb_might: this turn.', { type: 'unit', might: 3 })
+    const gear = injectCard('prize-gear-t', ':rb_exhaust:: Draw 1.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const pz = mk(prize, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [pz], controller: 0 }
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const g = mk(gear, 0)
+    s.players[0].zones.base.push(g)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: g.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.find((x) => x.iid === pz.iid)?.tempMight).toBe(1)
+  })
+
   it('Dazzling Aurora: at end of turn, reveal-until-unit → play it free, recycle the rest', () => {
     const aurora = injectCard('aurora-gear', 'At the end of your turn, reveal cards from the top of your Main Deck until you reveal a unit and banish it. Play it, ignoring its cost, and recycle the rest.', { type: 'gear' })
     const spellId = injectCard('aurora-spell', 'Deal 1.', { type: 'spell', energy: 1, power: {} })

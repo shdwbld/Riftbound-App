@@ -1192,6 +1192,21 @@ function fireStun(s: MatchState, player: PlayerId): MatchState {
   return fireTriggers(s, collectGlobal(s, player, 'stun'))
 }
 
+/** Fire "When you use an activated ability of a gear, give me +N Might this turn"
+ *  (Prize of Progress). Call after a GEAR's activated ability resolves. */
+function fireGearAbilityUse(s: MatchState, player: PlayerId): MatchState {
+  for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
+    if (u.owner !== player) continue
+    const m = (getCard(u.cardId)?.text ?? '').toLowerCase().match(/when you use an activated ability of a gear,? give me \+(\d+)\s*(?::rb_might:|might) this turn/)
+    if (m) {
+      u.tempMight = (u.tempMight ?? 0) + parseInt(m[1], 10)
+      emit({ kind: 'buff', iid: u.iid, player })
+      s = log(s, player, `${getCard(u.cardId)?.name}: +${m[1]} Might this turn (gear ability used).`)
+    }
+  }
+  return s
+}
+
 /** Fire "when you discard one or more cards" global triggers (Jinx - Rebel —
  *  ready me + +1 Might this turn). Call once per discard event for `player`. */
 function fireDiscard(s: MatchState, player: PlayerId): MatchState {
@@ -1420,8 +1435,22 @@ function controlsUnitNamed(s: MatchState, player: PlayerId, name: string): boole
  *  been chosen this turn — Ready 2 runes / Channel 1 rune exhausted / Buff a friendly
  *  unit." Auto-resolves the next un-chosen mode (in order); no-op after all 3. */
 function fireAttachEquip(s: MatchState, player: PlayerId, target: EngineCard): MatchState {
+  if (target.owner !== player) return s
   const name = (getCard(target.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
-  if (name !== 'Aphelios - Exalted' || target.owner !== player) return s
+  // Generic "When you attach an Equipment to me, you may pay N Energy to draw M"
+  // self-trigger (Jax - Unrelenting). Auto-paid when affordable (pure benefit).
+  const tt = (getCard(target.cardId)?.text ?? '').toLowerCase()
+  const drawM = tt.match(/when you attach an equipment to me,? you may pay :rb_energy_(\d+): to draw (\d+)/)
+  if (drawM) {
+    const cost = { energy: parseInt(drawM[1], 10), power: {} }
+    const pp = s.players[player]
+    const pay = autoPay(pp, cost)
+    if (pay && !applyPayment(pp, cost, pay)) {
+      const drew = drawN(pp, parseInt(drawM[2], 10))
+      s = log(s, player, `${name}: paid ${cost.energy} Energy to draw ${drew} (Equipment attached).`)
+    }
+  }
+  if (name !== 'Aphelios - Exalted') return s
   const p = s.players[player]
   const used = p.apheliosModesThisTurn ?? 0
   if (used >= 3) return s
@@ -4376,6 +4405,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // "Gain N XP" (Scryer's Bloom's trailing sentence, not in effectText).
       const xpM = srcText.match(/gain (\d+)\s*(?::rb_xp:|xp)/i)
       if (xpM) p.xp += parseInt(xpM[1], 10)
+      // Prize of Progress: "When you use an activated ability of a gear, give me
+      // +1 Might this turn." Fires when the activated source is a gear.
+      if (getCard(u.cardId)?.type === 'gear') s1 = fireGearAbilityUse(s1, action.player)
       // "Kill this" cost resolves after the effect (the source is sacrificed).
       if (ab.killThis) s1 = fireDeaths(s1, killTarget(s1, u.iid))
       return ok(s1)
