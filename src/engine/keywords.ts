@@ -147,6 +147,15 @@ export function parseKeywords(card: Card | undefined): Keywords {
     const referenced = text.replace(/\byour\s+\[deathknell\]\s+effects/gi, '')
     if (!/\[deathknell\]/i.test(referenced)) kw.deathknell = false
   }
+  // [Assault]/[Shield] GRANTED to other units ("Other friendly units here have
+  // [Assault]" — Captain Farron; "… have [Shield]" — Taric - Protector) is not a
+  // keyword on THIS card. Strip it when every occurrence sits inside a grant
+  // clause. (Taric keeps its own leading [Shield]; only the granted copy is cut.)
+  for (const kwName of ['assault', 'shield'] as const) {
+    if (!kw[kwName]) continue
+    const ungranted = text.replace(new RegExp(`\\b(?:units[^.\\[]*?have|give (?:it|them))\\s+\\[${kwName}[^\\]]*\\]`, 'gi'), '')
+    if (!new RegExp(`\\[${kwName}[^\\]]*\\]`, 'i').test(ungranted)) kw[kwName] = 0
+  }
   cache.set(card.id, kw)
   return kw
 }

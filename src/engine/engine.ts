@@ -2759,6 +2759,18 @@ function unitGrantedKeyword(s: MatchState, u: EngineCard, keyword: string): bool
   return false
 }
 
+/** Positional keyword grants from another friendly unit sharing the battlefield:
+ *  "Other friendly units here have [Assault]" (Captain Farron) / "[Shield]"
+ *  (Taric - Protector). Like unitGrantedKeyword but bf-local rather than owner-wide. */
+function unitGrantedKeywordHere(here: EngineCard[], u: EngineCard, keyword: string): boolean {
+  for (const src of here) {
+    if (src.iid === u.iid || src.owner !== u.owner) continue
+    const t = (def(src)?.text ?? '').toLowerCase()
+    if (new RegExp(`(?:other )?friendly units here have [^.]*\\[${keyword}\\]`).test(t)) return true
+  }
+  return false
+}
+
 function unitHasGanking(s: MatchState, u: EngineCard): boolean {
   if (u.grantGanking) return true // [Ganking] granted this turn (Vault Breaker)
   const t = (def(u)?.text ?? '').toLowerCase()
@@ -2810,10 +2822,11 @@ function bfCombatBonus(
     if (role === 'defender' && script?.shieldHere) b += script.shieldHere(u)
     b += conditionalMight(s, u, role, alone)
     b += auraMightHere(here, u)
-    // Owner-wide granted [Shield]/[Assault] (Rumble - Mechanized Menace / Hotheaded):
+    // Owner-wide granted [Shield]/[Assault] (Rumble - Mechanized Menace / Hotheaded)
+    // and positional grants from a unit here (Taric - Protector / Captain Farron):
     // both are just +1 Might in their combat role.
-    if (role === 'defender' && unitGrantedKeyword(s, u, 'shield')) b += 1
-    if (role === 'attacker' && unitGrantedKeyword(s, u, 'assault')) b += 1
+    if (role === 'defender' && (unitGrantedKeyword(s, u, 'shield') || unitGrantedKeywordHere(here, u, 'shield'))) b += 1
+    if (role === 'attacker' && (unitGrantedKeyword(s, u, 'assault') || unitGrantedKeywordHere(here, u, 'assault'))) b += 1
     return b
   }
 }
@@ -3735,7 +3748,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (e.manual && !e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
         // Weaponmaster: auto-attach a piece of gear from your hand on entry.
-        if (kw.weaponmaster) {
+        // May be granted owner-wide (Azir - Emperor of the Sands → Sand Soldiers).
+        if (kw.weaponmaster || unitGrantedKeyword(s1, ci, 'weaponmaster')) {
           const gearCi = p.zones.hand.find((c) => getCard(c.cardId)?.type === 'gear')
           const target = p.zones.base.find((u) => u.iid === ci.iid)
           if (gearCi && target) {

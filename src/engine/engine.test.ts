@@ -1302,6 +1302,28 @@ describe('tokens (Recruit)', () => {
     expect(combatMightAt(s, 0, nm, 'attacker')).toBe(3) // non-Mech unaffected
   })
 
+  it('Captain Farron: other friendly units here have [Assault] (+1 Might attacking) (Gap 7)', () => {
+    const farron = injectCard('farron-t', 'Other friendly units here have [Assault]. (+1 :rb_might: while they are attackers.)', { name: 'Captain Farron', might: 4 })
+    const ally = injectCard('farron-ally', 'A unit.', { might: 3 })
+    const s = baseState()
+    const f = mk(farron, 0), a = mk(ally, 0), enemy = mk(ally, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [f, a, enemy], controller: 0 }
+    expect(combatMightAt(s, 0, a, 'attacker')).toBe(4) // 3 + 1 (Assault granted)
+    expect(combatMightAt(s, 0, a, 'defender')).toBe(3) // Assault only helps attackers
+    expect(combatMightAt(s, 0, f, 'attacker')).toBe(4) // self excluded ("other")
+    expect(combatMightAt(s, 0, enemy, 'attacker')).toBe(3) // enemy unaffected
+  })
+
+  it('Taric - Protector: other friendly units here have [Shield] (+1 Might defending) (Gap 7)', () => {
+    const taric = injectCard('taric-t', '[Shield] [Tank] Other friendly units here have [Shield].', { name: 'Taric - Protector', might: 4 })
+    const ally = injectCard('taric-ally', 'A unit.', { might: 3 })
+    const s = baseState()
+    const t = mk(taric, 0), a = mk(ally, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [t, a], controller: 0 }
+    expect(combatMightAt(s, 0, a, 'defender')).toBe(4) // 3 + 1 (Shield granted)
+    expect(combatMightAt(s, 0, a, 'attacker')).toBe(3) // Shield only helps defenders
+  })
+
   it('Danger Zone: gives your Mechs +1 Might this turn (tag-scoped)', () => {
     const dz = injectCard('dz-test', 'When you play me, give your Mechs +1 :rb_might: this turn.', { type: 'unit', energy: 0, power: {} })
     const mech = mk(injectCard('dz-mech', 'A unit.', { tags: ['Mech'] }), 0)
