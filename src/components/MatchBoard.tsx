@@ -406,6 +406,7 @@ export default function MatchBoard({
           { label: 'Set damage 6', action: ov('setDamage', { value: 6 }) },
           { label: 'Buff (net)… ⇄', stepper: { title: 'Net buff counters', make: (n: number) => (n >= 0 ? ov('buff', { amount: n }) : ov('unbuff', { amount: -n })) } },
           { label: 'Might (net, this turn)… ⇄', stepper: { title: 'Net temp Might (this turn)', make: (n: number) => (n >= 0 ? ov('mightUp', { amount: n }) : ov('mightDown', { amount: -n })) } },
+          { label: 'Set temp Might (exact)… ⇄', stepper: { title: 'Set temp Might to (this turn)', make: (n: number) => ov('setTempMight', { value: n }) } },
           { label: 'Damage (net)… ⇄', stepper: { title: 'Net damage', make: (n: number) => ov('damage', { amount: n }) } },
         ] })
         // Manually set who controls the battlefield this unit stands on.
@@ -418,7 +419,20 @@ export default function MatchBoard({
             ] })
         }
       } else if (card?.type === 'rune') {
-        statuses.push({ label: `${mark(ci.exhausted)}Exhausted`, action: ov(ci.exhausted ? 'ready' : 'exhaust') })
+        statuses.push(
+          { label: `${mark(ci.exhausted)}Exhausted`, action: ov(ci.exhausted ? 'ready' : 'exhaust') },
+          { label: '◍ Cycle marker', action: ov('marker') },
+          { label: '○ Clear marker', action: ov('marker', { value: -1 }) },
+        )
+      }
+      // Reveal/remove a battlefield's face-down [Hidden] card (sandbox tools beyond
+      // the normal "Reveal = play for 0").
+      if (ci.facedown && zone === 'battlefield') {
+        groups.push({ label: 'Hidden card', items: [
+          { label: '👁 Reveal to hand', action: ov('revealFacedown') },
+          { label: '🗑 Remove (trash)', action: ov('removeFacedown') },
+          { label: '⊗ Remove (banish)', action: ov('removeFacedown', { flag: 'banish' }) },
+        ] })
       }
       const moveItems: MenuItem[] = []
       if (zone !== 'hand') moveItems.push({ label: 'Hand', action: mv('hand', undefined) })
@@ -428,6 +442,7 @@ export default function MatchBoard({
           moveItems.push({ label: `Battlefield ${i + 1}`, action: mv(undefined, i) })
       moveItems.push({ label: 'Deck (top)', action: mv('mainDeck', undefined) })
       moveItems.push({ label: 'Deck (bottom)', action: mv('mainDeck', undefined, true) })
+      moveItems.push({ label: 'Deck (X from top)… ⇄', stepper: { title: 'Insert X cards from the top of the deck', make: (n: number) => ({ type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone: 'mainDeck', value: Math.max(0, n) }) as Action } })
       if (card?.type === 'rune') moveItems.push({ label: 'Rune deck (top)', action: mv('runeDeck', undefined) })
       moveItems.push({ label: 'Trash', action: mv('trash', undefined) })
       moveItems.push({ label: 'Banished', action: mv('banished', undefined) })
@@ -436,6 +451,7 @@ export default function MatchBoard({
       groups.push({ label: 'Move to…', items: moveItems })
       groups.push({ label: 'Remove', items: [
         { label: 'Kill', action: ov('kill') },
+        { label: 'Sacrifice (ignore shields)', action: ov('sacrifice') },
         { label: 'Banish', action: ov('banish') },
         { label: 'Trash', action: ov('trash') },
       ] })

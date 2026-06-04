@@ -28,10 +28,20 @@ export default function OverridePanel({
   const [zone, setZone] = useState<string>('hand')
   const [browse, setBrowse] = useState(false)
   const [adv, setAdv] = useState(false)
+  const [bz, setBz] = useState<{ from: string; to: string }>({ from: 'hand', to: 'mainDeck' })
   const p = match.players[target] ?? match.players[perspective]
 
-  const ov = (op: OverrideOp, extra: Partial<Action & { amount: number; domain: string; cardId: string; value: number; phase: Phase; toZone: OverrideZone; toBattlefield: number; iid: string }> = {}) =>
+  const ov = (op: OverrideOp, extra: Partial<Action & { amount: number; domain: string; cardId: string; value: number; phase: Phase; toZone: OverrideZone; toBattlefield: number; iid: string; fromZone: string; targetPlayer: number }> = {}) =>
     onAct({ type: 'OVERRIDE', player: target, op, ...extra } as Action)
+
+  const ZONES: { v: string; label: string }[] = [
+    { v: 'hand', label: 'Hand' },
+    { v: 'base', label: 'Base' },
+    { v: 'mainDeck', label: 'Deck' },
+    { v: 'runeDeck', label: 'Rune deck' },
+    { v: 'runePool', label: 'Rune pool' },
+    { v: 'trash', label: 'Trash' },
+  ]
 
   const spawn = (cardId: string) => {
     if (zone.startsWith('bf')) ov('spawn', { cardId, toBattlefield: parseInt(zone.slice(2), 10) })
@@ -107,6 +117,7 @@ export default function OverridePanel({
           <button className={BTN} onClick={() => ov('draw', { amount: 1 })}>Draw 1</button>
           <button className={BTN} onClick={() => ov('draw', { amount: 2 })}>Draw 2</button>
           <button className={BTN} onClick={() => ov('channel', { amount: 1 })}>Channel 1</button>
+          <button className={BTN} title="Channel 1 rune entered exhausted" onClick={() => ov('channelExhausted', { amount: 1 })}>Channel 1 (exh)</button>
         </div>
       </div>
 
@@ -224,6 +235,29 @@ export default function OverridePanel({
               <button className={BTN} onClick={() => ov('clearChain')}>Clear chain</button>
               <button className={BTN} onClick={() => ov('clearShowdown')}>Clear showdown</button>
               <button className={BTN} title="Reset this player's stuck per-turn flags (cards played, equipment played, XP gained, …)" onClick={() => ov('clearTurnState')}>Clear turn counters</button>
+              <button className={BTN} title="Re-sync who controls each battlefield" onClick={() => ov('recomputeControllers')}>Recompute control</button>
+            </div>
+            {/* Bulk zone tools: move a whole zone, or swap a zone with another player. */}
+            <div className="space-y-1 border-t border-white/10 pt-2">
+              <div className={LABEL}>Zone tools — {bare(p.name)}</div>
+              <div className="flex items-center gap-1">
+                <select value={bz.from} onChange={(e) => setBz((b) => ({ ...b, from: e.target.value }))} className="rounded bg-black/30 px-1 py-1 text-xs">
+                  {ZONES.map((z) => <option key={z.v} value={z.v}>{z.label}</option>)}
+                </select>
+                <span className="text-white/40">→</span>
+                <select value={bz.to} onChange={(e) => setBz((b) => ({ ...b, to: e.target.value }))} className="rounded bg-black/30 px-1 py-1 text-xs">
+                  {ZONES.map((z) => <option key={z.v} value={z.v}>{z.label}</option>)}
+                </select>
+                <button className={BTN} onClick={() => ov('bulkMove', { fromZone: bz.from, toZone: bz.to as OverrideZone })}>Move all</button>
+              </div>
+              {match.players.length > 1 && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="text-xs text-white/60">Swap {ZONES.find((z) => z.v === bz.from)?.label} with</span>
+                  {match.players.map((pl, i) => (i === target ? null : (
+                    <button key={i} className={BTN} onClick={() => ov('swapZone', { fromZone: bz.from, targetPlayer: i })}>{i === perspective ? 'You' : bare(pl.name)}</button>
+                  )))}
+                </div>
+              )}
             </div>
           </div>
         )}
