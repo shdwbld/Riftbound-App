@@ -85,7 +85,14 @@ const PATTERNS: Pattern[] = [
 function clauseAfter(text: string, m: RegExpMatchArray): string {
   const start = (m.index ?? 0) + m[0].length
   const rest = text.slice(start).replace(/^\s*[:,]?\s*/, '')
-  const end = rest.search(/[.;]/)
+  let end = rest.search(/[.;]/)
+  // Multi-sentence deck-dig effects ("look at the top N … . You may reveal a gear …
+  // and draw it. Recycle the rest.") span sentence boundaries — extend through the
+  // closing "recycle …" sentence so the whole effect reaches the parser.
+  if (end >= 0 && /\b(?:look at|reveal) the top\b/i.test(rest.slice(0, end))) {
+    const recM = rest.match(/recycle [^.;]*[.;]/i)
+    if (recM) end = (recM.index ?? 0) + recM[0].length - 1
+  }
   return (end >= 0 ? rest.slice(0, end) : rest).trim()
 }
 

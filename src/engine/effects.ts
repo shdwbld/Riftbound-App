@@ -114,6 +114,17 @@ export interface ParsedEffect {
   /** Reveal from the top of your Main Deck until a unit, play that unit ignoring
    *  its cost, and recycle the rest to the bottom (Dazzling Aurora). */
   revealPlayFromDeck: boolean
+  /** Deck-dig: "Look at the top N cards of your Main Deck. You may reveal a <type>
+   *  from among them and draw it. Recycle the rest." (Ornn - Blacksmith, Ivern -
+   *  Nurturer, Rift Herald, Fate Weaver; the N=1 "reveal the top card … if it's a
+   *  <type>, draw it" — Apprentice Smith.) Auto-draws the highest-cost matching card,
+   *  recycling the rest to the bottom. `energyMin` is Fate Weaver's "cost 4+" filter;
+   *  `thenBuffIfTribe` is Ivern's tribe-gated [Buff]. */
+  peekDraw: { n: number; type: 'gear' | 'unit' | 'spell' | 'card'; energyMin?: number; thenBuffIfTribe?: string[] } | null
+  /** Deck-dig: "Look at the top N cards of your Main Deck. Put 1 into your hand (/
+   *  draw one) and recycle the rest." (Stacked Deck, Called Shot.) No type filter —
+   *  auto-draws the highest-cost of the N. */
+  peekToHand: { n: number } | null
   /** Runes the affected unit's owner channels exhausted (Retreat: "channels 1
    *  rune exhausted"). Distinct from `channel`, which gives the caster ready runes. */
   channelExhausted: number
@@ -178,6 +189,8 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   returnFromTrash: null,
   playUnitFromTrash: null,
   revealPlayFromDeck: false,
+  peekDraw: null,
+  peekToHand: null,
   channelExhausted: 0,
   tempMightSelf: 0,
   tempMightAll: 0,
@@ -195,7 +208,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || e.score > 0
+  return e.draw > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || e.score > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -424,6 +437,25 @@ function parse(text: string): ParsedEffect {
     eff.revealPlayFromDeck = true
     hit = true
   }
+  // Deck-dig: "look at the top N cards of your Main Deck … (you may) reveal a <type>
+  // … and draw it. Recycle the rest." (Ornn, Ivern, Rift Herald, Fate Weaver) and
+  // the N=1 "reveal the top card … if it's a <type>, draw it" (Apprentice Smith).
+  const pdM = t.match(/(?:look at|reveal) the top (\d+|a|an|one|two|three|four|five) cards? of your main deck[\s\S]*?reveal (?:a|an) (gear|unit|spell|card)\b[\s\S]*?draw it/)
+  const asM = !pdM ? t.match(/reveal the top card of your main deck[\s\S]*?if it'?s (?:a|an) (gear|unit|spell|card)\b[\s\S]*?draw it/) : null
+  if (pdM || asM) {
+    const m = (pdM || asM) as RegExpMatchArray
+    const type = m[pdM ? 2 : 1] as 'gear' | 'unit' | 'spell' | 'card'
+    const emM = m[0].match(/energy cost :rb_energy_(\d+): or more/)
+    eff.peekDraw = { n: pdM ? num(pdM[1]) : 1, type, ...(emM ? { energyMin: parseInt(emM[1], 10) } : {}) }
+    if (/if you revealed a bird/.test(t)) eff.peekDraw.thenBuffIfTribe = ['Bird', 'Cat', 'Dog', 'Poro']
+    hit = true
+  }
+  // Deck-dig: "look at the top N cards … put 1 into your hand (/ draw one) and
+  // recycle the rest" (Stacked Deck, Called Shot). No type filter.
+  if (!eff.peekDraw) {
+    const pthM = t.match(/look at the top (\d+|a|an|one|two|three|four|five) cards? of your main deck[\s\S]*?(?:put (?:1|one|a card) into your hand|draw one)[\s\S]*?recycle the (?:rest|other)/)
+    if (pthM) { eff.peekToHand = { n: num(pthM[1]) }; hit = true }
+  }
   // "its owner channels N rune(s) exhausted" — tied to the bounced unit's owner.
   const chExM = t.match(new RegExp(`channels? ${NUM} runes? exhausted`))
   if (chExM) { eff.channelExhausted += num(chExM[1]); hit = true }
@@ -552,6 +584,11 @@ function parse(text: string): ParsedEffect {
     // Gate only when every present resource effect comes from the gated portion.
     if (hasRes(eff) && !hasRes(pre)) eff.condition = { kind: 'xpAtLeast', value: num(lvlGate[1]) }
   }
+
+  // Ivern - Nurturer's "[Buff] a friendly unit" is gated on revealing a tribe card,
+  // so it's folded into peekDraw — drop the buff the generic parser also captured so
+  // it doesn't apply unconditionally.
+  if (eff.peekDraw?.thenBuffIfTribe) { eff.buff = 0; eff.buffSelf = false; eff.buffExcludesSelf = false; eff.buffAll = null }
 
   if (!hit && t.trim().length > 0) eff.manual = true
   return eff

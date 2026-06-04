@@ -915,6 +915,93 @@ describe('tokens (Recruit)', () => {
     expect(after?.tempMight).toBe(-1) // got the -1 Might debuff
   })
 
+  // --- Deck-dig: "look at the top N, draw the best match, recycle the rest" ---
+  it('peekDraw: draws the highest-cost gear from the top N and recycles the rest', () => {
+    const gearId = injectCard('pk-gear', 'A gear.', { type: 'gear', energy: 3 })
+    const ornn = injectCard('pk-ornn', 'When you play me, look at the top 4 cards of your Main Deck. You may reveal a gear from among them and draw it. Then recycle the rest.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    // Top 4 = [unit, gear, unit, unit] + filler; only the gear qualifies.
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0), mk(gearId, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)]
+    const u = mk(ornn, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.cardId === gearId)).toBe(true) // gear drawn
+    expect(r.state.players[0].zones.mainDeck.length).toBe(4) // 5 - 1 drawn (3 recycled to bottom)
+  })
+
+  it('peekDraw: honors the "Energy cost 4+" filter (Fate Weaver) — skips the cheap spell', () => {
+    const cheap = injectCard('pk-spell2', 'A spell.', { type: 'spell', energy: 2 })
+    const pricey = injectCard('pk-spell5', 'A spell.', { type: 'spell', energy: 5 })
+    const fw = injectCard('pk-fw', 'When you play me, look at the top 4 cards of your Main Deck. You may reveal a spell with Energy cost :rb_energy_4: or more from among them and draw it. Recycle the rest.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(cheap, 0), mk(furyUnit.id, 0), mk(pricey, 0), mk(furyUnit.id, 0)]
+    const u = mk(fw, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.hand.some((c) => c.cardId === pricey)).toBe(true) // 5-cost drawn
+    expect(r.state.players[0].zones.hand.some((c) => c.cardId === cheap)).toBe(false) // 2-cost skipped
+  })
+
+  it('peekDraw: with no matching type, draws nothing and recycles all', () => {
+    const ornn = injectCard('pk-ornn2', 'When you play me, look at the top 3 cards of your Main Deck. You may reveal a gear from among them and draw it. Recycle the rest.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)] // no gear
+    const handBefore = s.players[0].zones.hand.length
+    const u = mk(ornn, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.hand.length).toBe(handBefore) // nothing drawn (the played unit left hand)
+    expect(r.state.players[0].zones.mainDeck.length).toBe(3) // all recycled
+  })
+
+  it('peekToHand: draws the highest-cost of the top N (Stacked Deck / Called Shot)', () => {
+    const cheap = injectCard('pth-1', 'A unit.', { energy: 1 })
+    const dear = injectCard('pth-4', 'A unit.', { energy: 4 })
+    const mid = injectCard('pth-2', 'A unit.', { energy: 2 })
+    const sd = injectCard('pth-sd', 'When you play me, look at the top 3 cards of your Main Deck. Put 1 into your hand and recycle the rest.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(cheap, 0), mk(dear, 0), mk(mid, 0), mk(furyUnit.id, 0)]
+    const u = mk(sd, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.players[0].zones.hand.some((c) => c.cardId === dear)).toBe(true) // best of 3 drawn
+    expect(r.state.players[0].zones.mainDeck.length).toBe(3)
+  })
+
+  it('Ivern - Nurturer (champion): peek draws a unit AND buffs a friendly when a Bird/Cat/Dog/Poro is revealed', () => {
+    const bird = injectCard('iv-bird', 'A unit.', { energy: 2, tags: ['Bird'] })
+    const ivern = injectCard('iv-test', 'When you play me, look at the top 3 cards of your Main Deck. You may reveal a unit from among them and draw it. Recycle the rest. Then if you revealed a Bird, Cat, Dog, or Poro, do this: [Buff] a friendly unit.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(bird, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)]
+    const ally = mk(furyUnit.id, 0) // a friendly unit to receive the buff
+    s.players[0].zones.base.push(ally)
+    const u = mk(ivern, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    // Exactly one +1 buff landed on a friendly unit (the Bird reveal triggered it).
+    const totalBuffs = [...r.state.players[0].zones.base, ...r.state.battlefields.flatMap((b) => b.units)]
+      .filter((x) => x.owner === 0)
+      .reduce((a, x) => a + (x.buffs ?? 0), 0)
+    expect(totalBuffs).toBe(1)
+  })
+
+  it('Ivern - Nurturer: does NOT buff when no Bird/Cat/Dog/Poro is revealed', () => {
+    const ivern = injectCard('iv-test2', 'When you play me, look at the top 3 cards of your Main Deck. You may reveal a unit from among them and draw it. Recycle the rest. Then if you revealed a Bird, Cat, Dog, or Poro, do this: [Buff] a friendly unit.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)] // no tribe card
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(ally)
+    const u = mk(ivern, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    const totalBuffs = [...r.state.players[0].zones.base, ...r.state.battlefields.flatMap((b) => b.units)]
+      .filter((x) => x.owner === 0)
+      .reduce((a, x) => a + (x.buffs ?? 0), 0)
+    expect(totalBuffs).toBe(0)
+  })
+
   it('Smite: a unit killed by the damage is banished instead of trashed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never

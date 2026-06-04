@@ -554,6 +554,53 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Revealed & played ${getCard(unit.cardId)?.name ?? 'a unit'} from deck (free); recycled ${passed.length}.`)
     }
   }
+  if (e.peekDraw) {
+    // "Look at the top N; (you may) draw a <type>; recycle the rest." Auto-draws the
+    // highest-cost matching card to hand and recycles the rest to the bottom (Ornn,
+    // Ivern, Rift Herald, Fate Weaver, Apprentice Smith).
+    const { n, type, energyMin, thenBuffIfTribe } = e.peekDraw
+    const deck = p.zones.mainDeck
+    const top = deck.splice(0, Math.min(n, deck.length))
+    const matches = top.filter((c) => {
+      const d = getCard(c.cardId)
+      if (!d) return false
+      if (type !== 'card' && d.type !== type) return false
+      if (energyMin != null && ((d as { energy?: number }).energy ?? 0) < energyMin) return false
+      return true
+    })
+    let drawn: EngineCard | undefined
+    if (matches.length) {
+      drawn = matches.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b))
+      p.zones.hand.push(drawn)
+    }
+    for (const c of top) if (c !== drawn) deck.push(c) // recycle the rest to the bottom
+    if (drawn) lines.push(`Looked at top ${top.length}; drew ${getCard(drawn.cardId)?.name}; recycled ${top.length - 1}.`)
+    else if (top.length) lines.push(`Looked at top ${top.length}; no ${type} to draw; recycled ${top.length}.`)
+    // Ivern - Nurturer: "if you revealed a Bird/Cat/Dog/Poro, [Buff] a friendly unit."
+    if (thenBuffIfTribe && top.some((c) => (getCard(c.cardId)?.tags ?? []).some((tg) => thenBuffIfTribe.includes(tg)))) {
+      const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+        (u) => u.owner === p.id && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
+      )
+      if (friendly.length) {
+        const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
+        tgt.buffs = 1
+        emit({ kind: 'buff', iid: tgt.iid, player: p.id })
+        lines.push(`Revealed a Bird/Cat/Dog/Poro — buffed ${getCard(tgt.cardId)?.name} (+1 Might).`)
+      }
+    }
+  }
+  if (e.peekToHand) {
+    // "Look at the top N; draw the best; recycle the rest" (Stacked Deck, Called Shot).
+    const deck = p.zones.mainDeck
+    const top = deck.splice(0, Math.min(e.peekToHand.n, deck.length))
+    let drawn: EngineCard | undefined
+    if (top.length) {
+      drawn = top.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b))
+      p.zones.hand.push(drawn)
+    }
+    for (const c of top) if (c !== drawn) deck.push(c)
+    if (drawn) lines.push(`Looked at top ${top.length}; drew ${getCard(drawn.cardId)?.name}; recycled ${top.length - 1}.`)
+  }
   if (e.tempMightAll) {
     // Board-wide temp Might to all the controller's units (Grand Strategem).
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
@@ -638,6 +685,14 @@ function findUnitAnywhere(s: MatchState, iid: string): EngineCard | undefined {
     s.battlefields.flatMap((b) => b.units).find((u) => u.iid === iid) ??
     s.players.flatMap((p) => p.zones.base).find((u) => u.iid === iid)
   )
+}
+
+/** A card's total cost (Energy + all Power pips) — for "draw/play the best card"
+ *  auto-picks in deck-digs and trash recursion. */
+function cardCost(c: EngineCard): number {
+  const d = getCard(c.cardId) as { energy?: number; power?: Record<string, number> } | undefined
+  const pw = d?.power ? Object.values(d.power).reduce((a, b) => a + (b || 0), 0) : 0
+  return (d?.energy ?? 0) + pw
 }
 
 /** Remove the card with `iid` from wherever it currently sits (any battlefield,
