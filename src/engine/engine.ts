@@ -1356,6 +1356,31 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   return fireTriggers(s, fired)
 }
 
+/** Fire OPPONENTS' "when an opponent plays a unit while I'm at a battlefield"
+ *  triggers as `player` plays a unit (`playedIid`). Vex - Apathetic: stun the
+ *  just-played unit and bar it from moving this turn. Mandatory and untargeted
+ *  (it names the played unit directly), so Deflect/protection don't apply. The
+ *  responder's Vex must be AT A BATTLEFIELD (in a battlefield's units, not base). */
+function fireOpponentUnitPlay(s: MatchState, player: PlayerId, playedIid: string): MatchState {
+  const played = findUnitAnywhere(s, playedIid)
+  if (!played) return s
+  for (let pid = 0; pid < s.players.length; pid++) {
+    if (pid === player || s.players[pid]?.out) continue
+    // Responder's units that are AT A BATTLEFIELD with the matching trigger text.
+    const atBf = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === pid)
+    for (const vex of atBf) {
+      const t = (getCard(vex.cardId)?.text ?? '').toLowerCase()
+      if (!/when an opponent plays a unit[^.]*?\bstun\b|when an opponent plays a unit[^.]*?\[stun\]/.test(t)) continue
+      if (played.stunned) continue // already stunned (e.g. two Vexes) — no double log
+      played.stunned = true
+      emit({ kind: 'stun', iid: played.iid, player: pid })
+      s = log(s, pid, `${getCard(vex.cardId)?.name}: stunned ${getCard(played.cardId)?.name} (played at a battlefield).`)
+      if (/can'?t move it this turn/.test(t)) played.cantMoveTurn = s.turn
+    }
+  }
+  return s
+}
+
 /** Fire "when you stun an enemy unit" global triggers (Eclipse Herald — ready me
  *  + give me +1 Might; Leona - Radiant Dawn — buff a friendly unit). Invoked once
  *  per stun resolution in which the controller stunned ≥1 enemy unit (so a
@@ -2336,6 +2361,7 @@ function moveUnits(
     }
     if (!unit) return fail(state, 'Unit not found at your base.')
     if (unit.exhausted) return fail(state, `${def(unit)?.name} is exhausted.`)
+    if (unit.cantMoveTurn === s.turn) return fail(state, `${def(unit)?.name} can't move this turn.`)
     unit.exhausted = true
     s.battlefields[toBattlefield].units.push(unit)
     moved.push(unit)
@@ -4393,6 +4419,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
         }
         s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
+        s1 = fireOpponentUnitPlay(s1, action.player, ci.iid) // Vex - Apathetic
         return ok(s1)
       }
 
@@ -4650,6 +4677,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (idx >= 0) {
           if (bfScriptAt(s, i)?.noMoveToBase)
             return fail(state, `Units can't move from ${getCard(bf.cardId)?.name ?? 'here'} to base.`)
+          if (bf.units[idx].cantMoveTurn === s.turn)
+            return fail(state, `${def(bf.units[idx])?.name} can't move this turn.`)
           const [u] = bf.units.splice(idx, 1)
           bfScriptAt(s, i)?.onMoveFrom?.(u) // Back-Alley Bar: +1 Might this turn
           s.players[action.player].zones.base.push({ ...u, exhausted: true })

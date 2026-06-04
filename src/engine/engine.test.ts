@@ -5020,3 +5020,29 @@ describe('Playtest Pass 2 — combat/conquer detection', () => {
     expect(r.state.phase).toBe('showdown') // combat initiated
   })
 })
+
+describe('Playtest Pass 2 — opponent-play triggers (Vex - Apathetic)', () => {
+  it('stuns and freezes a unit an opponent plays while Vex is at a battlefield', () => {
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk('unl-150-219', 1)], controller: 1 } // p1 holds Vex here
+    const dude = mk(injectCard('vex-target', 'A unit.', { type: 'unit', energy: 0, power: {}, might: 4 }), 0)
+    s.players[0].zones.hand.push(dude)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: dude.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    const played = r.state.players[0].zones.base.find((u) => u.iid === dude.iid)!
+    expect(played.stunned).toBe(true) // Vex auto-stunned the just-played unit
+    played.exhausted = false // ready it so the freeze (not the entered-exhausted state) is what blocks the move
+    const mv = reduce(r.state, { type: 'MOVE_UNIT', player: 0, iid: dude.iid, toBattlefield: 1 })
+    expect(mv.error).toMatch(/can't move/) // and it can't move this turn
+  })
+
+  it('does NOT fire while Vex is only at base', () => {
+    const s = baseState()
+    s.players[1].zones.base.push(mk('unl-150-219', 1)) // Vex at base, not a battlefield
+    const dude = mk(injectCard('vex-target2', 'A unit.', { type: 'unit', energy: 0, power: {}, might: 4 }), 0)
+    s.players[0].zones.hand.push(dude)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: dude.iid, payment: { exhaust: [], recycle: [] } })
+    const played = r.state.players[0].zones.base.find((u) => u.iid === dude.iid)!
+    expect(played.stunned).toBeFalsy()
+  })
+})

@@ -40,6 +40,9 @@ export interface EngineCard {
   tempMight?: number
   /** Stunned: deals no combat damage this turn (still has Might to survive). */
   stunned?: boolean
+  /** This unit can't move for the rest of the turn whose number this holds
+   *  (Vex - Apathetic: "They can't move it this turn."). Compared to `turn`. */
+  cantMoveTurn?: number
   /** Turn number this card entered play (for Temporary expiry). */
   enteredTurn?: number
   /** Facedown (Hidden keyword) — not yet revealed. */
