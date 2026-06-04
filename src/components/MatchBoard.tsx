@@ -23,6 +23,7 @@ import CardBack from './CardBack'
 import CardPreview from './CardPreview'
 import CardText, { DomainIcon } from './CardText'
 import PlayedCardSpotlight from './PlayedCardSpotlight'
+import OverridePanel from './OverridePanel'
 import FeedbackLayer from './FeedbackLayer'
 
 /** Name of a unit anywhere on the board, by iid (for combat banners). */
@@ -345,6 +346,8 @@ export default function MatchBoard({
         items.push({ label: '🛠 Might −1', action: ov('mightDown') })
         items.push({ label: '🛠 Buff +1 (perm)', action: ov('buff') })
         items.push({ label: '🛠 Buff −1 (perm)', action: ov('unbuff') })
+        items.push({ label: '🛠 Damage +1', action: { type: 'OVERRIDE', player: owner, op: 'damage', iid: ci.iid, amount: 1 } })
+        items.push({ label: '🛠 Heal −1', action: { type: 'OVERRIDE', player: owner, op: 'damage', iid: ci.iid, amount: -1 } })
         items.push({ label: '🛠 To base', action: ov('toBase') })
         items.push({ label: '🛠 Kill', action: ov('kill') })
       }
@@ -359,6 +362,9 @@ export default function MatchBoard({
         if (!(zone === 'battlefield' && match.battlefields[i].units.some((u) => u.iid === ci.iid)))
           items.push({ label: `🛠→ Battlefield ${i + 1}`, action: mv(undefined, i) })
       items.push({ label: '🛠→ Deck (top)', action: mv('mainDeck', undefined) })
+      if (card?.type === 'rune') items.push({ label: '🛠→ Rune deck (top)', action: mv('runeDeck', undefined) })
+      items.push({ label: '🛠→ Trash', action: mv('trash', undefined) })
+      items.push({ label: '🛠→ Banished', action: mv('banished', undefined) })
       items.push({ label: `🛠 ${getCard(ci.cardId)?.name ?? 'Owner'} draws 1`, action: { type: 'OVERRIDE', player: owner, op: 'draw' } })
       items.push({ label: '🛠 Owner channels 1', action: { type: 'OVERRIDE', player: owner, op: 'channel' } })
     }
@@ -438,7 +444,9 @@ export default function MatchBoard({
 
   return (
     <div className="flex flex-col gap-3 xl:flex-row xl:items-start">
-    {/* LEFT — the board */}
+    {/* FAR-LEFT — manual override panel (sandbox only) */}
+    {match.sandbox && onCardAction && <OverridePanel match={match} perspective={perspective} onAct={onCardAction} />}
+    {/* CENTER — the board */}
     <div ref={rootRef} className={`min-w-0 flex-1 space-y-3 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
