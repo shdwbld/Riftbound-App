@@ -125,6 +125,9 @@ export default function MatchPage() {
   const [destPick, setDestPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending optional additional-cost Pay/Skip prompt (rune-modal style).
   const [optCostPrompt, setOptCostPrompt] = useState<{ c: EngineCard; card: Card; cost: ResolvedCost; accelerate: boolean; opt: KeywordCost | null } | null>(null)
+  // Pending Accelerate / Repeat decisions — centered rune-modal style (not a browser confirm).
+  const [accelPrompt, setAccelPrompt] = useState<{ c: EngineCard; card: Card } | null>(null)
+  const [repeatPrompt, setRepeatPrompt] = useState<{ c: EngineCard; card: Card } | null>(null)
   // Pending Deflect surcharge payment (after a spell's targets are chosen).
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
 
@@ -280,41 +283,62 @@ export default function MatchPage() {
       card.type === 'unit' ? 'PLAY_UNIT' : card.type === 'gear' ? 'PLAY_GEAR' : card.type === 'spell' ? 'PLAY_SPELL' : null
     if (!type) return
 
-    // Accelerate is an OPTIONAL extra cost on units — confirm to pay it so the
-    // unit enters READY (can act the turn it arrives).
-    let accelerate = false
-    let repeat = false
-    let cost = effectiveCostOf(match, controlling, card)
+    const cost = effectiveCostOf(match, controlling, card)
     if (type === 'PLAY_UNIT') {
-      const ac = accelerateCost(card)
-      if (ac) {
-        accelerate = window.confirm(
-          `${card.name} has Accelerate. Pay ${costLabel(ac)} extra so it enters READY (can act now)?\n\nOK = pay & enter ready · Cancel = enter exhausted.`,
-        )
-        if (accelerate) cost = addCost(cost, ac)
+      // Accelerate is an OPTIONAL extra cost on units — ask via a centered modal
+      // (pay → enter ready and act now; skip → enter exhausted). Resume in resolveAccel.
+      if (accelerateCost(card)) {
+        setAccelPrompt({ c, card })
+        return
       }
-      // Optional "you may pay X as an additional cost to play me" — pause for a
-      // styled Pay/Skip prompt, then resume in finishPlay. Bard - Mercurial's cost
-      // is "exhaust your legend" (no rune cost).
-      const opt = optionalPlayCost(card)
-      const isBard = card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial'
-      if (opt || isBard) {
-        setOptCostPrompt({ c, card, cost, accelerate, opt: opt ?? null })
+      continueUnitPlay(c, card, cost, false)
+      return
+    }
+    if (type === 'PLAY_SPELL') {
+      // Repeat is an OPTIONAL extra cost on spells — ask via a centered modal
+      // (pay → resolve its effect twice). Resume in resolveRepeat.
+      if (repeatCostFor(match, controlling, card)) {
+        setRepeatPrompt({ c, card })
         return
       }
     }
-    // Repeat is an OPTIONAL extra cost on spells — confirm to pay it so the
-    // spell's effect resolves a second time.
-    if (type === 'PLAY_SPELL') {
-      const rc = repeatCostFor(match, controlling, card)
-      if (rc) {
-        repeat = window.confirm(
-          `${card.name} has Repeat. Pay ${costLabel(rc)} extra to resolve its effect again?\n\nOK = pay & repeat · Cancel = resolve once.`,
-        )
-        if (repeat) cost = addCost(cost, rc)
-      }
+    finishPlay(c, card, type, cost, false, false, false)
+  }
+
+  /** Continue a unit play once Accelerate is decided: handle the optional
+   *  additional-cost Pay/Skip prompt, else settle payment. */
+  const continueUnitPlay = (c: EngineCard, card: Card, cost: ResolvedCost, accelerate: boolean) => {
+    // Optional "you may pay X as an additional cost to play me" — pause for a styled
+    // Pay/Skip prompt. Bard - Mercurial's cost is "exhaust your legend" (no rune cost).
+    const opt = optionalPlayCost(card)
+    const isBard = card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial'
+    if (opt || isBard) {
+      setOptCostPrompt({ c, card, cost, accelerate, opt: opt ?? null })
+      return
     }
-    finishPlay(c, card, type, cost, accelerate, repeat, false)
+    finishPlay(c, card, 'PLAY_UNIT', cost, accelerate, false, false)
+  }
+
+  /** Resolve the Accelerate Pay/Skip modal and resume the unit play. */
+  const resolveAccel = (pay: boolean) => {
+    const p = accelPrompt
+    if (!p) return
+    setAccelPrompt(null)
+    let cost = effectiveCostOf(match, controlling, p.card)
+    const ac = accelerateCost(p.card)
+    if (pay && ac) cost = addCost(cost, ac)
+    continueUnitPlay(p.c, p.card, cost, pay)
+  }
+
+  /** Resolve the Repeat Pay/Skip modal and resume the spell play. */
+  const resolveRepeat = (pay: boolean) => {
+    const p = repeatPrompt
+    if (!p) return
+    setRepeatPrompt(null)
+    let cost = effectiveCostOf(match, controlling, p.card)
+    const rc = repeatCostFor(match, controlling, p.card)
+    if (pay && rc) cost = addCost(cost, rc)
+    finishPlay(p.c, p.card, 'PLAY_SPELL', cost, false, pay, false)
   }
 
   /** Settle payment (manual modal or auto) then hand off to proceedPlay. */
@@ -507,6 +531,30 @@ export default function MatchPage() {
         </button>
       </div>
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
+      {accelPrompt && (
+        <PromptModal
+          title={`Accelerate ${accelPrompt.card.name.replace(/\s*\([^)]*\)\s*$/, '')}?`}
+          message={`Pay ${costLabel(accelerateCost(accelPrompt.card) ?? { energy: 0, power: {} })} extra so it enters ready (can act this turn) — otherwise it enters exhausted.`}
+          card={accelPrompt.card}
+          options={[
+            { label: 'Pay & enter ready', onClick: () => resolveAccel(true), variant: 'primary' },
+            { label: 'Enter exhausted', onClick: () => resolveAccel(false) },
+          ]}
+          onCancel={() => resolveAccel(false)}
+        />
+      )}
+      {repeatPrompt && (
+        <PromptModal
+          title={`Repeat ${repeatPrompt.card.name.replace(/\s*\([^)]*\)\s*$/, '')}?`}
+          message={`Pay ${costLabel(repeatCostFor(match, controlling, repeatPrompt.card) ?? { energy: 0, power: {} })} extra to resolve its effect again — otherwise it resolves once.`}
+          card={repeatPrompt.card}
+          options={[
+            { label: 'Pay & repeat', onClick: () => resolveRepeat(true), variant: 'primary' },
+            { label: 'Resolve once', onClick: () => resolveRepeat(false) },
+          ]}
+          onCancel={() => resolveRepeat(false)}
+        />
+      )}
       {optCostPrompt && (
         <PromptModal
           title="Pay an additional cost?"
