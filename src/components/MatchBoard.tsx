@@ -273,7 +273,7 @@ export default function MatchBoard({
     return () => audio.stopMusic()
   }, [])
 
-  const openMenu = (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield') => {
+  const openMenu = (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield' | 'legend' | 'champion') => {
     e.preventDefault()
     if (!onCardAction) return
     const card = getCard(ci.cardId)
@@ -362,9 +362,12 @@ export default function MatchBoard({
         if (!(zone === 'battlefield' && match.battlefields[i].units.some((u) => u.iid === ci.iid)))
           items.push({ label: `🛠→ Battlefield ${i + 1}`, action: mv(undefined, i) })
       items.push({ label: '🛠→ Deck (top)', action: mv('mainDeck', undefined) })
+      items.push({ label: '🛠→ Deck (bottom)', action: { type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone: 'mainDeck', bottom: true } })
       if (card?.type === 'rune') items.push({ label: '🛠→ Rune deck (top)', action: mv('runeDeck', undefined) })
       items.push({ label: '🛠→ Trash', action: mv('trash', undefined) })
       items.push({ label: '🛠→ Banished', action: mv('banished', undefined) })
+      if (zone !== 'legend') items.push({ label: '🛠→ Legend zone', action: mv('legend', undefined) })
+      if (zone !== 'champion') items.push({ label: '🛠→ Champion zone', action: mv('champion', undefined) })
       items.push({ label: `🛠 ${getCard(ci.cardId)?.name ?? 'Owner'} draws 1`, action: { type: 'OVERRIDE', player: owner, op: 'draw' } })
       items.push({ label: '🛠 Owner channels 1', action: { type: 'OVERRIDE', player: owner, op: 'channel' } })
     }
@@ -951,7 +954,7 @@ function BattlefieldZone({
   myActionTurn: boolean
   onMoveTo: (bf: number) => void
   inspect: (ci: EngineCard) => void
-  openMenu: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield') => void
+  openMenu: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield' | 'legend' | 'champion') => void
   onInspect?: (card: Card) => void
   targetingActive?: boolean
   onMoveOverride?: (iid: string, dest: MoveDest) => void
@@ -1148,7 +1151,7 @@ function PlayerMat({
   onEndTurn: () => void
   endTurnNeedsConfirm?: boolean
   onConcede?: () => void
-  onContext?: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand') => void
+  onContext?: (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'legend' | 'champion') => void
   onRevealTop?: () => void
   canPlayIid: (iid: string) => { valid: boolean; reason?: string }
   fx: Fx
@@ -1275,7 +1278,7 @@ function PlayerMat({
           {me.legend ? (
             <>
               <CardPreview cardId={me.legend.cardId}>
-                <button onClick={() => onInspect(me.legend!)}>
+                <button onClick={() => onInspect(me.legend!)} onContextMenu={(e) => onContext?.(e, me.legend!, 'legend')}>
                   <BoardCard ci={me.legend} xp={me.xp} />
                 </button>
               </CardPreview>
@@ -1318,7 +1321,7 @@ function PlayerMat({
           {me.champion ? (
             <>
               <CardPreview cardId={me.champion.cardId}>
-                <button onClick={() => onInspect(me.champion!)} className="relative">
+                <button onClick={() => onInspect(me.champion!)} onContextMenu={(e) => onContext?.(e, me.champion!, 'champion')} className="relative">
                   <BoardCard ci={me.champion} dim={!!championCheck && !championCheck.valid && myActionTurn} xp={me.xp} />
                   <span className="absolute left-0 top-0 rounded-br bg-amber-500/80 px-1 text-[8px] font-bold text-black">CHAMP</span>
                 </button>

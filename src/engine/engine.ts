@@ -5148,11 +5148,16 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             s.battlefields[action.toBattlefield].units.push(card)
           } else if (action.toZone === 'banished') {
             s.players[card.owner].banished.push(card)
+          } else if (action.toZone === 'legend') {
+            s.players[card.owner].legend = card
+          } else if (action.toZone === 'champion') {
+            s.players[card.owner].champion = card
           } else if (action.toZone === 'mainDeck' || action.toZone === 'runeDeck') {
-            // Decks draw from the front, so "to deck" puts the card on top.
-            s.players[card.owner].zones[action.toZone].unshift(card)
+            // Decks draw from the front: "to deck" puts on top, unless `bottom`.
+            if (action.bottom) s.players[card.owner].zones[action.toZone].push(card)
+            else s.players[card.owner].zones[action.toZone].unshift(card)
           } else if (action.toZone) {
-            s.players[card.owner].zones[action.toZone].push(card)
+            s.players[card.owner].zones[action.toZone as ZoneId].push(card)
           } else {
             // No valid destination — put it back in its owner's base.
             s.players[card.owner].zones.base.push(card)
@@ -5172,8 +5177,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const card: EngineCard = { iid: `${action.player}:ov:${action.cardId}#${(tokenCounter++).toString(36)}`, cardId: action.cardId, owner: action.player, exhausted: false, damage: 0, attached: [] }
           if (action.toBattlefield != null && s.battlefields[action.toBattlefield]) s.battlefields[action.toBattlefield].units.push(card)
           else if (action.toZone === 'banished') s.players[action.player].banished.push(card)
+          else if (action.toZone === 'legend') s.players[action.player].legend = card
+          else if (action.toZone === 'champion') s.players[action.player].champion = card
           else if (action.toZone === 'mainDeck' || action.toZone === 'runeDeck') s.players[action.player].zones[action.toZone].unshift(card)
-          else if (action.toZone) s.players[action.player].zones[action.toZone].push(card)
+          else if (action.toZone) s.players[action.player].zones[action.toZone as ZoneId].push(card)
           else s.players[action.player].zones.hand.push(card)
           break
         }

@@ -28,8 +28,9 @@ export type OverrideOp =
   | 'clearChain' | 'clearShowdown'
 
 /** A destination zone for a sandbox `move` override (a player zone, the
- *  banishment pile, or — with `toBattlefield` set — a battlefield). */
-export type OverrideZone = ZoneId | 'banished'
+ *  banishment pile, the legend/champion slot, or — with `toBattlefield` set — a
+ *  battlefield). */
+export type OverrideZone = ZoneId | 'banished' | 'legend' | 'champion'
 
 export interface EngineCard {
   iid: string
@@ -375,7 +376,7 @@ export type Action =
   /** A manual override op applied in sandbox mode (either player, any card).
    *  `move` uses `toBattlefield` (a battlefield) or `toZone` (a player zone /
    *  banished) to relocate the card at `iid`. */
-  | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number; toZone?: OverrideZone; /** signed delta for points/xp/energy/draw/channel/mill/damage/might */ amount?: number; /** rune domain for `power`/`spawn` rune */ domain?: Domain; /** card to spawn */ cardId?: string; /** numeric target for setActive/setTurn/setPointsToWin/setWinner (-1 = clear) */ value?: number; /** target phase for setPhase */ phase?: Phase }
+  | { type: 'OVERRIDE'; player: PlayerId; op: OverrideOp; iid?: string; toBattlefield?: number; toZone?: OverrideZone; /** signed delta for points/xp/energy/draw/channel/mill/damage/might */ amount?: number; /** rune domain for `power`/`spawn` rune */ domain?: Domain; /** card to spawn */ cardId?: string; /** numeric target for setActive/setTurn/setPointsToWin/setWinner (-1 = clear) */ value?: number; /** target phase for setPhase */ phase?: Phase; /** instance flag/keyword for `grant` */ flag?: string; /** move to the BOTTOM of a deck zone instead of the top */ bottom?: boolean }
   | { type: 'PLAY_UNIT'; player: PlayerId; iid: string; payment: Payment; accelerate?: boolean; toBattlefield?: number; /** Opt in to the card's optional "you may pay X as an additional cost to play me" (gates the "if you paid" bonus). */ payAdditionalCost?: boolean }
   | {
       type: 'PLAY_SPELL'

@@ -5206,3 +5206,19 @@ describe('Manual override — fail-safe ops', () => {
     expect(r.state.showdown).toBeNull()
   })
 })
+
+describe('Manual override — legend/champion + deck-bottom moves', () => {
+  it('moves a unit into the legend slot, then to deck bottom', () => {
+    const s = baseState(); s.sandbox = true
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0)) // an existing top card
+    let r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'move', iid: u.iid, toZone: 'legend' })
+    expect(r.state.players[0].legend?.iid).toBe(u.iid)
+    expect(r.state.players[0].zones.base.some((c) => c.iid === u.iid)).toBe(false)
+    r = reduce(r.state, { type: 'OVERRIDE', player: 0, op: 'move', iid: u.iid, toZone: 'mainDeck', bottom: true })
+    expect(r.state.players[0].legend).toBeNull()
+    const deck = r.state.players[0].zones.mainDeck
+    expect(deck[deck.length - 1].iid).toBe(u.iid) // landed on the bottom
+  })
+})
