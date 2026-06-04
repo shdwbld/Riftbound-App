@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getCard } from '../data/cards'
 import {
   type MatchState,
@@ -168,6 +168,22 @@ export default function MatchBoard({
   const [drill, setDrill] = useState<number | null>(null) // open drill-down category
   const [sub, setSub] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null) // hover flyout (Add status effect)
   const [stepper, setStepper] = useState<{ title: string; value: number; make: (n: number) => Action } | null>(null) // inline −/value/+ set
+  // Keep the right-click menu + status flyout inside the viewport: after each render
+  // measure the panel and, if it overflows the bottom/right edge, shift it back in
+  // (effectively opening upward / leftward). Runs pre-paint so there's no flash.
+  const menuRef = useRef<HTMLDivElement>(null)
+  const subRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const clamp = (el: HTMLDivElement | null) => {
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const m = 8
+      if (r.bottom > window.innerHeight - m) el.style.top = `${Math.max(m, window.innerHeight - r.height - m)}px`
+      if (r.right > window.innerWidth - m) el.style.left = `${Math.max(m, window.innerWidth - r.width - m)}px`
+    }
+    clamp(menuRef.current)
+    clamp(subRef.current)
+  }, [menu, drill, sub, stepper])
   const me = match.players[perspective]
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
@@ -751,6 +767,7 @@ export default function MatchBoard({
         <>
           <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null); setSub(null); setStepper(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null); setSub(null); setStepper(null) }} />
           <div
+            ref={menuRef}
             className="fixed z-50 max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-white/15 bg-[#1a1a26] text-sm shadow-xl"
             style={{ left: menu.x, top: menu.y }}
           >
@@ -831,6 +848,7 @@ export default function MatchBoard({
           {/* Status-effect flyout — a second panel to the right of the entry. */}
           {sub && (
             <div
+              ref={subRef}
               className="fixed z-[51] max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-emerald-400/30 bg-[#13161b] text-sm shadow-xl"
               style={{ left: sub.x, top: sub.y }}
               onMouseLeave={() => setSub(null)}
