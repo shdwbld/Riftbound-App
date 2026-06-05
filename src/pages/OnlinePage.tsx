@@ -107,6 +107,8 @@ export default function OnlinePage() {
   const transportRef = useRef<Transport | null>(null)
   const matchRef = useRef<MatchState | null>(null)
   const historyRef = useRef<MatchState[]>([]) // host-side undo history (pre-action states)
+  // The most recent {pre → action → post → events} step, for one-click bug capture (host-side).
+  const lastStepRef = useRef<{ pre: MatchState; action: Action; post: MatchState; events: GameEvent[] } | null>(null)
   const roleRef = useRef<Role>('host')
   const myDeckRef = useRef<Deck | null>(null)
   const clientIdRef = useRef<string>(makeClientId())
@@ -262,6 +264,7 @@ export default function OnlinePage() {
           if (error) return
           historyRef.current.push(cur)
           if (historyRef.current.length > 100) historyRef.current.shift()
+          lastStepRef.current = { pre: cur, action: msg.action, post: state, events: events ?? [] }
           matchRef.current = state
           setLastEvents(events)
           setMatch(state)
@@ -391,6 +394,7 @@ export default function OnlinePage() {
       if (error) return flash(error)
       historyRef.current.push(cur)
       if (historyRef.current.length > 100) historyRef.current.shift()
+      lastStepRef.current = { pre: cur, action, post: state, events: events ?? [] }
       matchRef.current = state
       setLastEvents(events)
       setMatch(state)

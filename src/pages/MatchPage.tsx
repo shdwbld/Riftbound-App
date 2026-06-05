@@ -145,6 +145,8 @@ export default function MatchPage() {
   const matchRef = useRef<MatchState | null>(match)
   matchRef.current = match
   const historyRef = useRef<MatchState[]>([])
+  // The most recent {pre → action → post → events} step, for one-click bug capture.
+  const lastStepRef = useRef<{ pre: MatchState; action: Action; post: MatchState; events: GameEvent[] } | null>(null)
 
   const flash = useCallback((msg: string) => {
     setToast(msg)
@@ -159,6 +161,7 @@ export default function MatchPage() {
       if (error) return flash(error)
       historyRef.current.push(cur)
       if (historyRef.current.length > 100) historyRef.current.shift()
+      lastStepRef.current = { pre: cur, action, post: state, events: events ?? [] }
       setLastEvents(events)
       if (worthSummarizing(events)) setSummary({ events: events!, token: state.seq })
       const r = accumulateTurnRecap(recapBufRef.current, state, events)
