@@ -3193,6 +3193,14 @@ function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
   let m = d.might - ci.damage + gearMight(ci) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
   if (role === 'attacker') m += k.assault + (ci.grantAssault ?? 0) // [Assault] granted this turn
   if (role === 'defender') m += k.shield
+  // Attached gear grants its [Assault]/[Shield] to the equipped unit's combat role
+  // (Serrated Dirk [Assault 2] → +2 while attacking; Cloth Armor [Shield 2] → +2 defending).
+  if (role === 'attacker' || role === 'defender') {
+    for (const ref of ci.attached) {
+      const gk = parseKeywords(getCard(ref.split('|')[0]))
+      m += role === 'attacker' ? gk.assault : gk.shield
+    }
+  }
   m += levelBonus(d, xp).might // [Level N] passive while controller has enough XP
   return Math.max(0, m)
 }
@@ -3360,12 +3368,14 @@ function gearMight(unit: EngineCard): number {
   let bonus = 0
   for (const gid of unit.attached) {
     const g = getCard(gid.split('|')[0]) // attached stored as "cardId|iid"
-    const t = g?.text ?? ''
-    // A flat static "+N Might" — word or :rb_might: icon (the `\b` sits on the WORD
-    // only; the icon ends in ':' so a trailing `\b` would never match). Excludes
-    // "+Might" that's actually a granted buff / temporary / handed-out pump
-    // (Spirit's Refuge "+1 :rb_might: buff", Mask of Foresight "give it +1 … this turn").
-    const m = t.match(/\+(\d+)\s*(?::rb_might:|might\b)/i)
+    // Strip parenthetical reminders FIRST so a keyword's reminder Might
+    // ([Assault 2] "(+2 :rb_might: while I'm attacking.)") isn't counted as a flat
+    // bonus — that conditional Might comes from the gear's keyword applied to the
+    // host (see mightOf), not from here. Only the FLAT "+N :rb_might:" printed
+    // outside any reminder is a static bonus (e.g. Cloth Armor's trailing "+2").
+    const t = (g?.text ?? '').replace(/\([^)]*\)/g, ' ')
+    const m = t.match(/\+(\d+)\s*(?::rb_might:|might\b)(?!\s+while)/i)
+    // Excludes granted/temporary pumps (Spirit's Refuge buff, Mask of Foresight).
     if (m && !/this turn|buff|give|gets|gains/i.test(t)) bonus += parseInt(m[1], 10)
   }
   // Gearhead: "Each Equipment attached to me gives double its base Might bonus."
@@ -3582,6 +3592,8 @@ function unitHasGanking(s: MatchState, u: EngineCard): boolean {
   if (/if you've discarded a card this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.discardedThisTurn ?? false
   // Wily Newtfish: "If you've gained XP this turn, I have +1 Might and [Ganking]."
   if (/if you('ve| have)? gained xp this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.xpGainedThisTurn ?? false
+  // Attached gear granting [Ganking] (Boots of Swiftness) → the equipped unit.
+  if (u.attached?.some((ref) => parseKeywords(getCard(ref.split('|')[0])).ganking)) return true
   return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking || unitGrantedKeyword(s, u, 'ganking') // Breakneck Mech
 }
 
@@ -3685,6 +3697,7 @@ export function deflectSurcharge(
     // resolve keywords against the unit owner's XP.
     if (u && u.owner !== caster) {
       let d = keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect + (unitGrantedKeyword(state, u, 'deflect') ? 1 : 0) // Breakneck Mech
+      d += u.attached.reduce((a, ref) => a + parseKeywords(getCard(ref.split('|')[0])).deflect, 0) // attached gear [Deflect] (Hexdrinker)
       // Fiora - Victorious: conditional [Deflect] while [Mighty].
       if (/while (?:i'm|i am) \[?mighty\]?,?[^.]*\[deflect/.test((def(u)?.text ?? '').toLowerCase()) && stateActive(state, u, 'mighty')) d += 1
       // Spirit's Refuge: "Friendly buffed units have [Deflect] if they didn't already."
