@@ -2072,6 +2072,13 @@ function auraMightBonus(s: MatchState, u: EngineCard): number {
 export function repeatCostFor(s: MatchState, player: PlayerId, card: Card): ResolvedCost | null {
   let cost: ResolvedCost | null = repeatCost(card)
   if (!cost && s.players[player]?.grantRepeatNextSpell && card.type === 'spell') cost = costOf(card)
+  // Syndra - Transcendent: "While I'm in a showdown, your spells have [Repeat] 2 Energy
+  // + 1 Chaos." Grants Repeat to any of your spells while she's at the open showdown.
+  if (!cost && card.type === 'spell' && s.showdown) {
+    const sb = s.battlefields[s.showdown.battlefield]?.units ?? []
+    if (sb.some((u) => u.owner === player && /while (?:i'?m|i am) in a showdown, your spells have \[repeat\]/i.test(getCard(u.cardId)?.text ?? '')))
+      cost = { energy: 2, power: { chaos: 1 } }
+  }
   if (!cost) return null
   if (controlsBFNamed(s, player, 'Marai Spire')) cost = { energy: Math.max(0, cost.energy - 1), power: cost.power }
   return cost
@@ -4635,7 +4642,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // into the cost (so the payment must cover it) and the unit enters ready.
       const accelChosen =
         action.type === 'PLAY_UNIT' && !!action.accelerate && !!accelerateCost(card)
-      const baseCost = effectiveCostOf(s, action.player, card)
+      const baseCost = effectiveCostOf(s, action.player, card, { fromZone: 'hand', targets: (action as { targets?: string[] }).targets })
       let effCost = accelChosen ? addCost(baseCost, accelerateCost(card)!) : baseCost
       // Deflect: a spell choosing an enemy unit with Deflect X costs X more.
       if (action.type === 'PLAY_SPELL') {

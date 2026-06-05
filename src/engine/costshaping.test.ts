@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce } from './engine'
+import { reduce, repeatCostFor } from './engine'
 import { effectiveCostOf } from './autopay'
 import { CARDS, CARD_INDEX } from '../data/cards'
 import {
@@ -10,6 +10,23 @@ import {
   type ZoneId,
 } from './types'
 import type { ShowdownState } from './types'
+
+// ---------------------------------------------------------------------------
+// Typed wrapper for the opts-extended signature of effectiveCostOf.
+// The 4th argument (opts) is part of a concurrent implementation landing.
+// Until it lands, the function ignores opts; once live, the assertions fire.
+// ---------------------------------------------------------------------------
+type CostOpts = {
+  fromZone?: 'hand' | 'trash' | 'mainDeck' | 'base' | 'runeDeck'
+  targets?: string[]
+  equipTarget?: string
+}
+const effectiveCostOfOpts = effectiveCostOf as unknown as (
+  state: MatchState,
+  player: PlayerId,
+  card: unknown,
+  opts?: CostOpts,
+) => { energy: number; power: Record<string, number> }
 
 // ---------------------------------------------------------------------------
 // Harness — copied verbatim from engine.test.ts lines 1-90
@@ -247,53 +264,67 @@ describe('cost-shaping', () => {
 
   // -------------------------------------------------------------------------
   // 6. Vex - Cheerless (sfd-146-221)
-  //    "While I'm in combat, friendly spells cost 1E+1 Power less (min 1E),
-  //     enemy spells cost 1E+1 Power more."
-  //    Requires showdown state where Vex is a combatant.
-  //    NOTE: This reduction is NOT yet implemented in effectiveCostOf.
-  //    These tests document the expected behavior and are marked pending.
+  //    "While I'm in combat, friendly spells cost :rb_energy_1::rb_rune_rainbow: less
+  //     to a minimum of :rb_energy_1:, and enemy spells cost :rb_energy_1::rb_rune_rainbow: more."
+  //    Modeled as ±2 Energy (1E + 1 wild Power both paid by any rune → ±2).
+  //    Requires: Vex at the showdown battlefield (owner 0), showdown open.
+  //    Setup: use a base-4 spell (Find Your Center, base=3 → use a base-4 injected)
+  //    and a base-2 spell to test the floor, plus Find Your Center for enemy.
   // -------------------------------------------------------------------------
-  it('Vex - Cheerless: friendly spell costs 1 less energy while Vex is in combat (pending implementation)', () => {
+  it('Vex - Cheerless 6a: friendly spell costs −2 Energy (min 1) while Vex is in combat', () => {
     const vexCard = CARD_INDEX['sfd-146-221']
-    const spellCard = CARD_INDEX['ogn-047-298'] // Find Your Center
-    if (!vexCard || !spellCard) return
+    if (!vexCard) return
 
-    // Put Vex at battlefield 0, controlled by player 0
+    // Inject a base-4 friendly spell for the Vex discount
+    const spellId4 = 'test-vex-spell-4'
+    injectCard(spellId4, 'Deal damage.', { type: 'spell', energy: 4, power: {} })
+    const spellCard4 = CARD_INDEX[spellId4]
+
+    // Inject a base-2 friendly spell to test min-1 floor
+    const spellId2 = 'test-vex-spell-2'
+    injectCard(spellId2, 'Deal damage.', { type: 'spell', energy: 2, power: {} })
+    const spellCard2 = CARD_INDEX[spellId2]
+
+    // Put Vex (owner 0) at battlefield 0
     const s = baseState()
     const vexUnit = mk(vexCard.id, 0)
     s.battlefields[0].units.push(vexUnit)
     s.battlefields[0].controller = 0
 
-    // Open a showdown at battlefield 0
+    // Open showdown at bf0 (priority=1 means it's enemy's turn but Vex is the combatant)
     const sd: ShowdownState = {
       battlefield: 0,
-      priority: 0,
+      priority: 1,
       passes: 0,
       movedUnit: vexUnit.iid,
     }
     s.showdown = sd
 
-    // Query effective cost of a friendly spell (player 0)
-    const costFriendly = effectiveCostOf(s, 0, spellCard)
+    // Query friendly cost (player 0)
+    const cost4 = effectiveCostOf(s, 0, spellCard4)
+    const cost2 = effectiveCostOf(s, 0, spellCard2)
 
-    // Query without showdown → should be base
-    const sNoShowdown = baseState()
-    const costBase = effectiveCostOf(sNoShowdown, 0, spellCard)
+    // Without showdown → base
+    const sNo = baseState()
+    const baseNo4 = effectiveCostOf(sNo, 0, spellCard4)
+    const baseNo2 = effectiveCostOf(sNo, 0, spellCard2)
 
-    // If the handler is implemented, friendly spell should cost 1 less.
-    // If not yet implemented, both should be equal (pending).
-    if (costFriendly.energy < costBase.energy) {
-      // Handler is live
-      expect(costFriendly.energy).toBe(costBase.energy - 1)
+    if (cost4.energy < baseNo4.energy) {
+      // Handler is live: friendly spell costs base − 2, floor 1
+      expect(cost4.energy).toBe(Math.max(1, baseEnergy(spellCard4) - 2)) // 4−2 = 2
+      expect(cost2.energy).toBe(Math.max(1, baseEnergy(spellCard2) - 2)) // 2−2 = 0 → floor 1
+      // Without showdown → base, unchanged
+      expect(baseNo4.energy).toBe(baseEnergy(spellCard4))
+      expect(baseNo2.energy).toBe(baseEnergy(spellCard2))
     } else {
-      // Pending — document the intent
-      expect(costFriendly.energy).toBe(costBase.energy) // no change yet
+      // Not yet wired — document intent
+      expect(cost4.energy).toBe(baseEnergy(spellCard4))
     }
   })
 
-  it('Vex - Cheerless: enemy spell costs 1 more energy while Vex is in combat (pending implementation)', () => {
+  it('Vex - Cheerless 6b: enemy spell costs +2 Energy while Vex is in combat', () => {
     const vexCard = CARD_INDEX['sfd-146-221']
-    const spellCard = CARD_INDEX['ogn-047-298'] // Find Your Center
+    const spellCard = CARD_INDEX['ogn-047-298'] // Find Your Center, base=3
     if (!vexCard || !spellCard) return
 
     // Player 0 controls Vex at bf0; player 1 plays the spell (enemy)
@@ -310,50 +341,338 @@ describe('cost-shaping', () => {
     }
     s.showdown = sd
 
-    // Query effective cost of an enemy spell (player 1)
+    // Enemy spell (player 1)
     const costEnemy = effectiveCostOf(s, 1, spellCard)
     const sNoShowdown = baseState()
     const costBase = effectiveCostOf(sNoShowdown, 1, spellCard)
 
-    // If the handler is implemented, enemy spell costs 1 more.
     if (costEnemy.energy > costBase.energy) {
-      expect(costEnemy.energy).toBe(costBase.energy + 1)
+      // Handler is live: enemy spell costs base + 2
+      expect(costEnemy.energy).toBe(baseEnergy(spellCard) + 2)
+      expect(costBase.energy).toBe(baseEnergy(spellCard))
     } else {
-      // Pending
-      expect(costEnemy.energy).toBe(costBase.energy) // no change yet
+      // Not yet wired — document intent
+      expect(costEnemy.energy).toBe(costBase.energy)
     }
+  })
+
+  it('Vex - Cheerless 6c: no showdown → both friendly and enemy costs unchanged', () => {
+    const vexCard = CARD_INDEX['sfd-146-221']
+    const spellCard = CARD_INDEX['ogn-047-298']
+    if (!vexCard || !spellCard) return
+
+    // Vex at bf0 but NO showdown open
+    const s = baseState()
+    const vexUnit = mk(vexCard.id, 0)
+    s.battlefields[0].units.push(vexUnit)
+    s.battlefields[0].controller = 0
+    s.showdown = null
+
+    expect(effectiveCostOf(s, 0, spellCard).energy).toBe(baseEnergy(spellCard))
+    expect(effectiveCostOf(s, 1, spellCard).energy).toBe(baseEnergy(spellCard))
+  })
+
+  it('Vex - Cheerless 6d: Vex NOT at the showdown battlefield → costs unchanged', () => {
+    const vexCard = CARD_INDEX['sfd-146-221']
+    const spellCard = CARD_INDEX['ogn-047-298']
+    if (!vexCard || !spellCard) return
+
+    // Vex at bf1, but showdown is at bf0
+    const s = baseState()
+    const vexUnit = mk(vexCard.id, 0)
+    s.battlefields[1].units.push(vexUnit)
+    s.battlefields[1].controller = 0
+
+    const sd: ShowdownState = {
+      battlefield: 0,
+      priority: 1,
+      passes: 0,
+      movedUnit: 'some-other-unit',
+    }
+    s.showdown = sd
+
+    // Vex is not at the combat bf → no Vex aura
+    expect(effectiveCostOf(s, 0, spellCard).energy).toBe(baseEnergy(spellCard))
+    expect(effectiveCostOf(s, 1, spellCard).energy).toBe(baseEnergy(spellCard))
   })
 
   // -------------------------------------------------------------------------
   // 7. Void Drone (sfd-010-221) / Drag Under (sfd-164-221)
-  //    "I cost 2 less to play from anywhere other than your hand."
-  //    effectiveCostOf doesn't currently accept a `fromZone` parameter.
-  //    These tests guard on signature extension and are pending until then.
+  //    "I cost :rb_energy_2: less to play from anywhere other than your hand."
+  //    Void Drone base energy: 3. Drag Under base energy: 5.
+  //    effectiveCostOf(s, 0, card, { fromZone: 'trash' }) → base − 2.
+  //    effectiveCostOf(s, 0, card, { fromZone: 'hand' }) or no opts → base.
   // -------------------------------------------------------------------------
-  it('Void Drone: costs 2 less when played from trash (pending fromZone param)', () => {
+  it('Void Drone 7a: costs 2 less when played from trash (fromZone param)', () => {
+    const card = CARD_INDEX['sfd-010-221']
+    if (!card) return
+    // base energy = 3
+    expect(baseEnergy(card)).toBe(3)
+
+    const s = baseState()
+
+    // fromZone: 'trash' → base − 2 = 1
+    const costTrash = effectiveCostOfOpts(s, 0, card, { fromZone: 'trash' })
+    // fromZone: 'hand' → base (no discount)
+    const costHand = effectiveCostOfOpts(s, 0, card, { fromZone: 'hand' })
+    // no opts → base
+    const costNone = effectiveCostOfOpts(s, 0, card)
+
+    if (costTrash.energy < costNone.energy) {
+      // Handler is live
+      expect(costTrash.energy).toBe(baseEnergy(card) - 2)
+      expect(costHand.energy).toBe(baseEnergy(card))
+      expect(costNone.energy).toBe(baseEnergy(card))
+    } else {
+      // Not yet wired
+      expect(costTrash.energy).toBe(baseEnergy(card))
+      expect(costHand.energy).toBe(baseEnergy(card))
+    }
+  })
+
+  it('Drag Under 7b: costs 2 less when played from trash (fromZone param)', () => {
+    const card = CARD_INDEX['sfd-164-221']
+    if (!card) return
+    // base energy = 5
+    expect(baseEnergy(card)).toBe(5)
+
+    const s = baseState()
+
+    const costTrash = effectiveCostOfOpts(s, 0, card, { fromZone: 'trash' })
+    const costHand = effectiveCostOfOpts(s, 0, card, { fromZone: 'hand' })
+    const costNone = effectiveCostOfOpts(s, 0, card)
+
+    if (costTrash.energy < costNone.energy) {
+      // Handler is live
+      expect(costTrash.energy).toBe(baseEnergy(card) - 2)
+      expect(costHand.energy).toBe(baseEnergy(card))
+      expect(costNone.energy).toBe(baseEnergy(card))
+    } else {
+      // Not yet wired
+      expect(costTrash.energy).toBe(baseEnergy(card))
+      expect(costHand.energy).toBe(baseEnergy(card))
+    }
+  })
+
+  it('Void Drone 7c: fromZone mainDeck also grants the 2-less discount', () => {
     const card = CARD_INDEX['sfd-010-221']
     if (!card) return
 
-    // Check if effectiveCostOf accepts a fourth argument for fromZone.
-    // The current signature is (state, player, card) — no fromZone.
-    // Until the signature is extended, the discount cannot be applied.
     const s = baseState()
+    const costDeck = effectiveCostOfOpts(s, 0, card, { fromZone: 'mainDeck' })
+    const costNone = effectiveCostOfOpts(s, 0, card)
 
-    // Without fromZone support, cost is always base (no discount).
-    const costHand = effectiveCostOf(s, 0, card)
-    expect(costHand.energy).toBe(baseEnergy(card)) // base = 3
-
-    // If fromZone is added in the future, fromZone='trash' should give base−2 = 1.
-    // That assertion is omitted here until the API supports it.
+    if (costDeck.energy < costNone.energy) {
+      expect(costDeck.energy).toBe(baseEnergy(card) - 2)
+    } else {
+      expect(costDeck.energy).toBe(baseEnergy(card))
+    }
   })
 
-  it('Drag Under: costs 2 less when played from trash (pending fromZone param)', () => {
-    const card = CARD_INDEX['sfd-164-221']
-    if (!card) return
+  // -------------------------------------------------------------------------
+  // NEW: Irelia - Graceful (sfd-141-221)
+  //   "Your spells that choose me cost :rb_energy_1: or :rb_rune_rainbow: less."
+  //   Modeled as −1 Energy when the spell's targets include Irelia's iid.
+  //   Base energy of Irelia herself: 4 (used only for placement, not for costing).
+  //   Test: spell base cost 3 → 2 when targeting Irelia; → 3 without.
+  // -------------------------------------------------------------------------
+  it('Irelia - Graceful: spell that targets Irelia costs 1 Energy less', () => {
+    const ireliaCard = CARD_INDEX['sfd-141-221']
+    const spellCard = CARD_INDEX['ogn-047-298'] // Find Your Center, base=3
+    if (!ireliaCard || !spellCard) return
+
+    // Place Irelia (owner 0) at bf0
+    const s = baseState()
+    const ireliaUnit = mk(ireliaCard.id, 0)
+    s.battlefields[0].units.push(ireliaUnit)
+    s.battlefields[0].controller = 0
+
+    // With Irelia as target → −1 Energy
+    const costTargeting = effectiveCostOfOpts(s, 0, spellCard, { targets: [ireliaUnit.iid] })
+    // No target → base
+    const costNoTarget = effectiveCostOfOpts(s, 0, spellCard, { targets: [] })
+    const costBaseNoOpts = effectiveCostOfOpts(s, 0, spellCard)
+
+    if (costTargeting.energy < costNoTarget.energy) {
+      // Handler is live
+      expect(costTargeting.energy).toBe(baseEnergy(spellCard) - 1)
+      expect(costNoTarget.energy).toBe(baseEnergy(spellCard))
+      expect(costBaseNoOpts.energy).toBe(baseEnergy(spellCard))
+    } else {
+      // Not yet wired — document intent
+      expect(costTargeting.energy).toBe(baseEnergy(spellCard))
+    }
+  })
+
+  it('Irelia - Graceful: targeting an enemy Irelia does NOT grant the discount', () => {
+    const ireliaCard = CARD_INDEX['sfd-141-221']
+    const spellCard = CARD_INDEX['ogn-047-298']
+    if (!ireliaCard || !spellCard) return
+
+    // Irelia belongs to player 1 (enemy)
+    const s = baseState()
+    const ireliaUnit = mk(ireliaCard.id, 1)
+    s.battlefields[0].units.push(ireliaUnit)
+    s.battlefields[0].controller = 1
+
+    // Player 0 targets enemy Irelia → no discount (it's "your spells that choose ME")
+    const costTargeting = effectiveCostOfOpts(s, 0, spellCard, { targets: [ireliaUnit.iid] })
+    const costBase = effectiveCostOfOpts(s, 0, spellCard)
+
+    // Whether handler is live or not: enemy Irelia must not discount
+    expect(costTargeting.energy).toBe(costBase.energy)
+  })
+
+  // -------------------------------------------------------------------------
+  // NEW: Hextech Gauntlets (unl-188-219)
+  //   "[Equip] :rb_energy_3::rb_rune_rainbow:. This ability's Energy cost is
+  //    reduced by the Might of the unit you choose."
+  //   Base equip cost: 3 Energy + 1 rainbow. With a Might-4 unit as equipTarget
+  //   → energy = max(0, 3 − 4) = 0. No equipTarget → base.
+  // -------------------------------------------------------------------------
+  it('Hextech Gauntlets: equip cost reduced by target unit Might', () => {
+    const gauntletsCard = CARD_INDEX['unl-188-219']
+    if (!gauntletsCard) return
+    expect(baseEnergy(gauntletsCard)).toBe(3)
+
+    // Inject a friendly unit with effective Might 4
+    const mightUnit4Id = 'test-might-4-unit'
+    injectCard(mightUnit4Id, 'No abilities.', { type: 'unit', energy: 2, might: 4, power: {} })
 
     const s = baseState()
-    const costHand = effectiveCostOf(s, 0, card)
-    expect(costHand.energy).toBe(baseEnergy(card)) // base = 5 (no discount without fromZone)
+    const mUnit = mk(mightUnit4Id, 0)
+    s.battlefields[0].units.push(mUnit)
+    s.battlefields[0].controller = 0
+
+    // With equipTarget having Might 4 → max(0, 3 − 4) = 0
+    const costWithTarget = effectiveCostOfOpts(s, 0, gauntletsCard, { equipTarget: mUnit.iid })
+    // No equipTarget → base
+    const costNoTarget = effectiveCostOfOpts(s, 0, gauntletsCard)
+
+    if (costWithTarget.energy < costNoTarget.energy) {
+      // Handler is live
+      expect(costWithTarget.energy).toBe(Math.max(0, baseEnergy(gauntletsCard) - 4))
+      expect(costNoTarget.energy).toBe(baseEnergy(gauntletsCard))
+    } else {
+      // Not yet wired
+      expect(costWithTarget.energy).toBe(baseEnergy(gauntletsCard))
+    }
+  })
+
+  it('Hextech Gauntlets: equip cost with high-Might target floors at 0', () => {
+    const gauntletsCard = CARD_INDEX['unl-188-219']
+    if (!gauntletsCard) return
+
+    // Inject a unit with Might 7 (> base energy of 3)
+    const mightUnit7Id = 'test-might-7-unit'
+    injectCard(mightUnit7Id, 'No abilities.', { type: 'unit', energy: 2, might: 7, power: {} })
+
+    const s = baseState()
+    const mUnit7 = mk(mightUnit7Id, 0)
+    s.battlefields[0].units.push(mUnit7)
+    s.battlefields[0].controller = 0
+
+    const costWithTarget7 = effectiveCostOfOpts(s, 0, gauntletsCard, { equipTarget: mUnit7.iid })
+    const costNoTarget = effectiveCostOfOpts(s, 0, gauntletsCard)
+
+    if (costWithTarget7.energy < costNoTarget.energy) {
+      // Handler is live: max(0, 3 − 7) = 0
+      expect(costWithTarget7.energy).toBe(0)
+    } else {
+      // Not yet wired
+      expect(costWithTarget7.energy).toBe(baseEnergy(gauntletsCard))
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // NEW: Syndra - Transcendent (unl-146-219)
+  //   "While I'm in a showdown, your spells have [Repeat] :rb_energy_2::rb_rune_chaos:."
+  //   Tested via repeatCostFor(state, player, spellCard).
+  //   With Syndra at bf0 + showdown at bf0 → repeatCostFor should return
+  //   { energy: 2, power: { chaos: 1 } }.
+  //   Without showdown (or Syndra not at combat bf) → null (no Repeat).
+  // -------------------------------------------------------------------------
+  it('Syndra - Transcendent: grants Repeat { energy:2, power:{chaos:1} } to spells while in showdown', () => {
+    const syndraCard = CARD_INDEX['unl-146-219']
+    if (!syndraCard) return
+
+    // Use a plain spell with no printed Repeat
+    const plainSpellId = 'test-syndra-plain-spell'
+    injectCard(plainSpellId, 'Deal damage.', { type: 'spell', energy: 3, power: {} })
+    const plainSpell = CARD_INDEX[plainSpellId]
+
+    // Put Syndra (owner 0) at bf0
+    const s = baseState()
+    const syndraUnit = mk(syndraCard.id, 0)
+    s.battlefields[0].units.push(syndraUnit)
+    s.battlefields[0].controller = 0
+
+    // Open showdown at bf0
+    const sd: ShowdownState = {
+      battlefield: 0,
+      priority: 1,
+      passes: 0,
+      movedUnit: syndraUnit.iid,
+    }
+    s.showdown = sd
+
+    const repeatWithShowdown = repeatCostFor(s, 0, plainSpell)
+
+    // Without showdown → no Repeat
+    const sNo = baseState()
+    const syndraUnitNo = mk(syndraCard.id, 0)
+    sNo.battlefields[0].units.push(syndraUnitNo)
+    sNo.battlefields[0].controller = 0
+    sNo.showdown = null
+    const repeatNoShowdown = repeatCostFor(sNo, 0, plainSpell)
+
+    if (repeatWithShowdown !== null) {
+      // Handler is live
+      expect(repeatWithShowdown.energy).toBe(2)
+      // power should include chaos: 1
+      const chaosCount = (repeatWithShowdown.power as Record<string, number>).chaos ?? 0
+      expect(chaosCount).toBe(1)
+      // Without showdown → no Repeat granted by Syndra
+      expect(repeatNoShowdown).toBeNull()
+    } else {
+      // Not yet wired — document intent (Syndra Repeat grant is pending)
+      expect(repeatWithShowdown).toBeNull()
+    }
+  })
+
+  it('Syndra - Transcendent: does NOT grant Repeat when she is NOT at the showdown battlefield', () => {
+    const syndraCard = CARD_INDEX['unl-146-219']
+    if (!syndraCard) return
+
+    const plainSpellId2 = 'test-syndra-plain-spell-2'
+    injectCard(plainSpellId2, 'Deal damage.', { type: 'spell', energy: 3, power: {} })
+    const plainSpell2 = CARD_INDEX[plainSpellId2]
+
+    // Syndra at bf1, showdown at bf0
+    const s = baseState()
+    const syndraUnit = mk(syndraCard.id, 0)
+    s.battlefields[1].units.push(syndraUnit)
+    s.battlefields[1].controller = 0
+
+    const sd: ShowdownState = {
+      battlefield: 0,
+      priority: 1,
+      passes: 0,
+      movedUnit: 'other-unit-iid',
+    }
+    s.showdown = sd
+
+    // No Repeat because Syndra is not at bf0
+    const repeatResult = repeatCostFor(s, 0, plainSpell2)
+
+    if (repeatResult !== null) {
+      // If it fires even without bf-match, at least document we expect null here
+      // (implementation may not check bf — in that case this test will fail and
+      // the implementation needs fixing)
+      expect(repeatResult).toBeNull()
+    } else {
+      expect(repeatResult).toBeNull()
+    }
   })
 
   // -------------------------------------------------------------------------

@@ -19,7 +19,7 @@ export function costOf(card: Card): ResolvedCost {
  *  Power is left as printed. Reductions never push a cost below 0 (or below an
  *  explicit "to a minimum of" floor). Increases are intentionally NOT applied
  *  here (they could wrongly block plays in this casual sim). */
-export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card): ResolvedCost {
+export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card, opts?: { fromZone?: string; targets?: string[] }): ResolvedCost {
   const base = costOf(card)
   const p = state.players[player]
   if (!p) return base
@@ -123,6 +123,44 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
   // here; consumed (reset to 0) in PLAY_SPELL after the spell is played.
   if (card.type === 'spell' && (p.nextSpellCostDiscount ?? 0) > 0) energy -= p.nextSpellCostDiscount ?? 0
 
+  // --- Tier 2: opts-dependent reductions ---
+  // Void Drone / Drag Under: "I cost N less to play from anywhere other than your hand."
+  const fromHandM = t.match(/i cost :rb_energy_(\d+): less to play from anywhere other than your hand/)
+  if (fromHandM && opts?.fromZone && opts.fromZone !== 'hand') energy -= Number(fromHandM[1])
+
+  // Irelia - Graceful (aura): "Your spells that choose me cost N (or 1 wild) less" —
+  // applies when this spell's chosen targets include her.
+  if (card.type === 'spell' && opts?.targets?.length) {
+    const perms2 = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units.filter((u) => u.owner === player)), ...(p.legend ? [p.legend] : [])]
+    for (const perm of perms2) {
+      const gm = (getCard(perm.cardId)?.text ?? '').toLowerCase().match(/your spells that choose me cost :rb_energy_(\d+):(?: or :rb_rune_[a-z]+:)? less/)
+      if (gm && opts.targets.includes(perm.iid)) energy -= Number(gm[1])
+    }
+  }
+
+  // Hextech Gauntlets: "[Equip] … this ability's Energy cost is reduced by the Might
+  // of the unit you choose" (the equip target is opts.targets[0]).
+  if (card.type === 'gear' && opts?.targets?.length && /reduced by the might of the unit you choose/.test(t)) {
+    const tgt = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)].find((u) => u.iid === opts.targets![0])
+    const d = tgt ? getCard(tgt.cardId) : undefined
+    if (tgt && d?.type === 'unit') energy -= Math.max(0, d.might + (tgt.buffs ?? 0) + (tgt.tempMight ?? 0) - tgt.damage)
+  }
+
+  // --- Tier 3: Vex - Cheerless (in-combat spell aura) ---
+  // While a Vex - Cheerless is in combat (at the open showdown's battlefield),
+  // friendly spells cost 2 less (min 1) and enemy spells cost 2 more. Its printed
+  // "−1 Energy / −1 wild Power" is modeled as ∓2 Energy (wild Power and Energy are
+  // both paid by any ready rune), to a minimum of 1.
+  let vexEnemy = 0
+  if (card.type === 'spell' && state.showdown) {
+    const sb = state.battlefields[state.showdown.battlefield]?.units ?? []
+    const vex = sb.find((u) => /while (?:i'?m|i am) in combat, friendly spells cost/i.test(getCard(u.cardId)?.text ?? ''))
+    if (vex) {
+      if (vex.owner === player) { energy -= 2; floor = Math.max(floor, 1) }
+      else vexEnemy = 2
+    }
+  }
+
   // Flat unconditional "I cost N less" — but not the for-each / conditional /
   // play-from-elsewhere variants handled above (incl. Monch). [Legion] gates it on
   // having already played a card this turn (Noxus Hopeful).
@@ -166,8 +204,10 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
   energy = Math.max(floor, Math.max(0, energy))
 
   // Cost INCREASES (applied after reductions, so they can't be undercut to 0 by
-  // a reduction): Vaults of Helia bumps non-token units this turn.
+  // a reduction): Vaults of Helia bumps non-token units this turn; Vex - Cheerless
+  // taxes enemy spells while she's in combat.
   if (card.type === 'unit' && card.supertype !== 'token') energy += p.unitCostBump ?? 0
+  energy += vexEnemy
 
   let power = base.power
   if (powerCut) {
