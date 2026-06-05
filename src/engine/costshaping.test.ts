@@ -8,7 +8,6 @@ import {
   type EngineCard,
   type PlayerId,
   type ZoneId,
-  emptyPayment,
 } from './types'
 import type { ShowdownState } from './types'
 
@@ -25,10 +24,6 @@ function injectCard(id: string, text: string, extra: Record<string, unknown> = {
 }
 
 // Find real cards to exercise the engine deterministically.
-const furyRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('fury'))!
-const furyUnit = CARDS.find(
-  (c) => c.type === 'unit' && c.domains.length === 1 && c.domains[0] === 'fury',
-)!
 const battlefield = CARDS.find((c) => c.type === 'battlefield')!
 
 let n = 0
@@ -83,16 +78,8 @@ function baseState(): MatchState {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Provide enough runes in player 0's pool to cover `energy` cost. */
-function addRunes(s: MatchState, player: PlayerId, count: number): EngineCard[] {
-  const runes: EngineCard[] = []
-  for (let i = 0; i < count; i++) {
-    const r = mk(furyRune.id, player)
-    s.players[player].zones.runePool.push(r)
-    runes.push(r)
-  }
-  return runes
-}
+/** A card's printed Energy (CARD_INDEX returns the Card union; narrow it). */
+const baseEnergy = (c: unknown): number => (c as { energy?: number }).energy ?? 0
 
 // ---------------------------------------------------------------------------
 // cost-shaping tests
@@ -113,13 +100,13 @@ describe('cost-shaping', () => {
     // Without death → base
     const sNo = baseState()
     const costNo = effectiveCostOf(sNo, 0, card)
-    expect(costNo.energy).toBe(card.energy)
+    expect(costNo.energy).toBe(baseEnergy(card))
 
     // With unitDiedThisTurn = true → base − 2
     const sYes = baseState()
     sYes.unitDiedThisTurn = true
     const costYes = effectiveCostOf(sYes, 0, card)
-    expect(costYes.energy).toBe(card.energy - 2)
+    expect(costYes.energy).toBe(baseEnergy(card) - 2)
   })
 
   // -------------------------------------------------------------------------
@@ -137,14 +124,14 @@ describe('cost-shaping', () => {
     sWithin.pointsToWin = 8
     sWithin.players[1].points = 6
     const costWithin = effectiveCostOf(sWithin, 0, card)
-    expect(costWithin.energy).toBe(card.energy - 2)
+    expect(costWithin.energy).toBe(baseEnergy(card) - 2)
 
     // opponent at points=2, pointsToWin=8 → gap=6 > 3 → base
     const sNot = baseState()
     sNot.pointsToWin = 8
     sNot.players[1].points = 2
     const costNot = effectiveCostOf(sNot, 0, card)
-    expect(costNot.energy).toBe(card.energy)
+    expect(costNot.energy).toBe(baseEnergy(card))
   })
 
   // -------------------------------------------------------------------------
@@ -170,12 +157,12 @@ describe('cost-shaping', () => {
     s2.battlefields[0].units.push(u1, u2)
     s2.battlefields[0].controller = 0
     const cost2 = effectiveCostOf(s2, 0, card)
-    expect(cost2.energy).toBe(card.energy - 4)
+    expect(cost2.energy).toBe(baseEnergy(card) - 4)
 
     // Zero Mighty units → base
     const s0 = baseState()
     const cost0 = effectiveCostOf(s0, 0, card)
-    expect(cost0.energy).toBe(card.energy)
+    expect(cost0.energy).toBe(baseEnergy(card))
   })
 
   // -------------------------------------------------------------------------
@@ -200,13 +187,13 @@ describe('cost-shaping', () => {
     const sHold = baseState()
     ;(sHold.players[0] as PlayerState & { holdPointsThisTurn?: number }).holdPointsThisTurn = 2
     const costHold = effectiveCostOf(sHold, 0, card)
-    expect(costHold.energy).toBe(card.energy - 4)
+    expect(costHold.energy).toBe(baseEnergy(card) - 4)
 
     // 0 hold points → base
     const sNone = baseState()
     ;(sNone.players[0] as PlayerState & { holdPointsThisTurn?: number }).holdPointsThisTurn = 0
     const costNone = effectiveCostOf(sNone, 0, card)
-    expect(costNone.energy).toBe(card.energy)
+    expect(costNone.energy).toBe(baseEnergy(card))
   })
 
   // Alternate guard approach: check for field existence at runtime
@@ -217,10 +204,10 @@ describe('cost-shaping', () => {
     // holdPointsThisTurn is optional — confirm it can be set
     s.players[0].holdPointsThisTurn = 2
     const cost = effectiveCostOf(s, 0, card)
-    expect(cost.energy).toBe(card.energy - 4)
+    expect(cost.energy).toBe(baseEnergy(card) - 4)
     s.players[0].holdPointsThisTurn = 0
     const costZero = effectiveCostOf(s, 0, card)
-    expect(costZero.energy).toBe(card.energy)
+    expect(costZero.energy).toBe(baseEnergy(card))
   })
 
   // -------------------------------------------------------------------------
@@ -238,12 +225,12 @@ describe('cost-shaping', () => {
     s.players[0].nextSpellCostDiscount = 5
     const costWithDiscount = effectiveCostOf(s, 0, spellCard)
     // spell energy base − 5, clamped to ≥ 0
-    expect(costWithDiscount.energy).toBe(Math.max(0, spellCard.energy - 5))
+    expect(costWithDiscount.energy).toBe(Math.max(0, baseEnergy(spellCard) - 5))
 
     // Without discount → base cost
     const sNo = baseState()
     const costBase = effectiveCostOf(sNo, 0, spellCard)
-    expect(costBase.energy).toBe(spellCard.energy)
+    expect(costBase.energy).toBe(baseEnergy(spellCard))
   })
 
   it('Raging Firebrand gift: non-spell cards are NOT discounted', () => {
@@ -255,7 +242,7 @@ describe('cost-shaping', () => {
     s.players[0].nextSpellCostDiscount = 5
     const cost = effectiveCostOf(s, 0, unitCard)
     // No Mighty units → cost = base energy, unaffected by spell discount
-    expect(cost.energy).toBe(unitCard.energy)
+    expect(cost.energy).toBe(baseEnergy(unitCard))
   })
 
   // -------------------------------------------------------------------------
@@ -354,7 +341,7 @@ describe('cost-shaping', () => {
 
     // Without fromZone support, cost is always base (no discount).
     const costHand = effectiveCostOf(s, 0, card)
-    expect(costHand.energy).toBe(card.energy) // base = 3
+    expect(costHand.energy).toBe(baseEnergy(card)) // base = 3
 
     // If fromZone is added in the future, fromZone='trash' should give base−2 = 1.
     // That assertion is omitted here until the API supports it.
@@ -366,7 +353,7 @@ describe('cost-shaping', () => {
 
     const s = baseState()
     const costHand = effectiveCostOf(s, 0, card)
-    expect(costHand.energy).toBe(card.energy) // base = 5 (no discount without fromZone)
+    expect(costHand.energy).toBe(baseEnergy(card)) // base = 5 (no discount without fromZone)
   })
 
   // -------------------------------------------------------------------------
@@ -385,7 +372,7 @@ describe('cost-shaping', () => {
     s.players[1].points = 6
 
     // Give player 0 enough pool energy to play (avoids rune bookkeeping)
-    s.players[0].pool.energy = card.energy + 10
+    s.players[0].pool.energy = baseEnergy(card) + 10
 
     const poppy = mk(card.id, 0)
     s.players[0].zones.hand.push(poppy)
@@ -394,7 +381,7 @@ describe('cost-shaping', () => {
       type: 'PLAY_UNIT',
       player: 0,
       iid: poppy.iid,
-      payment: { exhaust: [], recycle: [], poolEnergy: card.energy },
+      payment: { exhaust: [], recycle: [], poolEnergy: baseEnergy(card) },
     })
 
     expect(error).toBeUndefined()
@@ -420,7 +407,7 @@ describe('cost-shaping', () => {
     s.pointsToWin = 8
     s.players[1].points = 2
 
-    s.players[0].pool.energy = card.energy + 10
+    s.players[0].pool.energy = baseEnergy(card) + 10
 
     const poppy = mk(card.id, 0)
     s.players[0].zones.hand.push(poppy)
@@ -429,7 +416,7 @@ describe('cost-shaping', () => {
       type: 'PLAY_UNIT',
       player: 0,
       iid: poppy.iid,
-      payment: { exhaust: [], recycle: [], poolEnergy: card.energy },
+      payment: { exhaust: [], recycle: [], poolEnergy: baseEnergy(card) },
     })
 
     expect(error).toBeUndefined()
