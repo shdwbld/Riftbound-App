@@ -4279,6 +4279,24 @@ function applyTempMight(s: MatchState, iid: string, delta: number, floor = 0): E
 function resolveTopOfChain(state: MatchState): MatchState {
   let s = state
   const item = s.chain[s.chain.length - 1]
+  // Hard Bargain: "Counter a spell unless its controller pays N." If the target's
+  // controller can afford it, PAUSE here (leave both items on the chain) and offer
+  // them the choice; the counter is finished in RESOLVE_CHOICE. PASS_PRIORITY guards
+  // on pendingChoice so the loop doesn't re-enter while we wait.
+  if (item.kind === 'counter') {
+    const unlessM = (getCard(item.cardId)?.text ?? '').toLowerCase().match(/counter a spell unless its controller pays :rb_energy_(\d+):/)
+    const tgt = unlessM ? s.chain.find((c) => c.id === item.countersId) : undefined
+    if (unlessM && tgt && canPayEnergy(s, tgt.controller, parseInt(unlessM[1], 10))) {
+      const n = parseInt(unlessM[1], 10)
+      s.pendingChoice = {
+        player: tgt.controller, kind: 'counterUnlessPay', bfIndex: -1,
+        prompt: `${getCard(item.cardId)?.name}: pay ${n} Energy to save ${getCard(tgt.cardId)?.name ?? 'your spell'}, or let it be countered?`,
+        options: [{ iid: 'pay', label: `Pay ${n} Energy` }, { iid: 'decline', label: 'Let it be countered' }],
+        payload: JSON.stringify({ counterId: item.id, targetId: tgt.id, n }),
+      }
+      return s // both items stay on the chain; finished in RESOLVE_CHOICE
+    }
+  }
   s.chain = s.chain.slice(0, -1)
   const p = s.players[item.controller]
   if (item.kind === 'counter') {
@@ -5293,6 +5311,32 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s)
       }
 
+      // Hard Bargain "Counter a spell unless its controller pays N": the target's
+      // controller pays to save it (counter fizzles) or lets it be countered.
+      if (pc.kind === 'counterUnlessPay') {
+        const { counterId, targetId, n } = JSON.parse(pc.payload ?? '{}') as { counterId: string; targetId: string; n: number }
+        const counterItem = s.chain.find((c) => c.id === counterId)
+        const targetItem = s.chain.find((c) => c.id === targetId)
+        if (action.iid === 'pay' && targetItem && makeBfApi(s).payEnergy(targetItem.controller, n)) {
+          // Paid → counter fizzles; remove + trash it. The target stays and resolves.
+          if (counterItem) { s.chain = s.chain.filter((c) => c.id !== counterId); sendToTrash(s.players[counterItem.controller], counterItem.instance) }
+          s = log(s, action.player, `Paid ${n} Energy — ${getCard(targetItem?.cardId ?? '')?.name ?? 'the spell'} is not countered.`)
+        } else {
+          // Declined / can't pay → counter resolves: remove + trash the target, then the counter.
+          if (targetItem) {
+            s.chain = s.chain.filter((c) => c.id !== targetId)
+            sendToTrash(s.players[targetItem.controller], targetItem.instance)
+            emit({ kind: 'counter', iid: targetItem.instance.iid, player: counterItem?.controller ?? action.player, cardId: targetItem.cardId })
+            s = log(s, action.player, `Countered ${getCard(targetItem.cardId)?.name ?? 'a spell'}.`)
+          }
+          if (counterItem) { s.chain = s.chain.filter((c) => c.id !== counterId); sendToTrash(s.players[counterItem.controller], counterItem.instance) }
+        }
+        // Resume chain resolution for any remaining items.
+        s.passes = 0
+        s.priority = s.chain.length > 0 ? s.activePlayer : null
+        return ok(s)
+      }
+
       // Decline the optional effect (non-resuming kinds).
       if (action.iid === null) return ok(log(s, action.player, 'Declined the battlefield effect.'))
       const name = getCard(findUnitAnywhere(s, action.iid)?.cardId ?? '')?.name ?? 'a unit'
@@ -5887,6 +5931,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     }
 
     case 'PASS_PRIORITY': {
+      if (state.pendingChoice) return fail(state, 'Resolve the pending choice first.') // Hard Bargain unless-pay window
       if (state.chain.length === 0) return fail(state, 'No chain to pass on.')
       if (state.priority !== action.player) return fail(state, 'Not your priority.')
       let s = clone(state)

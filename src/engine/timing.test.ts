@@ -414,3 +414,55 @@ describe('timing: not yet implemented (documented gaps)', () => {
   it.todo('T4 — cost checks read base cost despite reductions (needs cost-reduction effects)')
   it.todo('T12 — "Nth time" trigger fires once on a simultaneous spike (needs per-turn counters)')
 })
+
+describe('Hard Bargain — counter unless the controller pays N', () => {
+  const drawId = inject('hb-draw', 'Draw 2.', { type: 'spell' })
+  const hbId = inject('hb-counter', '[Reaction] Counter a spell unless its controller pays :rb_energy_2:.', { type: 'spell' })
+  const furyRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('fury'))!
+
+  // Player 0 plays a Draw 2; player 1 counters it with Hard Bargain; both pass so
+  // the counter resolves. Returns the state at the unless-pay decision point.
+  const toDecision = (targetCanPay: boolean) => {
+    const s = baseState()
+    s.players[0].zones.mainDeck = [mk(vanilla.id, 0), mk(vanilla.id, 0)]
+    if (targetCanPay) s.players[0].zones.runePool.push(mk(furyRune.id, 0), mk(furyRune.id, 0))
+    const sp = mk(drawId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.chain.length).toBe(1)
+    const targetId = r.state.chain[0].id
+    const cs = mk(hbId, 1)
+    r.state.players[1].zones.hand.push(cs)
+    r = reduce(r.state, { type: 'COUNTER', player: 1, iid: cs.iid, targetChainId: targetId, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.chain.length).toBe(2)
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    return r
+  }
+
+  it('target pays → the spell is saved and resolves', () => {
+    let r = toDecision(true)
+    expect(r.state.pendingChoice?.kind).toBe('counterUnlessPay')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    expect(r.state.players[0].zones.hand.length).toBe(2) // Draw 2 resolved
+    expect(r.state.chain.length).toBe(0)
+  })
+
+  it('target declines → the spell is countered', () => {
+    let r = toDecision(true)
+    expect(r.state.pendingChoice?.kind).toBe('counterUnlessPay')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'decline' })
+    expect(r.state.players[0].zones.hand.length).toBe(0) // countered — no draw
+    expect(r.state.players[0].zones.mainDeck.length).toBe(2) // deck untouched
+    expect(r.state.chain.length).toBe(0)
+  })
+
+  it("target can't afford it → auto-countered, no prompt", () => {
+    const r = toDecision(false)
+    expect(r.state.pendingChoice).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(0) // countered
+    expect(r.state.chain.length).toBe(0)
+  })
+})
