@@ -28,6 +28,7 @@ export default function PaymentModal({
   onConfirm,
   onCancel,
   reserved,
+  confirmLabel = 'Pay & play ▶',
 }: {
   player: PlayerState
   card: Card
@@ -37,6 +38,8 @@ export default function PaymentModal({
   /** Rune iids already committed to a prior payment (e.g. a spell's base cost
    *  before its Deflect surcharge) — excluded from this picker. */
   reserved?: string[]
+  /** Confirm-button label (e.g. "Pay & equip ▶" for the [Equip] flow). */
+  confirmLabel?: string
 }) {
   const pool = player.pool ?? { energy: 0, power: {} }
   const reservedSet = useMemo(() => new Set(reserved ?? []), [reserved])
@@ -293,7 +296,7 @@ export default function PaymentModal({
               disabled={!valid}
               className="rounded-lg bg-indigo-500 px-6 py-2 text-sm font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Pay &amp; play ▶
+              {confirmLabel}
             </button>
           </div>
         </div>

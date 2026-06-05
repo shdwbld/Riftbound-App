@@ -5172,16 +5172,24 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u?.owner === action.player ? u : undefined })()
       if (!unit || getCard(unit.cardId)?.type !== 'unit')
         return fail(state, 'Choose a unit to equip.')
-      // Pay the [Equip] cost (real play only). payEquipCost mutates `s` only on
+      // Pay the [Equip] cost (real play only). When the UI supplies a `payment`
+      // (the rune picker) and the cost has no rainbow Power, apply it exactly so the
+      // player's chosen runes are honored; otherwise auto-pay. Both mutate `s` only on
       // success, so an unaffordable equip returns the untouched original state.
       if (!state.sandbox) {
         const ec = parseKeywords(getCard(s.players[gearPlayer].zones.base[gIdx!].cardId)).equipCost
-        if (ec && (ec.energy > 0 || ec.anyPower > 0 || Object.keys(ec.power).length > 0) && !payEquipCost(s, action.player, ec))
-          return fail(state, 'Not enough resources to pay the Equip cost.')
+        if (ec && (ec.energy > 0 || ec.anyPower > 0 || Object.keys(ec.power).length > 0)) {
+          if (action.payment && ec.anyPower === 0) {
+            const err = applyPayment(s.players[action.player], { energy: ec.energy, power: ec.power }, action.payment)
+            if (err) return fail(state, err)
+          } else if (!payEquipCost(s, action.player, ec)) {
+            return fail(state, 'Not enough resources to pay the Equip cost.')
+          }
+        }
       }
       const [gear] = s.players[gearPlayer].zones.base.splice(gIdx!, 1)
       unit.attached = [...unit.attached, `${gear.cardId}|${gear.iid}`]
-      emit({ kind: 'buff', iid: unit.iid, player: action.player, cardId: gear.cardId })
+      emit({ kind: 'equip', iid: unit.iid, player: action.player, cardId: gear.cardId })
       let sA = log(s, action.player, `Attached ${getCard(gear.cardId)?.name} to ${getCard(unit.cardId)?.name}.`)
       sA = fireAttachEquip(sA, action.player, unit) // Aphelios - Exalted, etc.
       return ok(sA)

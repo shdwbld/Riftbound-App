@@ -34,12 +34,6 @@ function effectiveMight(ci: CardInstance, base: number): { might: number; booste
   return { might: Math.max(0, base + mods - ci.damage), boosted: mods > 0 }
 }
 
-/** Names of gear attached to a unit instance (for the 🔧 tooltip). */
-function attachedGearNames(ci: CardInstance): string[] {
-  const x = ci as CardInstance & { attached?: string[] }
-  return (x.attached ?? []).map((ref) => getCard(ref.split('|')[0])?.name ?? 'gear')
-}
-
 export default function BoardCard({
   ci,
   selected,
@@ -58,7 +52,7 @@ export default function BoardCard({
   size?: 'sm' | 'md'
   faceDown?: boolean
   /** One-shot feedback animation, replayed by remounting (key includes a seq). */
-  flash?: 'damage' | 'defeat' | 'play' | 'buff' | 'stun' | 'move'
+  flash?: 'damage' | 'defeat' | 'play' | 'buff' | 'stun' | 'move' | 'equip'
   /** Greyed + desaturated when the card is currently unplayable. */
   dim?: boolean
   /** Persistent affordance highlight. */
@@ -156,11 +150,12 @@ export default function BoardCard({
             >
               {might}⚔{ci.damage ? <span className="text-rose-200" title={`${ci.damage} damage marked`}>−{ci.damage}</span> : null}
             </span>
-            {/* Side ±Might counter — clean pill on the right edge, vertically centered. */}
+            {/* Side ±Might counter — clean pill on the LEFT edge, vertically centered
+                (the right edge belongs to the attached-gear peek). */}
             {mods !== 0 && (
               <span
                 title={mightTitle}
-                className={`absolute right-0 top-1/2 -translate-y-1/2 rounded-l px-1 text-[9px] font-bold leading-tight shadow ${
+                className={`absolute left-0 top-1/2 -translate-y-1/2 rounded-r px-1 text-[9px] font-bold leading-tight shadow ${
                   mods > 0 ? 'bg-emerald-500/95 text-black' : 'bg-rose-600/95 text-white'
                 } ${thisTurn ? 'ring-1 ring-white/70' : ''}`}
               >
@@ -171,14 +166,6 @@ export default function BoardCard({
             <span className="absolute left-0 top-0 flex flex-col gap-px text-[8px]">
               {might >= 5 && (
                 <span className="rounded-br bg-rose-600/90 px-0.5 font-bold text-white" title="Mighty (≥5 Might)">M</span>
-              )}
-              {(x.attached?.length ?? 0) > 0 && (
-                <span
-                  className="rounded-br bg-amber-500/80 px-0.5 text-black"
-                  title={`Equipped: ${attachedGearNames(ci).join(', ')}${gear > 0 ? ` (+${gear} Might)` : ''}`}
-                >
-                  🔧{x.attached!.length > 1 ? x.attached!.length : ''}
-                </span>
               )}
               {(x.buffs ?? 0) > 0 && (
                 <span className="rounded-br bg-emerald-500/80 px-0.5 text-black" title="Buffed (permanent +Might)">✦</span>

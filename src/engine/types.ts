@@ -424,7 +424,7 @@ export type Action =
   | { type: 'STUN_UNIT'; player: PlayerId; iid: string }
   /** Detach a piece of gear from a unit (the gear returns to your Base). */
   | { type: 'DETACH'; player: PlayerId; unitIid: string; gearIid: string }
-  | { type: 'ATTACH'; player: PlayerId; unitIid: string; gearIid: string }
+  | { type: 'ATTACH'; player: PlayerId; unitIid: string; gearIid: string; payment?: Payment }
   /** Cash in a Gold gear token: kill it and add 1 Power of the chosen domain. */
   | { type: 'USE_GOLD'; player: PlayerId; iid: string; domain: Domain }
   /** Remove a unit from play to the Banishment zone (no Deathknell). */
@@ -464,6 +464,7 @@ export type GameEventKind =
   | 'move'
   | 'buff'
   | 'stun'
+  | 'equip'
   | 'conquer'
   | 'counter'
   | 'channel'

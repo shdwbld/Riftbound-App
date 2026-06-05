@@ -428,6 +428,16 @@ body {
   animation: playIn 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Equip: the host unit snaps + glows amber as gear locks on. */
+@keyframes equipSnap {
+  0% { transform: scale(1); filter: brightness(1); }
+  30% { transform: scale(1.12) translateX(-2px); filter: brightness(1.3) drop-shadow(0 0 6px rgba(251, 191, 36, 0.85)); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+.fx-equip {
+  animation: equipSnap 0.45s ease-out;
+}
+
 /* Buff / Stun: a quick pop. */
 @keyframes popUp {
   0% {
@@ -595,6 +605,7 @@ body {
   .fx-damage,
   .fx-defeat,
   .fx-play,
+  .fx-equip,
   .fx-buff,
   .fx-stun,
   .fx-move,

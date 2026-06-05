@@ -83,7 +83,7 @@ export interface MatchBoardProps {
 }
 
 /** Per-card flash kind that survives on a card still in play. */
-type FlashKind = 'damage' | 'play' | 'buff' | 'stun' | 'move'
+type FlashKind = 'damage' | 'play' | 'buff' | 'stun' | 'move' | 'equip'
 
 interface Fx {
   seq: number
@@ -104,6 +104,38 @@ function cardFx(fx: Fx, ci: EngineCard, ready = false) {
     glow = 'ready'
   }
   return { flash, glow, dim, key: flash ? `${ci.iid}-${fx.seq}` : ci.iid }
+}
+
+/** Attached Equipment shown as card slivers peeking from the unit's right edge.
+ *  Each peek hover-expands (its own CardPreview, outside the unit's preview so they
+ *  don't both fire) and click-inspects. Rendered as a sibling overlay of the unit. */
+function GearPeek({ unit, onInspectGear }: { unit: EngineCard; onInspectGear?: (cardId: string) => void }) {
+  const attached = unit.attached ?? []
+  if (attached.length === 0) return null
+  return (
+    <span className="pointer-events-none absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-0.5">
+      {attached.map((ref, i) => {
+        const [gid, giid] = ref.split('|')
+        const g = getCard(gid)
+        return (
+          <CardPreview key={giid || `${gid}-${i}`} cardId={gid} delay={80}>
+            <span
+              role="button"
+              title={g?.name ? `Equipped: ${g.name} — hover to enlarge, click to inspect` : 'Equipped gear'}
+              onClick={(e) => { e.stopPropagation(); onInspectGear?.(gid) }}
+              className="pointer-events-auto block h-5 w-2.5 overflow-hidden rounded-r border border-l-0 border-amber-300/80 bg-[#1c1c28] shadow-md ring-1 ring-black/50 transition-[width] hover:w-4"
+            >
+              {g?.imageUrl ? (
+                <img src={g.imageUrl} alt={g.name} className="h-full w-[320%] max-w-none object-cover object-left" />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center text-[7px]">🔧</span>
+              )}
+            </span>
+          </CardPreview>
+        )
+      })}
+    </span>
+  )
 }
 
 function playerDomains(p: PlayerState): Domain[] {
@@ -232,7 +264,7 @@ export default function MatchBoard({
     for (const e of events ?? []) {
       if (
         e.iid &&
-        (e.kind === 'damage' || e.kind === 'play' || e.kind === 'buff' || e.kind === 'stun' || e.kind === 'move')
+        (e.kind === 'damage' || e.kind === 'play' || e.kind === 'buff' || e.kind === 'stun' || e.kind === 'move' || e.kind === 'equip')
       )
         m.set(e.iid, e.kind)
     }
@@ -666,7 +698,7 @@ export default function MatchBoard({
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
         {opponents.map((opp) => (
-          <OpponentMat key={opp.id} opp={opp} target={match.pointsToWin} active={match.activePlayer === opp.id} onInspect={inspect} fx={fx} usesXp={usesXp} />
+          <OpponentMat key={opp.id} opp={opp} target={match.pointsToWin} active={match.activePlayer === opp.id} onInspect={inspect} onInspectCard={onInspect} fx={fx} usesXp={usesXp} />
         ))}
       </div>
 
@@ -795,6 +827,7 @@ export default function MatchBoard({
         selectedUnits={selectedUnits}
         onToggleUnit={toggleSelected}
         onInspect={inspect}
+        onInspectCard={onInspect}
         onPlay={onPlay}
         onEndTurn={onEndTurn}
         endTurnNeedsConfirm={hasUnplayedOptions}
@@ -1082,6 +1115,7 @@ function OpponentMat({
   target,
   active,
   onInspect,
+  onInspectCard,
   fx,
   usesXp,
 }: {
@@ -1089,10 +1123,12 @@ function OpponentMat({
   target: number
   active: boolean
   onInspect: (ci: EngineCard) => void
+  onInspectCard?: (card: Card) => void
   fx: Fx
   usesXp: boolean
 }) {
   const domains = playerDomains(opp)
+  const inspectGear = (cid: string) => { const c = getCard(cid); if (c) onInspectCard?.(c) }
   return (
     <div
       className={`rounded-xl border p-2 ${active ? 'border-indigo-400/50' : 'border-white/10'}`}
@@ -1169,11 +1205,14 @@ function OpponentMat({
           {opp.zones.base.map((u) => {
             const cf = cardFx(fx, u)
             return (
-              <CardPreview key={cf.key} cardId={u.cardId}>
-                <button onClick={() => onInspect(u)}>
-                  <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={opp.xp} />
-                </button>
-              </CardPreview>
+              <span key={cf.key} className="relative inline-block">
+                <CardPreview cardId={u.cardId}>
+                  <button onClick={() => onInspect(u)}>
+                    <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={opp.xp} />
+                  </button>
+                </CardPreview>
+                <GearPeek unit={u} onInspectGear={inspectGear} />
+              </span>
             )
           })}
         </div>
@@ -1389,26 +1428,29 @@ function BattlefieldZone({
                 // battlefield — pulse it to advertise the gank.
                 const canGank = u.owner === perspective && myActionTurn && !u.exhausted && keywordsAt(getCard(u.cardId), match.players[u.owner].xp).ganking
                 return (
-                  <CardPreview key={cf.key} cardId={u.cardId}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        inspect(u)
-                      }}
-                      onContextMenu={(e) => {
-                        e.stopPropagation()
-                        openMenu(e, u, 'battlefield')
-                      }}
-                      {...dragSrc(dndOn, u.iid)}
-                      title={canGank ? 'Ganking — can move directly to another battlefield' : u.facedown ? 'Your Hidden unit — right-click to Reveal' : undefined}
-                      className={`relative ${u.owner === perspective ? '' : 'opacity-90'} ${u.facedown ? 'rounded ring-2 ring-amber-300/60' : ''} ${canGank ? 'fx-gank rounded' : ''}`}
-                    >
-                      <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={match.players[u.owner].xp} auraBonus={auraMightFor(match, i, u)} />
-                      {canGank && (
-                        <span className="absolute -right-1 -top-1 z-10 rounded-full bg-fuchsia-500/90 px-1 text-[8px] font-bold text-white shadow">⚡G</span>
-                      )}
-                    </button>
-                  </CardPreview>
+                  <span key={cf.key} className="relative inline-block">
+                    <CardPreview cardId={u.cardId}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          inspect(u)
+                        }}
+                        onContextMenu={(e) => {
+                          e.stopPropagation()
+                          openMenu(e, u, 'battlefield')
+                        }}
+                        {...dragSrc(dndOn, u.iid)}
+                        title={canGank ? 'Ganking — can move directly to another battlefield' : u.facedown ? 'Your Hidden unit — right-click to Reveal' : undefined}
+                        className={`relative ${u.owner === perspective ? '' : 'opacity-90'} ${u.facedown ? 'rounded ring-2 ring-amber-300/60' : ''} ${canGank ? 'fx-gank rounded' : ''}`}
+                      >
+                        <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={match.players[u.owner].xp} auraBonus={auraMightFor(match, i, u)} />
+                        {canGank && (
+                          <span className="absolute -right-1 -top-1 z-10 rounded-full bg-fuchsia-500/90 px-1 text-[8px] font-bold text-white shadow">⚡G</span>
+                        )}
+                      </button>
+                    </CardPreview>
+                    <GearPeek unit={u} onInspectGear={(cid) => { const c = getCard(cid); if (c) onInspect?.(c) }} />
+                  </span>
                 )
               })}
               {bf.units.length === 0 && <span className="self-center text-[10px] text-white/30">uncontested</span>}
@@ -1431,6 +1473,7 @@ function PlayerMat({
   selectedUnits,
   onToggleUnit,
   onInspect,
+  onInspectCard,
   onPlay,
   onEndTurn,
   endTurnNeedsConfirm,
@@ -1457,6 +1500,7 @@ function PlayerMat({
   selectedUnits: string[]
   onToggleUnit: (iid: string) => void
   onInspect: (ci: EngineCard) => void
+  onInspectCard?: (card: Card) => void
   onPlay: (c: EngineCard) => void
   onEndTurn: () => void
   endTurnNeedsConfirm?: boolean
@@ -1665,23 +1709,26 @@ function PlayerMat({
           const cf = cardFx(fx, u, movable)
           return (
             <div key={cf.key} className="flex flex-col items-center gap-0.5">
-              <CardPreview cardId={u.cardId}>
-                <button
-                  onClick={() => onInspect(u)}
-                  onContextMenu={(e) => onContext?.(e, u, 'base')}
-                  {...dragSrc(dndOn, u.iid)}
-                  className={selectedUnits.includes(u.iid) ? 'rounded ring-2 ring-indigo-400' : ''}
-                >
-                  <BoardCard
-                    ci={u}
-                    selected={selectedUnits.includes(u.iid)}
-                    flash={cf.flash}
-                    glow={selectedUnits.includes(u.iid) ? undefined : cf.glow}
-                    dim={cf.dim}
-                    xp={me.xp}
-                  />
-                </button>
-              </CardPreview>
+              <span className="relative inline-block">
+                <CardPreview cardId={u.cardId}>
+                  <button
+                    onClick={() => onInspect(u)}
+                    onContextMenu={(e) => onContext?.(e, u, 'base')}
+                    {...dragSrc(dndOn, u.iid)}
+                    className={selectedUnits.includes(u.iid) ? 'rounded ring-2 ring-indigo-400' : ''}
+                  >
+                    <BoardCard
+                      ci={u}
+                      selected={selectedUnits.includes(u.iid)}
+                      flash={cf.flash}
+                      glow={selectedUnits.includes(u.iid) ? undefined : cf.glow}
+                      dim={cf.dim}
+                      xp={me.xp}
+                    />
+                  </button>
+                </CardPreview>
+                <GearPeek unit={u} onInspectGear={(cid) => { const c = getCard(cid); if (c) onInspectCard?.(c) }} />
+              </span>
               {movable && (
                 <button
                   onClick={() => onToggleUnit(u.iid)}

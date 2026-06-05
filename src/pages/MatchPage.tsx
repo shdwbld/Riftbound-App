@@ -134,6 +134,8 @@ export default function MatchPage() {
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending "Equip to a unit" choice for an unattached gear in base.
   const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
+  // Pending [Equip] cost payment (rune picker) once the target unit is chosen.
+  const [equipPay, setEquipPay] = useState<{ gearIid: string; unitIid: string; card: Card; cost: ResolvedCost } | null>(null)
   // Pending "Move equipment to another unit" choice (sandbox).
   const [movePick, setMovePick] = useState<{ gearIid: string; fromUnitIid: string; owner: PlayerId } | null>(null)
   // Pending play destination for a unit whose rules let it enter a battlefield.
@@ -694,12 +696,37 @@ export default function MatchPage() {
             onPick={(uid) => {
               const a = attachPick
               setAttachPick(null)
-              act({ type: 'ATTACH', player: controlling, unitIid: String(uid), gearIid: a.gearIid })
+              // Outside sandbox, the [Equip] ability has a cost. With the rune picker
+              // on and a non-rainbow cost, open PaymentModal so the player pays it
+              // explicitly; otherwise dispatch and let the engine auto-pay.
+              const gear = match.players[controlling].zones.base.find((g) => g.iid === a.gearIid)
+              const gc = gear ? getCard(gear.cardId) : null
+              const ec = gc ? parseKeywords(gc).equipCost : null
+              const hasCost = !!ec && (ec.energy > 0 || ec.anyPower > 0 || Object.keys(ec.power).length > 0)
+              if (!match.sandbox && manualPay && hasCost && ec!.anyPower === 0) {
+                setEquipPay({ gearIid: a.gearIid, unitIid: String(uid), card: gc!, cost: { energy: ec!.energy, power: ec!.power } })
+              } else {
+                act({ type: 'ATTACH', player: controlling, unitIid: String(uid), gearIid: a.gearIid })
+              }
             }}
             onCancel={() => setAttachPick(null)}
           />
         )
       })()}
+      {equipPay && (
+        <PaymentModal
+          player={match.players[controlling]}
+          card={equipPay.card}
+          cost={equipPay.cost}
+          confirmLabel="Pay & equip ▶"
+          onCancel={() => setEquipPay(null)}
+          onConfirm={(payment) => {
+            const e = equipPay
+            setEquipPay(null)
+            act({ type: 'ATTACH', player: controlling, unitIid: e.unitIid, gearIid: e.gearIid, payment })
+          }}
+        />
+      )}
       {movePick && (() => {
         const units = [...match.players[movePick.owner].zones.base, ...match.battlefields.flatMap((b) => b.units)].filter(
           (u) => u.owner === movePick.owner && getCard(u.cardId)?.type === 'unit' && u.iid !== movePick.fromUnitIid,
