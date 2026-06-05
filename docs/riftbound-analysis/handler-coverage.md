@@ -122,11 +122,17 @@ are worth **generalizing into a reusable handler** because the pool has many sib
 6. ~~**Direct `score(N)` + `on.winCombat`**~~ — **DONE**: `score` effect parsed + emitted; the
    `winCombat` self/global trigger fires after a cleared combat.
 7. ~~**Enemy-death triggers**~~ — **DONE**: the `enemyDeath` event is collected + fired.
-8. **`dealMight` + `copy` primitives** — *partial.* Marquee cases work as bespoke handlers (Strike
-   Down `strikeDown`, Mirror Image / LeBlanc `copy`); generalizing them to the long tail (~20
-   cards) remains.
-9. **Counter "unless pay N"** + conditional/aura cost-shaping — Hard Bargain, Vex, ~19 aura cards.
-   **The main remaining gap** (chain/aura-entangled).
+8. ~~**`dealMight` + `copy` primitives**~~ — **DONE.** Generic `dealMight` effect (mutual-clash
+   Challenge/Clash of Giants/Marching Orders/Gentlemen's Duel/Dragon's Rage, Last Breath,
+   Stormbringer AoE, Alpha Strike split+XP, Ezreal/Lucian self-triggers). `copy` was already
+   complete (`makeReflection`/`isCopySpell`). Deferred: Carnivorous Snapvine (on-play self-mutual),
+   Caitlyn - Patrolling (activated). Commit `0cbb148`.
+9. ~~**Counter "unless pay N"** + conditional/aura cost-shaping~~ — **DONE.** Hard Bargain
+   counter-unless-pay (mid-chain opponent-pay prompt, `94301a0`); cost-shaping Tiers 1–3 +
+   score-proximity (`45dbe12`/`bb96776`): Spoils of War, Find Your Center, Jaull-Fish, Needlessly
+   Large Yordle, Raging Firebrand, Void Drone/Drag Under (from-zone), Irelia-Graceful (targets),
+   Hextech Gauntlets (equip-Might), **Vex - Cheerless** + **Syndra - Transcendent** (in-combat
+   auras), Poppy - Paragon, Renata Glasc. Deferred: Tier 4 Ezreal - Prodigy (optional-cost aura).
 10. ~~**`discard` effect + reveal-hand**~~ — **largely DONE.** The discard *event* + self/global
     discard triggers (Flame Chompers, Jinx) ship in `bb7cb93`; opponent hand-disruption
     (`opponentHandStrip` reveal→discard/recycle/banish + `opponentDiscards`) added this pass —

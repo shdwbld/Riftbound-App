@@ -1028,7 +1028,14 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
     const gated = e.condition && !conditionMet(s, p, e, isConquer ? bfIndex : undefined, isConquer ? excess : 0)
-    if (!skipGenericApply) for (const line of applyParsed(s, p, e, isConquer ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
+    // Kha'Zix - Mutating Horror: "When I attack or defend, IF AN ENEMY UNIT IS ALONE
+    // HERE, …" — only fires when the source's battlefield has exactly one enemy unit
+    // (previously fired unconditionally).
+    const enemyAloneOk = !/if an enemy unit is alone here/i.test(ability.text) || (() => {
+      const bi = battlefieldOf(s, sourceIid ?? '')
+      return bi >= 0 && s.battlefields[bi].units.filter((u) => u.owner !== player).length === 1
+    })()
+    if (!skipGenericApply && enemyAloneOk) for (const line of applyParsed(s, p, e, isConquer ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
       s = log(s, player, `${label}: ${line}`)
       did = true
     }
@@ -3663,6 +3670,8 @@ export function deflectSurcharge(
       let d = keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect + (unitGrantedKeyword(state, u, 'deflect') ? 1 : 0) // Breakneck Mech
       // Fiora - Victorious: conditional [Deflect] while [Mighty].
       if (/while (?:i'm|i am) \[?mighty\]?,?[^.]*\[deflect/.test((def(u)?.text ?? '').toLowerCase()) && stateActive(state, u, 'mighty')) d += 1
+      // Spirit's Refuge: "Friendly buffed units have [Deflect] if they didn't already."
+      if (d === 0 && stateActive(state, u, 'buffed') && controlledPermanents(state, u.owner).some((perm) => /friendly buffed units have \[deflect\]/i.test(getCard(perm.cardId)?.text ?? ''))) d += 1
       total += d
     }
   }
