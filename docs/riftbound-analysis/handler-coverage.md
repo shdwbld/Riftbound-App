@@ -135,11 +135,13 @@ are worth **generalizing into a reusable handler** because the pool has many sib
     *cascading* the victim's own discard reactions.
 
 ## Newly surfaced (queued, not in the original 10)
-- **`[Mighty]` state** — "a unit while it has 5+ Might." Parser only has the Deathknell `wasMighty`
-  snapshot. Gaps: the live "While I'm [Mighty], I have [Deflect]/[Ganking]/[Shield]" grant (Fiora -
-  Victorious `ogn-232-298`) and a "when a unit becomes [Mighty]" trigger (Fiora - Worthy `sfd-180`,
-  Grand Duelist `sfd-205`). Needs an `isMighty` helper + a `becomesMighty` trigger event (mirror the
-  `stun` pattern; hook the Might-change sites).
+- ~~**`[Mighty]` state**~~ — **DONE (state engine, commit 97561bf).** Built a generic `STATES`
+  registry + `stateActive()` single source of truth + a `becomesState` transition trigger
+  (`refreshStates` off the reduce seam) + state-gated keyword grants. Fixed all 3 [Mighty] gaps:
+  effective-Might filters (Volibear, Kadregrin), "While I'm [Mighty] → [Deflect]/[Ganking]/[Shield]"
+  (Fiora - Victorious), and "becomes [Mighty]" payoffs (Fiora - Worthy / Grand Duelist). The registry
+  is extensible to future states; alone/buffed/inCombat predicates exist (full re-home of the combat
+  consumers is a safe follow-up).
 - **Gear-as-trigger-source** — an attached gear's "When I conquer/hold" self-trigger doesn't fire
   (blocks Last Rites delivery; `controlledPermanents` surfaces gear with its own iid, not the host's).
 - **Immortal Phoenix** `ogn-037-298` — needs a "kill a unit with a spell" trigger event (the
