@@ -65,6 +65,9 @@ export interface EngineCard {
   /** A one-shot "if it would die this turn, banish it instead" replacement
    *  (Smite). Banished instead of trashed; the death is replaced (no Deathknell). */
   banishShield?: boolean
+  /** State names active at the last refreshStates pass — for becomes-<state>
+   *  transition detection. */
+  stateSnapshot?: string[]
   /** The battlefield index this unit was at when it died, stamped just before
    *  removal so location-scoped death triggers ("deal N to all units at my
    *  battlefield" — Kog'Maw - Caustic) can resolve after the unit is gone. */
@@ -267,7 +270,7 @@ export interface MatchState {
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {
     player: PlayerId
-    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'discardReplay' | 'trashConquerReturn'
+    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'discardReplay' | 'trashConquerReturn' | 'becomesStateReady'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]

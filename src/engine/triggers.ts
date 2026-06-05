@@ -30,12 +30,14 @@ export type TriggerEvent =
   | 'recycleRune' // you recycle a rune (Sivir - Battle Mistress)
   | 'recycleCard' // you recycle one or more (non-rune) cards to your Main Deck (Karma - Channeler)
   | 'spendBuff' // you spend a buff (Fae Dragon)
+  | 'becomesState' // a unit gains a state (e.g. becomes [Mighty])
 
 /** Runtime list of all trigger events (mirrors the TriggerEvent union above) —
  *  used by the card-spec editor vocabulary so its options can't drift from the engine. */
 export const TRIGGER_EVENTS: TriggerEvent[] = [
   'play', 'conquer', 'hold', 'death', 'startOfTurn', 'attack', 'defend', 'move',
   'winCombat', 'stun', 'enemyDeath', 'discard', 'recycleRune', 'recycleCard', 'spendBuff',
+  'becomesState',
 ]
 
 export interface TriggeredAbility {
@@ -47,6 +49,9 @@ export interface TriggeredAbility {
   effect: ParsedEffect
   /** The extracted clause (for manual prompts / logging). */
   text: string
+  /** For 'becomesState' triggers: the lowercased state word captured from
+   *  'becomes [X]' (e.g. 'mighty'). Undefined for all other trigger types. */
+  stateName?: string
 }
 
 interface Pattern {
@@ -57,6 +62,10 @@ interface Pattern {
 
 // Order matters only for readability; each pattern is tested independently.
 const PATTERNS: Pattern[] = [
+  // "When one of your units becomes [Mighty]" / "When a unit you control becomes [Mighty]" — global.
+  { event: 'becomesState', scope: 'global', re: /when(?:ever)?\s+(?:a|one of your|an?)\s+(?:friendly\s+)?units?\s+(?:you\s+control\s+)?becomes?\s+\[?(\w+)\]?/i },
+  // "When I become [Mighty]" / "When this unit becomes [Mighty]" — self.
+  { event: 'becomesState', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+becomes?\s+\[?(\w+)\]?/i },
   { event: 'death', scope: 'self', re: /when(?:ever)?\s+(?:i['’]?m|i am|this(?:\s+unit)?\s+is|this(?:\s+unit)?)\s+(?:defeated|killed|destroyed|dies)/i },
   // "When another non-Recruit unit you control dies" (Viktor - Leader), "when
   // another friendly unit dies" (Spectral Centaur), "when a buffed friendly unit
@@ -145,6 +154,7 @@ export function parseTriggers(card: Card | undefined): TriggeredAbility[] {
         optional: /\bmay\b/i.test(clause),
         effect: parseEffectText(clause || text),
         text: clause || text,
+        ...(p.event === 'becomesState' && { stateName: m[1]?.toLowerCase().replace(/[\[\]]/g, '') }),
       })
     }
     // [Deathknell] keyword implies a death trigger even without explicit wording.

@@ -502,6 +502,12 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     const held = s.battlefields.filter((b) => b.controller === p.id).length
     if (held > 0) lines.push(`Drew ${drawN(p, e.drawPerBattlefield * held)} (per battlefield held).`)
   }
+  if (e.drawPerMighty) {
+    // "draw 1 for each of your [Mighty] units" (Kadregrin, Show of Strength) — counts
+    // EFFECTIVE-Mighty units in play (base + buffs + temp + gear + level).
+    const n = [...s.battlefields.flatMap((b) => b.units), ...p.zones.base].filter((u) => u.owner === p.id && stateActive(s, u, 'mighty')).length
+    if (n > 0) lines.push(`Drew ${drawN(p, e.drawPerMighty * n)} (per [Mighty] unit).`)
+  }
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
   // "Channel N rune(s) exhausted" (Soaring Scout) — the channeled runes enter exhausted.
   if (e.channelExhausted) lines.push(`Channeled ${channelN(p, e.channelExhausted, true)} (exhausted).`)
@@ -1369,7 +1375,7 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
  *  effective Energy cost paid; when a threshold is present but `cost` is unknown
  *  the trigger does NOT fire (better to under- than over-trigger). Filters we
  *  still can't parse (opponent's turn, from Hidden) are left ungated. */
-function playTriggerMatches(text: string, card: Card, cost?: number): boolean {
+function playTriggerMatches(text: string, card: Card, cost?: number, mighty?: boolean): boolean {
   const lc = text.toLowerCase()
   const f = (lc.match(/^\s*([a-z[\] ]*?)(?:\s+(?:on|from|with|that|this|here|cost)\b|[.,;]|$)/)?.[1] ?? '').trim()
   let typeOk = true
@@ -1377,7 +1383,9 @@ function playTriggerMatches(text: string, card: Card, cost?: number): boolean {
     if (f.includes('token')) typeOk = card.supertype === 'token'
     else if (f.includes('spell')) typeOk = card.type === 'spell'
     else if (f.includes('gear')) typeOk = card.type === 'gear'
-    else if (f.includes('mighty')) typeOk = isUnit(card) && card.might >= 5
+    // [Mighty] = 5+ EFFECTIVE Might: prefer the played instance's live state
+    // (`mighty`); fall back to base Might only when no instance exists (tokens).
+    else if (f.includes('mighty')) typeOk = isUnit(card) && (mighty ?? card.might >= 5)
     else if (f.includes('unit')) typeOk = card.type === 'unit'
   }
   if (!typeOk) return false
@@ -1423,7 +1431,13 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   fired = fired.filter((f) => !/on an opponent'?s turn/i.test(f.ability.text) || s.activePlayer !== player)
   // "When you play a card from [Hidden]" (Ember Monk) — only on a reveal-play.
   fired = fired.filter((f) => /\bfrom \[?hidden\]?/i.test(f.ability.text) ? fromHidden : true)
-  if (playedCard) fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost))
+  if (playedCard) {
+    // For a "play a [Mighty] unit" filter, test the live state of the played
+    // instance (effective Might, incl. buffs/gear), not its base stat.
+    const inst = isUnit(playedCard) ? findUnitAnywhere(s, exceptIid) : undefined
+    const mighty = inst ? stateActive(s, inst, 'mighty') : undefined
+    fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost, mighty))
+  }
   return fireTriggers(s, fired)
 }
 
@@ -1460,6 +1474,71 @@ function fireOpponentUnitPlay(s: MatchState, player: PlayerId, playedIid: string
  *  "you may move me") are left for manual resolution by fireTriggers. */
 function fireStun(s: MatchState, player: PlayerId): MatchState {
   return fireTriggers(s, collectGlobal(s, player, 'stun'))
+}
+
+/** Fire "when a unit becomes [<state>]" triggers (self + global) for the unit that
+ *  just crossed into `stateName`. Handles the two real becomes-[Mighty] payoffs:
+ *  Fiora - Grand Duelist ("exhaust me to channel N exhausted" — pure upside, auto)
+ *  and Fiora - Worthy ("pay <cost> to ready it" — a pendingChoice). `becameIid` is
+ *  the unit that gained the state; `owner` controls it. */
+function fireBecomesState(s: MatchState, owner: PlayerId, becameIid: string, stateName: StateName): MatchState {
+  const fired = [
+    ...collectSelf(s, owner, 'becomesState', [becameIid]),
+    ...collectGlobal(s, owner, 'becomesState'),
+  ].filter((f) => (f.ability.stateName ?? 'mighty') === stateName)
+  for (const f of fired) {
+    const txt = f.ability.text
+    const srcName = getCard(f.sourceCardId ?? '')?.name ?? 'A unit'
+    // "exhaust me to channel N rune(s) exhausted" (Grand Duelist) — auto.
+    const chM = txt.match(/exhaust me to channel (\d+|a|an|one) rune/i)
+    if (chM) {
+      const src = findUnitAnywhere(s, f.sourceIid ?? '') ?? (s.players[owner].legend?.iid === f.sourceIid ? s.players[owner].legend! : undefined)
+      if (src && !src.exhausted) {
+        src.exhausted = true
+        const n = channelN(s.players[owner], /\d/.test(chM[1]) ? parseInt(chM[1], 10) : 1, true)
+        s = log(s, owner, `${srcName}: a unit became [${stateName}] — exhausted to channel ${n} (exhausted).`)
+      }
+      continue
+    }
+    // "pay <cost> to ready it" (Fiora - Worthy) — offer to pay + ready the unit.
+    const prM = txt.match(/pay ([^.]*?) to ready it/i)
+    if (prM && !s.pendingChoice) {
+      const cost = parseCostGlyphs(prM[1])
+      const unit = findUnitAnywhere(s, becameIid)
+      if (unit && unit.exhausted && canAffordFixed(s, owner, cost.energy, cost.power)) {
+        offerChoice(s, {
+          player: owner, kind: 'becomesStateReady', bfIndex: -1,
+          prompt: `${srcName} — a unit became [${stateName}]. Pay ${costGlyphLabel(cost)} to ready it?`,
+          options: [{ iid: becameIid, label: `Pay ${costGlyphLabel(cost)} & ready` }],
+          payload: JSON.stringify(cost),
+        })
+      }
+      continue
+    }
+  }
+  return s
+}
+
+/** Transition layer: after each action, recompute every in-play unit's states and
+ *  fire becomes-<state> triggers for newly-gained states. A unit seen for the first
+ *  time (no snapshot) only establishes a baseline — it does NOT fire (so game-start
+ *  and entering already-[Mighty] don't false-trigger; buff/temp crossings do). */
+function refreshStates(s: MatchState): MatchState {
+  const units = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((p) => p.zones.base)]
+    .filter((u) => getCard(u.cardId)?.type === 'unit')
+  for (const u of units) {
+    const now = unitStateNames(s, u)
+    const first = u.stateSnapshot === undefined
+    const prev = u.stateSnapshot ?? []
+    u.stateSnapshot = now
+    if (first) continue
+    for (const st of now) {
+      if (prev.includes(st)) continue
+      s = fireBecomesState(s, u.owner, u.iid, st)
+      if (s.pendingChoice) return s // pause on the first offered choice
+    }
+  }
+  return s
 }
 
 /** In-place "When you spend a buff, …" reaction (Fae Dragon → play a Gold gear
@@ -3062,9 +3141,48 @@ function damageOutput(ci: EngineCard, role: CombatRole, xp = 0): number {
   return ci.stunned ? 0 : mightOf(ci, role, xp)
 }
 
-/** Mighty: a unit with effective Might >= 5. */
+/** Mighty: a unit with effective Might >= 5. (xp-agnostic quick check; the
+ *  xp-aware version is the `mighty` state in the registry — `stateActive`.) */
 export function isMighty(ci: EngineCard): boolean {
   return mightOf(ci) >= 5
+}
+
+/** ── State engine ──────────────────────────────────────────────────────────
+ *  A "state" is a LIVE, conditional status a unit has from game conditions —
+ *  e.g. [Mighty] = 5+ effective Might. The registry is the single source of truth
+ *  for named boolean unit-states. Card text checks them three ways: continuously
+ *  ("While I'm [Mighty], I have [Deflect]…" — see the keyword-grant re-gates),
+ *  as a transition ("When a unit becomes [Mighty], …" — see refreshStates /
+ *  fireBecomesState), and as a filter ("play a [Mighty] unit"). Housed here (not a
+ *  separate states.ts) so predicates can use mightOf/gearMight without a circular
+ *  import; the data-driven STATES array keeps it generic + extensible. */
+export type StateName = 'mighty' | 'alone' | 'buffed' | 'inCombat'
+
+interface StateDef {
+  name: StateName
+  isActive: (s: MatchState, u: EngineCard) => boolean
+}
+
+const STATES: StateDef[] = [
+  // 5+ effective Might (base + buffs + temp + gear + level; no combat-role/aura
+  // bonuses — matches the Deathknell `mightyAtDeath` snapshot).
+  { name: 'mighty', isActive: (s, u) => mightOf(u, null, s.players[u.owner]?.xp ?? 0) >= 5 },
+  // The only friendly unit at its battlefield (units in base are never "alone").
+  { name: 'alone', isActive: (s, u) => { const bi = bfIndexOfUnit(s, u.iid); return bi >= 0 && s.battlefields[bi].units.filter((x) => x.owner === u.owner).length === 1 } },
+  // Carries a +1 Might buff counter.
+  { name: 'buffed', isActive: (_s, u) => (u.buffs ?? 0) > 0 },
+  // At the battlefield of the currently-open showdown.
+  { name: 'inCombat', isActive: (s, u) => !!s.showdown && bfIndexOfUnit(s, u.iid) === s.showdown.battlefield },
+]
+
+/** Whether a unit currently has the named state (the canonical live check). */
+export function stateActive(s: MatchState, u: EngineCard, name: StateName): boolean {
+  return STATES.find((st) => st.name === name)?.isActive(s, u) ?? false
+}
+
+/** Every state a unit currently has — used by the transition pass (refreshStates). */
+function unitStateNames(s: MatchState, u: EngineCard): StateName[] {
+  return STATES.filter((st) => st.isActive(s, u)).map((st) => st.name)
 }
 
 /** A unit's current displayed Might (base + buffs + gear + temp + level âˆ’ damage). */
@@ -3396,7 +3514,9 @@ function unitGrantedKeywordHere(here: EngineCard[], u: EngineCard, keyword: stri
 function unitHasGanking(s: MatchState, u: EngineCard): boolean {
   if (u.grantGanking) return true // [Ganking] granted this turn (Vault Breaker)
   const t = (def(u)?.text ?? '').toLowerCase()
-  if (/while (?:i'm|i am) buffed,?[^.]*\[ganking\]/.test(t)) return (u.buffs ?? 0) > 0
+  if (/while (?:i'm|i am) buffed,?[^.]*\[ganking\]/.test(t)) return stateActive(s, u, 'buffed') // single-source state check
+  // Fiora - Victorious: "While I'm [Mighty], I have [Deflect], [Ganking], and [Shield]."
+  if (/while (?:i'm|i am) \[?mighty\]?,?[^.]*\[ganking\]/.test(t)) return stateActive(s, u, 'mighty')
   // Raging Soul: "If you've discarded a card this turn, I have [Assault] and [Ganking]."
   if (/if you've discarded a card this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.discardedThisTurn ?? false
   // Wily Newtfish: "If you've gained XP this turn, I have +1 Might and [Ganking]."
@@ -3453,6 +3573,8 @@ function bfCombatBonus(
     // both are just +1 Might in their combat role.
     if (role === 'defender' && (unitGrantedKeyword(s, u, 'shield') || unitGrantedKeywordHere(here, u, 'shield'))) b += 1
     if (role === 'attacker' && (unitGrantedKeyword(s, u, 'assault') || unitGrantedKeywordHere(here, u, 'assault'))) b += 1
+    // Fiora - Victorious: conditional [Shield] (+1 while defending) while [Mighty].
+    if (role === 'defender' && /while (?:i'm|i am) \[?mighty\]?,?[^.]*\[shield\]/.test((def(u)?.text ?? '').toLowerCase()) && stateActive(s, u, 'mighty')) b += 1
     return b
   }
 }
@@ -3500,7 +3622,12 @@ export function deflectSurcharge(
     const u = find(iid)
     // Deflect may be granted by a [Level N] clause (Master Yi - Tempered), so
     // resolve keywords against the unit owner's XP.
-    if (u && u.owner !== caster) total += keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect + (unitGrantedKeyword(state, u, 'deflect') ? 1 : 0) // Breakneck Mech
+    if (u && u.owner !== caster) {
+      let d = keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect + (unitGrantedKeyword(state, u, 'deflect') ? 1 : 0) // Breakneck Mech
+      // Fiora - Victorious: conditional [Deflect] while [Mighty].
+      if (/while (?:i'm|i am) \[?mighty\]?,?[^.]*\[deflect/.test((def(u)?.text ?? '').toLowerCase()) && stateActive(state, u, 'mighty')) d += 1
+      total += d
+    }
   }
   return total
 }
@@ -4171,6 +4298,8 @@ function advanceSetup(s: MatchState): EngineResult {
 export function reduce(state: MatchState, action: Action): EngineResult {
   pendingEvents = []
   const result = reduceInner(state, action)
+  // State transition pass (becomes-[Mighty] etc.) runs after every successful action.
+  if (!result.error) result.state = refreshStates(result.state)
   // Only attach events on a successful application (no error).
   if (!result.error && pendingEvents.length) result.events = pendingEvents
   return result
@@ -5043,6 +5172,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
         } else {
           s = log(s, action.player, 'Trash-return — declined.')
+        }
+        return ok(s)
+      }
+
+      // "When a unit becomes [Mighty], pay <cost> to ready it" (Fiora - Worthy).
+      // pc.payload carries the cost; the chosen iid is the unit to ready.
+      if (pc.kind === 'becomesStateReady') {
+        if (action.iid !== null && pc.payload) {
+          const cost = JSON.parse(pc.payload) as { energy: number; power: Partial<Record<Domain, number>> }
+          const unit = findUnitAnywhere(s, action.iid)
+          if (unit && payFixedCost(s, action.player, cost.energy, cost.power)) {
+            unit.exhausted = false
+            s = log(s, action.player, `Paid ${costGlyphLabel(cost)} to ready ${getCard(unit.cardId)?.name} (became [Mighty]).`)
+          }
+        } else {
+          s = log(s, action.player, 'Become-[Mighty] ready — declined.')
         }
         return ok(s)
       }

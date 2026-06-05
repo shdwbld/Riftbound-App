@@ -156,6 +156,17 @@ export function parseKeywords(card: Card | undefined): Keywords {
     const ungranted = text.replace(new RegExp(`\\b(?:units[^.\\[]*?have|give (?:it|them))\\s+\\[${kwName}[^\\]]*\\]`, 'gi'), '')
     if (!new RegExp(`\\[${kwName}[^\\]]*\\]`, 'i').test(ungranted)) kw[kwName] = 0
   }
+  // Keywords granted only by a STATE ("While I'm [Mighty], I have [Deflect],
+  // [Ganking], and [Shield]" — Fiora - Victorious) are conditional, not static.
+  // Strip them from the static set so they aren't always-on; they're re-granted at
+  // query time gated on the state (unitHasGanking / deflectSurcharge / bfCombatBonus).
+  const sg = text.match(/while (?:i'm|i am) \[[a-z]+\][^.]*\./i)
+  if (sg) {
+    const outside = text.replace(sg[0], '')
+    if (kw.deflect && /\[deflect/i.test(sg[0]) && !/\[deflect/i.test(outside)) kw.deflect = 0
+    if (kw.shield && /\[shield/i.test(sg[0]) && !/\[shield/i.test(outside)) kw.shield = 0
+    if (kw.ganking && /\[ganking\]/i.test(sg[0]) && !/\[ganking\]/i.test(outside)) kw.ganking = false
+  }
   cache.set(card.id, kw)
   return kw
 }

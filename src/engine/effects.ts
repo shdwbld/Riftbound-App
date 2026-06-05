@@ -48,6 +48,9 @@ export interface ParsedEffect {
   /** Extra cards drawn, one per battlefield the controller (or allies) control
    *  ("draw 1 for each battlefield you control" — Right of Conquest). */
   drawPerBattlefield: number
+  /** Cards drawn, one per [Mighty] unit the controller has ("draw 1 for each of
+   *  your [Mighty] units" — Kadregrin the Infernal, Show of Strength). */
+  drawPerMighty: number
   /** [Assault N] granted to the chosen unit this turn ("give a unit [Assault 4]
    *  this turn" — Square Up, Vault Breaker). 0 = none. */
   grantAssault: number
@@ -229,6 +232,7 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   ifTargetStunned: null,
   killMightMax: null,
   drawPerBattlefield: 0,
+  drawPerMighty: 0,
   grantAssault: 0,
   grantGanking: false,
   grantAssaultHere: 0,
@@ -286,7 +290,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -352,8 +356,13 @@ function parse(text: string): ParsedEffect {
   const dpbM = t.match(new RegExp(`draw ${NUM} for each battlefield (?:you|an ally)`))
   if (dpbM) { eff.drawPerBattlefield += num(dpbM[1]); hit = true }
 
+  // "draw N for each of your [Mighty] units" (Kadregrin, Show of Strength).
+  const dpmM = t.match(new RegExp(`draw ${NUM} for each (?:of your )?\\[?mighty\\]? units?`))
+  if (dpmM) { eff.drawPerMighty += num(dpmM[1]); hit = true }
+
   let tNoCond = dokM ? t.replace(dokM[0], ' ') : t
   if (dpbM) tNoCond = tNoCond.replace(dpbM[0], ' ')
+  if (dpmM) tNoCond = tNoCond.replace(dpmM[0], ' ')
 
   // The trailing \b stops "draw an" matching inside "draw any (you didn't banish)"
   // (Void Rush) and similar — a number word must end at a boundary.
