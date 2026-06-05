@@ -12,6 +12,7 @@ import {
   type CardSpecRow,
   type SpecStatus,
 } from '../lib/cardSpecs'
+import { summarizeSpec, exportAllSpecs } from '../lib/cardIntent'
 
 // The card-spec / coverage sheet: every card (incl. battlefields/legends/runes)
 // with a view button, the expanded card view, a structured editable "intended
@@ -28,16 +29,14 @@ const TYPES = ['all', 'unit', 'spell', 'gear', 'battlefield', 'legend', 'rune'] 
 
 const bare = (n: string) => n.replace(/\s*\([^)]*\)\s*$/, '')
 
-/** One-line summary of a structured spec for the table cell. */
-function summarize(spec: CardSpec | null): string {
-  if (!spec) return ''
-  const p = spec.primary
-  const bits = [p.trigger, p.cost && p.cost !== 'none' ? p.cost : '', p.effect].filter(Boolean)
-  let s = bits.join(' · ')
-  const extra = spec.actives.length + spec.passives.length
-  if (extra > 0) s += ` (+${extra})`
-  if (!s && spec.comments) s = spec.comments
-  return s
+function download(name: string, text: string) {
+  const blob = new Blob([text], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 export default function CardSpecPage() {
@@ -96,6 +95,7 @@ export default function CardSpecPage() {
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">📋 Card spec sheet</h1>
         <span className="text-xs text-white/40">{total} cards</span>
+        <button onClick={() => download('card-specs.json', exportAllSpecs(specs, CARDS))} className="ml-auto rounded bg-white/10 px-3 py-1.5 text-sm font-semibold hover:bg-white/20">Export specs</button>
       </div>
 
       {/* Coverage summary */}
@@ -144,7 +144,7 @@ export default function CardSpecPage() {
           <tbody>
             {filtered.map((c) => {
               const row = specs.get(c.id)
-              const summary = summarize(row?.spec ?? null)
+              const summary = summarizeSpec(row?.spec ?? null)
               return (
                 <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="p-2">
