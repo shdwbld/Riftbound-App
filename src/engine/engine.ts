@@ -5010,18 +5010,17 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     }
 
     case 'DETACH': {
-      const guard = requireActiveAction(state, action.player)
-      if (guard) return fail(state, guard)
+      if (!state.sandbox) { const guard = requireActiveAction(state, action.player); if (guard) return fail(state, guard) }
       const s = clone(state)
-      const p = s.players[action.player]
-      const unit = findUnitAnywhere(s, action.unitIid)
-      if (!unit || unit.owner !== action.player) return fail(state, 'No such unit of yours.')
+      const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u?.owner === action.player ? u : undefined })()
+      if (!unit) return fail(state, 'No such unit.')
       const idx = unit.attached.findIndex((a) => a.split('|')[1] === action.gearIid)
       if (idx < 0) return fail(state, 'That gear is not attached.')
       const [ref] = unit.attached.splice(idx, 1)
       const [cardId, iid] = ref.split('|')
-      // Detached gear returns to your Base as an unattached piece of gear.
-      p.zones.base.push({ iid, cardId, owner: action.player, exhausted: false, damage: 0, attached: [] })
+      // Detached gear returns to its owner's Base as an unattached piece of gear.
+      const gearOwner = state.sandbox ? unit.owner : action.player
+      s.players[gearOwner].zones.base.push({ iid, cardId, owner: gearOwner, exhausted: false, damage: 0, attached: [] })
       emit({ kind: 'buff', iid: unit.iid, player: action.player })
       return ok(log(s, action.player, `Detached ${getCard(cardId)?.name}.`))
     }
@@ -5030,16 +5029,26 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Attach an unattached piece of Equipment sitting on your Base to one of your
       // units (the [Equip] activated ability). The equip rune cost is treated as
       // free here, matching the play-time auto-attach simplification.
-      const guard = requireActiveAction(state, action.player)
-      if (guard) return fail(state, guard)
+      if (!state.sandbox) { const guard = requireActiveAction(state, action.player); if (guard) return fail(state, guard) }
       const s = clone(state)
-      const p = s.players[action.player]
-      const gIdx = p.zones.base.findIndex((g) => g.iid === action.gearIid && getCard(g.cardId)?.type === 'gear')
-      if (gIdx < 0) return fail(state, 'That gear is not on your Base.')
-      const unit = findUnitAnywhere(s, action.unitIid)
-      if (!unit || unit.owner !== action.player || getCard(unit.cardId)?.type !== 'unit')
-        return fail(state, 'Choose one of your units to equip.')
-      const [gear] = p.zones.base.splice(gIdx, 1)
+      // In sandbox, search ALL players' bases for the gear; otherwise only the acting player's.
+      let gearPlayer = action.player
+      let gIdx: number
+      if (state.sandbox) {
+        let found = false
+        for (let pi = 0; pi < s.players.length; pi++) {
+          const i = s.players[pi].zones.base.findIndex((g) => g.iid === action.gearIid && getCard(g.cardId)?.type === 'gear')
+          if (i >= 0) { gearPlayer = pi; gIdx = i; found = true; break }
+        }
+        if (!found) return fail(state, 'That gear is not on any Base.')
+      } else {
+        gIdx = s.players[action.player].zones.base.findIndex((g) => g.iid === action.gearIid && getCard(g.cardId)?.type === 'gear')
+        if (gIdx < 0) return fail(state, 'That gear is not on your Base.')
+      }
+      const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u?.owner === action.player ? u : undefined })()
+      if (!unit || getCard(unit.cardId)?.type !== 'unit')
+        return fail(state, 'Choose a unit to equip.')
+      const [gear] = s.players[gearPlayer].zones.base.splice(gIdx!, 1)
       unit.attached = [...unit.attached, `${gear.cardId}|${gear.iid}`]
       emit({ kind: 'buff', iid: unit.iid, player: action.player, cardId: gear.cardId })
       let sA = log(s, action.player, `Attached ${getCard(gear.cardId)?.name} to ${getCard(unit.cardId)?.name}.`)
@@ -5681,7 +5690,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     case 'OVERRIDE': {
       if (!state.sandbox) return fail(state, 'Manual overrides are off.')
       let s = clone(state)
-      const u = action.iid ? findUnitAnywhere(s, action.iid) : undefined
+      const u = action.iid ? (findUnitAnywhere(s, action.iid) ?? s.players.flatMap((pl) => pl.zones.runePool).find((c) => c.iid === action.iid)) : undefined
       const nm = u ? getCard(u.cardId)?.name ?? 'a unit' : ''
       switch (action.op) {
         case 'stun': if (u) u.stunned = true; break

@@ -27,7 +27,7 @@ import OverridePanel from './OverridePanel'
 import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
 
 /** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
-type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; stepper?: { title: string; make: (n: number) => Action }; openSearch?: { source: SearchSource; owner: PlayerId } }
+type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; moveGearIid?: { gearIid: string; fromUnitIid: string; owner: PlayerId }; stepper?: { title: string; make: (n: number) => Action }; openSearch?: { source: SearchSource; owner: PlayerId } }
 /** A drill-down category in the right-click menu (collapses the rest when open). */
 type MenuGroup = { label: string; items: MenuItem[] }
 import FeedbackLayer from './FeedbackLayer'
@@ -62,6 +62,8 @@ export interface MatchBoardProps {
   onActivateUnit?: (iid: string) => void
   /** Attach an unattached Equipment in base to a unit (page opens a unit picker). */
   onAttachGear?: (gearIid: string) => void
+  /** Move attached gear from one unit to another (page opens a unit picker). */
+  onMoveGear?: (gearIid: string, fromUnitIid: string, owner: PlayerId) => void
   /** Revert the last action (multi-step history lives in the page). */
   onUndo?: () => void
   /** Targeting mode: clicking a legal unit picks it as a spell target. */
@@ -151,6 +153,7 @@ export default function MatchBoard({
   onCardAction,
   onActivateUnit,
   onAttachGear,
+  onMoveGear,
   onUndo,
   targetingActive,
   legalTargets,
@@ -303,7 +306,7 @@ export default function MatchBoard({
     e.preventDefault()
     if (!onCardAction) return
     const card = getCard(ci.cardId)
-    const items: { label: string; action?: Action; activateIid?: string; attachGearIid?: string }[] = []
+    const items: MenuItem[] = []
     if (card?.type === 'unit') {
       items.push({ label: '⊘ Stun', action: { type: 'STUN_UNIT', player: perspective, iid: ci.iid } })
       items.push({ label: '⊗ Banish', action: { type: 'BANISH', player: perspective, iid: ci.iid } })
@@ -325,6 +328,13 @@ export default function MatchBoard({
         for (const ref of ci.attached) {
           const [gid, giid] = ref.split('|')
           items.push({ label: `🔓 Detach ${getCard(gid)?.name ?? 'gear'}`, action: { type: 'DETACH', player: perspective, unitIid: ci.iid, gearIid: giid } })
+        }
+        // In sandbox, also offer to move each attached gear to another unit.
+        if (match.sandbox && onMoveGear) {
+          for (const ref of ci.attached) {
+            const [gid, giid] = ref.split('|')
+            items.push({ label: `↔ Move ${getCard(gid)?.name ?? 'gear'} to a unit`, moveGearIid: { gearIid: giid, fromUnitIid: ci.iid, owner: perspective } })
+          }
         }
       }
       // Equip an unattached piece of Equipment sitting on your Base to a unit (its
@@ -424,6 +434,32 @@ export default function MatchBoard({
           { label: '◍ Cycle marker', action: ov('marker') },
           { label: '○ Clear marker', action: ov('marker', { value: -1 }) },
         )
+      }
+      // Sandbox equip / detach / move-equipment entries for cards owned by the
+      // OTHER player (the owner's own cards already show these via the owner block
+      // above; we only add here when this card belongs to the opponent).
+      if (card?.type === 'unit' && ci.owner !== perspective) {
+        // Detach each attached gear (sandbox: use ci.owner as the action player).
+        for (const ref of ci.attached) {
+          const [gid, giid] = ref.split('|')
+          items.push({ label: `🔓 Detach ${getCard(gid)?.name ?? 'gear'}`, action: { type: 'DETACH', player: ci.owner, unitIid: ci.iid, gearIid: giid } })
+        }
+        // Move each attached gear to another unit.
+        if (onMoveGear) {
+          for (const ref of ci.attached) {
+            const [gid, giid] = ref.split('|')
+            items.push({ label: `↔ Move ${getCard(gid)?.name ?? 'gear'} to a unit`, moveGearIid: { gearIid: giid, fromUnitIid: ci.iid, owner: ci.owner } })
+          }
+        }
+      }
+      // Sandbox "Equip to a unit" for opponent's unattached Equipment in base.
+      if (
+        onAttachGear && zone === 'base' && card?.type === 'gear' && card?.supertype !== 'token' &&
+        ci.owner !== perspective &&
+        (parseKeywords(card).equip || /attach (?:this|it) to a unit/i.test(card?.text ?? '')) &&
+        [...match.players[ci.owner].zones.base, ...match.battlefields.flatMap((b) => b.units)].some((u) => u.owner === ci.owner && getCard(u.cardId)?.type === 'unit')
+      ) {
+        items.push({ label: '🔗 Equip to a unit', attachGearIid: ci.iid })
       }
       // Reveal/remove a battlefield's face-down [Hidden] card (sandbox tools beyond
       // the normal "Reveal = play for 0").
@@ -805,6 +841,7 @@ export default function MatchBoard({
                 if (it.openSearch) { setSearchOverlay(it.openSearch); closeAll(); return }
                 if (it.activateIid) onActivateUnit?.(it.activateIid)
                 else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
+                else if (it.moveGearIid) onMoveGear?.(it.moveGearIid.gearIid, it.moveGearIid.fromUnitIid, it.moveGearIid.owner)
                 else if (it.action) onCardAction?.(it.action)
                 closeAll()
               }
@@ -1157,8 +1194,8 @@ function OpponentMat({
                 <button
                   onClick={() => onInspect(r)}
                   title={`${d?.name ?? 'Rune'}${r.exhausted ? ' (exhausted)' : ''}`}
-                  className={`relative w-7 shrink-0 overflow-hidden rounded border transition hover:border-white/50 ${
-                    r.exhausted ? 'opacity-40 saturate-50' : ''
+                  className={`relative w-7 shrink-0 overflow-hidden rounded border transition-all hover:border-white/50 ${
+                    r.exhausted ? 'rotate-90 opacity-40 saturate-50' : ''
                   }`}
                   style={{ aspectRatio: '744/1039', borderColor: color }}
                 >
@@ -1708,8 +1745,8 @@ function PlayerMat({
                 onClick={() => onInspect(r)}
                 onContextMenu={(e) => onContext?.(e, r, 'runePool')}
                 {...dragSrc(dndOn, r.iid)}
-                className={`relative w-9 shrink-0 overflow-hidden rounded border transition hover:border-white/50 ${
-                  r.exhausted ? 'opacity-40 saturate-50' : ''
+                className={`relative w-9 shrink-0 overflow-hidden rounded border transition-all hover:border-white/50 ${
+                  r.exhausted ? 'rotate-90 opacity-40 saturate-50' : ''
                 }`}
                 style={{ aspectRatio: '744/1039', borderColor: color }}
               >

@@ -134,6 +134,8 @@ export default function MatchPage() {
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending "Equip to a unit" choice for an unattached gear in base.
   const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
+  // Pending "Move equipment to another unit" choice (sandbox).
+  const [movePick, setMovePick] = useState<{ gearIid: string; fromUnitIid: string; owner: PlayerId } | null>(null)
   // Pending play destination for a unit whose rules let it enter a battlefield.
   const [destPick, setDestPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending optional additional-cost Pay/Skip prompt (rune-modal style).
@@ -554,6 +556,7 @@ export default function MatchPage() {
         onCardAction={(a) => act(a)}
         onActivateUnit={activateUnit}
         onAttachGear={(gearIid) => setAttachPick({ gearIid })}
+        onMoveGear={(gearIid, fromUnitIid, owner) => setMovePick({ gearIid, fromUnitIid, owner })}
         onUndo={undo}
         targetingActive={!!targeting}
         legalTargets={targeting ? activeLegalTargets().filter((id) => !targeting.picked.includes(id)) : undefined}
@@ -694,6 +697,31 @@ export default function MatchPage() {
               act({ type: 'ATTACH', player: controlling, unitIid: String(uid), gearIid: a.gearIid })
             }}
             onCancel={() => setAttachPick(null)}
+          />
+        )
+      })()}
+      {movePick && (() => {
+        const units = [...match.players[movePick.owner].zones.base, ...match.battlefields.flatMap((b) => b.units)].filter(
+          (u) => u.owner === movePick.owner && getCard(u.cardId)?.type === 'unit' && u.iid !== movePick.fromUnitIid,
+        )
+        const gearName = (() => {
+          for (const pl of match.players)
+            for (const u of [...pl.zones.base, ...match.battlefields.flatMap((b) => b.units)])
+              for (const ref of u.attached) { const [gid, giid] = ref.split('|'); if (giid === movePick.gearIid) return getCard(gid)?.name ?? 'gear' }
+          return 'gear'
+        })()
+        return (
+          <ChoiceModal
+            title="↔ Move Equipment"
+            subtitle={`Move ${gearName} to which unit?`}
+            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            onPick={(uid) => {
+              const m = movePick
+              setMovePick(null)
+              act({ type: 'DETACH', player: m.owner, unitIid: m.fromUnitIid, gearIid: m.gearIid })
+              act({ type: 'ATTACH', player: m.owner, unitIid: String(uid), gearIid: m.gearIid })
+            }}
+            onCancel={() => setMovePick(null)}
           />
         )
       })()}
