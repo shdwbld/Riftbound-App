@@ -17,6 +17,8 @@ import MatchBoard from '../components/MatchBoard'
 import CardDetailModal from '../components/CardDetailModal'
 import PaymentModal from '../components/PaymentModal'
 import PromptModal from '../components/PromptModal'
+import BugReportModal from '../components/BugReportModal'
+import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
 import VisionPrompt from '../components/VisionPrompt'
 import SetupScreen from '../components/SetupScreen'
@@ -148,6 +150,7 @@ export default function MatchPage() {
   const historyRef = useRef<MatchState[]>([])
   // The most recent {pre → action → post → events} step, for one-click bug capture.
   const lastStepRef = useRef<{ pre: MatchState; action: Action; post: MatchState; events: GameEvent[] } | null>(null)
+  const [bugOpen, setBugOpen] = useState(false)
 
   const flash = useCallback((msg: string) => {
     setToast(msg)
@@ -176,6 +179,26 @@ export default function MatchPage() {
     const prev = historyRef.current.pop()
     if (prev) setMatch(prev)
     else flash('Nothing to undo.')
+  }, [flash])
+
+  // Capture a bug: the last {pre → action → post → events} step + invariants → Supabase.
+  const submitBug = useCallback(async (note: string, severity: 'low' | 'med' | 'high') => {
+    const post = matchRef.current
+    if (!post) throw new Error('No active match.')
+    const step = lastStepRef.current
+    const id = await submitBugReport({
+      note,
+      severity,
+      mode: 'hotseat',
+      seq: post.seq,
+      preState: step?.pre ?? null,
+      action: step?.action ?? null,
+      postState: step?.post ?? post,
+      events: step?.events ?? [],
+      invariants: checkInvariants(step?.post ?? post),
+      appVersion: import.meta.env.MODE,
+    })
+    flash(`🐞 Bug ${id.slice(0, 8)} captured.`)
   }, [flash])
 
   // Global hotkeys (active during a live match).
@@ -537,7 +560,13 @@ export default function MatchPage() {
         onInspect={setInspect}
         events={lastEvents}
       />
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={() => setBugOpen(true)}
+          className="rounded bg-white/5 px-2 py-1 text-[11px] text-white/40 hover:bg-white/10"
+        >
+          🐞 Report bug
+        </button>
         <button
           onClick={() => setShowHelp(true)}
           className="rounded bg-white/5 px-2 py-1 text-[11px] text-white/40 hover:bg-white/10"
@@ -545,6 +574,7 @@ export default function MatchPage() {
           ⌨ Hotkeys (H)
         </button>
       </div>
+      {bugOpen && <BugReportModal enabled={bugCaptureEnabled} onClose={() => setBugOpen(false)} onSubmit={submitBug} />}
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
       {accelPrompt && (
         <PromptModal

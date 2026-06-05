@@ -22,6 +22,8 @@ import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } fro
 import { DOMAIN_META, type Domain } from '../types/cards'
 import PaymentModal from '../components/PaymentModal'
 import PromptModal from '../components/PromptModal'
+import BugReportModal from '../components/BugReportModal'
+import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
 import VisionPrompt from '../components/VisionPrompt'
 import DamageAssignModal from '../components/DamageAssignModal'
@@ -110,6 +112,7 @@ export default function OnlinePage() {
   const historyRef = useRef<MatchState[]>([]) // host-side undo history (pre-action states)
   // The most recent {pre → action → post → events} step, for one-click bug capture (host-side).
   const lastStepRef = useRef<{ pre: MatchState; action: Action; post: MatchState; events: GameEvent[] } | null>(null)
+  const [bugOpen, setBugOpen] = useState(false)
   const roleRef = useRef<Role>('host')
   const myDeckRef = useRef<Deck | null>(null)
   const clientIdRef = useRef<string>(makeClientId())
@@ -422,6 +425,26 @@ export default function OnlinePage() {
     }
   }
 
+  // Capture a bug: the last {pre → action → post → events} step + invariants → Supabase.
+  const submitBug = async (note: string, severity: 'low' | 'med' | 'high') => {
+    const post = matchRef.current
+    if (!post) throw new Error('No active match.')
+    const step = lastStepRef.current
+    const id = await submitBugReport({
+      note,
+      severity,
+      mode: 'online',
+      seq: post.seq,
+      preState: step?.pre ?? null,
+      action: step?.action ?? null,
+      postState: step?.post ?? post,
+      events: step?.events ?? [],
+      invariants: checkInvariants(step?.post ?? post),
+      appVersion: import.meta.env.MODE,
+    })
+    flash(`🐞 Bug ${id.slice(0, 8)} captured.`)
+  }
+
   // --- render ---
   if (status === 'lobby')
     return (
@@ -718,6 +741,13 @@ export default function OnlinePage() {
             >
               {match.sandbox ? '🛠 Overrides: ON' : '🛠 Overrides'}
             </button>
+            <button
+              onClick={() => setBugOpen(true)}
+              title="Report a bug — captures the last action + game state"
+              className="rounded bg-white/5 px-2 py-1 text-xs font-semibold text-white/50 hover:bg-white/10"
+            >
+              🐞 Report bug
+            </button>
             <span className={`rounded px-2 py-1 text-xs ${myTurn ? 'bg-emerald-500/20 text-emerald-200' : 'bg-white/5 text-white/50'}`}>
               {myTurn ? 'Your move' : `${match.players[controlling].name}'s move`}
             </span>
@@ -925,6 +955,7 @@ export default function OnlinePage() {
           }}
         />
       )}
+      {bugOpen && <BugReportModal enabled={bugCaptureEnabled} onClose={() => setBugOpen(false)} onSubmit={submitBug} />}
       {toast && <Toast text={toast} />}
     </div>
   )
