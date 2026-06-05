@@ -1082,6 +1082,25 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       }
       handled = true
     }
+    // Generic self-dealer "deal damage equal to my Might/[Assault] to an enemy here"
+    // on attack OR defend (Ezreal - Dashing; Lucian - Gunslinger uses [Assault]).
+    // Yasuo/Kha'Zix are handled by name above (handled=true), so they don't re-fire.
+    if (!handled && sourceIid && (ability.event === 'attack' || ability.event === 'defend') && ability.effect.dealMight?.dealer === 'self') {
+      const dm = ability.effect.dealMight
+      const bi = battlefieldOf(s, sourceIid)
+      const self = bi >= 0 ? s.battlefields[bi].units.find((u) => u.iid === sourceIid) : undefined
+      if (self) {
+        const amt = dm.useStat === 'assault'
+          ? parseKeywords(getCard(self.cardId)).assault + (self.grantAssault ?? 0)
+          : combatMightAt(s, bi, self, ability.event === 'attack' ? 'attacker' : 'defender')
+        const target = pickEnemyToDamage(s.battlefields[bi].units, player, amt)
+        if (target && amt > 0) {
+          s = log(s, player, `${label}: ${srcName} dealt ${amt} to ${getCard(target.cardId)?.name}.`)
+          s = fireDeaths(s, applyTargetDamage(s, target.iid, amt, true, player))
+        }
+      }
+      handled = true
+    }
     if (ability.event === 'attack' && sourceIid && srcName === 'Warwick - Hunter') {
       // "When I attack, kill all damaged enemy units here."
       const bi = battlefieldOf(s, sourceIid)
@@ -3932,6 +3951,62 @@ function resolveSpellEffects(
       s = log(s, controller, `${card.name} fizzled — need an equipped friendly unit and an enemy.`)
     }
     return s
+  }
+
+  // Generic "deal damage equal to Might/Assault" spells (Challenge, Clash of Giants,
+  // Marching Orders, Gentlemen's Duel, Dragon's Rage, Last Breath, Stormbringer,
+  // Alpha Strike). Self-dealer trigger cards (Ezreal/Lucian/Snapvine) resolve via the
+  // combat/on-play handlers, not here.
+  if (e.dealMight && e.dealMight.dealer !== 'self') {
+    const dm = e.dealMight
+    const isUnitCard = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
+    const friendlies = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === controller && isUnitCard(u))
+    const enemiesAll = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== controller && isUnitCard(u))
+    const statOf = (u: EngineCard) => dm.useStat === 'assault'
+      ? parseKeywords(getCard(u.cardId)).assault + (u.grantAssault ?? 0)
+      : mightOf(u, null, s.players[u.owner]?.xp ?? 0)
+    const chosen = (own: boolean) => (targets ?? []).map((t) => findUnitAnywhere(s, t)).find((u) => !!u && (own ? u.owner === controller : u.owner !== controller))
+    const dealer = chosen(true) ?? friendlies.sort((a, b) => statOf(b) - statOf(a))[0]
+    if (!dealer) return log(s, controller, `${card.name} fizzled — no friendly unit.`)
+    const amt = statOf(dealer)
+    if (dm.target === 'mutual') {
+      const foe = chosen(false) ?? enemiesAll.sort((a, b) => statOf(b) - statOf(a))[0]
+      if (!foe) return log(s, controller, `${card.name} fizzled — no enemy unit.`)
+      const foeAmt = statOf(foe)
+      const dead = [...applyTargetDamage(s, foe.iid, amt, true, controller), ...applyTargetDamage(s, dealer.iid, foeAmt, true, controller)]
+      s = log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} (${amt}) and ${getCard(foe.cardId)?.name} (${foeAmt}) clash.`)
+      return fireDeaths(s, dead)
+    }
+    if (dm.target === 'allEnemiesAtBf' || dm.target === 'splitAllEnemies') {
+      const bf = s.battlefields.map((b, i) => ({ i, foes: b.units.filter((u) => u.owner !== controller && isUnitCard(u)) })).filter((x) => x.foes.length).sort((a, b) => b.foes.length - a.foes.length)[0]
+      if (!bf) return log(s, controller, `${card.name} fizzled — no enemies.`)
+      const dead: EngineCard[] = []
+      if (dm.target === 'allEnemiesAtBf') {
+        for (const foe of [...bf.foes]) dead.push(...applyTargetDamage(s, foe.iid, amt, true, controller))
+      } else {
+        let rem = amt // split to kill as many as possible (lowest effective Might first)
+        for (const foe of [...bf.foes].sort((a, b) => mightOf(a) - mightOf(b))) {
+          if (rem <= 0) break
+          const give = Math.min(rem, Math.max(1, mightOf(foe)))
+          dead.push(...applyTargetDamage(s, foe.iid, give, true, controller))
+          rem -= give
+        }
+      }
+      const kills = dead.length
+      s = fireDeaths(s, dead)
+      if (dm.side === 'gainXpPerKill' && kills > 0) { s.players[controller].xp += kills; s.players[controller].xpGainedThisTurn = true; s = log(s, controller, `${card.name}: gained ${kills} XP.`) }
+      if (dm.side === 'move' && battlefieldOf(s, dealer.iid) < 0) {
+        const moved = pluckCardAnywhere(s, dealer.iid)
+        if (moved) { s.battlefields[bf.i].units.push(moved); recomputeControllers(s) }
+      }
+      return log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} dealt ${amt} to ${bf.foes.length} enemy unit(s).`)
+    }
+    // singleEnemy: "(ready a friendly unit.) It deals damage equal to its Might to an enemy."
+    const foe = chosen(false) ?? pickEnemyToDamage(enemiesAll, controller, amt) ?? enemiesAll.sort((a, b) => statOf(b) - statOf(a))[0]
+    if (!foe) return log(s, controller, `${card.name} fizzled — no enemy unit.`)
+    if (/ready a friendly unit/i.test(card.text ?? '')) { const d = findUnitAnywhere(s, dealer.iid); if (d) d.exhausted = false }
+    s = log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} dealt ${amt} to ${getCard(foe.cardId)?.name}.`)
+    return fireDeaths(s, applyTargetDamage(s, foe.iid, amt, true, controller))
   }
 
   // Untargeted parts (draw / channel / recruit) always resolve.

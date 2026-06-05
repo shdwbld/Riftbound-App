@@ -81,6 +81,14 @@ export interface ParsedEffect {
   /** Strike Down: a chosen equipped friendly unit deals damage equal to its Might
    *  to an enemy, then detaches an Equipment. Hand-resolved with auto-targets. */
   strikeDown: boolean
+  /** Generic "deal damage equal to Might" (`dealMight`). `dealer`: the source unit
+   *  ('self' — trigger cards), a chosen friendly, or any chosen unit. `target`:
+   *  one enemy / all enemies at a bf / split among enemies / mutual (the two chosen
+   *  units trade simultaneously). `useStat`: 'might' or 'assault' (Lucian). `side`:
+   *  a follow-up ('move' the dealer there / 'gainXpPerKill'). Covers Challenge,
+   *  Clash of Giants, Marching Orders, Gentlemen's Duel, Dragon's Rage, Last Breath,
+   *  Stormbringer, Alpha Strike, Carnivorous Snapvine, Ezreal/Lucian triggers. */
+  dealMight: { dealer: 'self' | 'chosenFriendly' | 'chosenAny'; target: 'singleEnemy' | 'allEnemiesAtBf' | 'splitAllEnemies' | 'mutual'; useStat: 'might' | 'assault'; side: 'move' | 'gainXpPerKill' | null } | null
   /** Number of your runes to ready (un-exhaust) — "ready up to N (friendly) runes"
    *  (Sona - Harmonious, Annie - Dark Child). */
   readyRunes: number
@@ -242,6 +250,7 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   readyAllUnits: false,
   readyOrExhaustLegend: false,
   strikeDown: false,
+  dealMight: null,
   goldTokens: 0,
   namedToken: null,
   readyUnits: 0,
@@ -449,6 +458,25 @@ function parse(text: string): ParsedEffect {
   // Strike Down: "choose an equipped friendly unit. It deals damage equal to its
   // Might to an enemy unit. Then detach an Equipment from it."
   if (/choose an equipped friendly unit\.[\s\S]*deals damage equal to its might[\s\S]*then detach/.test(t)) { eff.strikeDown = true; hit = true }
+  // Generic "deal damage equal to Might/Assault" (everything except Strike Down).
+  const dmM = !eff.strikeDown ? t.match(/deals? damage equal to (?:its|my|their|our) (\[?assault\]?|mights?)/) : null
+  if (dmM) {
+    const useStat: 'might' | 'assault' = /assault/.test(dmM[1]) ? 'assault' : 'might'
+    const target: 'singleEnemy' | 'allEnemiesAtBf' | 'splitAllEnemies' | 'mutual' =
+      /to each other|to one another|mights? to each other/.test(t) || /\bwe deal\b/.test(t) ? 'mutual'
+        : /split among/.test(t) ? 'splitAllEnemies'
+          : /to all enemy units/.test(t) ? 'allEnemiesAtBf'
+            : 'singleEnemy'
+    const dealer: 'self' | 'chosenFriendly' | 'chosenAny' =
+      /equal to my (?:\[?assault\]?|mights?)|\bwe deal\b/.test(t) ? 'self'
+        : /choose two units/.test(t) ? 'chosenAny'
+          : 'chosenFriendly'
+    const side: 'move' | 'gainXpPerKill' | null =
+      /then,? do this: move|then move your unit there|move your unit there/.test(t) ? 'move'
+        : /for each (?:unit|enemy) this kills/.test(t) ? 'gainXpPerKill' : null
+    eff.dealMight = { dealer, target, useStat, side }
+    hit = true
+  }
   const readyM = t.match(/\bready (?:up to )?(a|an|another|target|one|two|three|\d+)\b[^.]*?\bunits?\b/i)
   if (readyM && !/\b(?:a|an) ready\b/.test(t)) {
     const w = readyM[1].toLowerCase()
