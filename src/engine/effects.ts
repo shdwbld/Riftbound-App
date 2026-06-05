@@ -220,7 +220,7 @@ export interface ParsedEffect {
    *  needs the relevant battlefield's index, supplied at the trigger site.
    *  `xpAtLeast` gates a `[Level N][>]` effect on the controller's XP (Wuju
    *  Apprentice — "[Level 6][>] … draw 1"). */
-  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast' | 'excessAtLeast' | 'controlsTribe' | 'allTribeTags' | 'wasMighty' | 'diedAlone' | 'diedNotAlone'; value: number; tag?: string } | null
+  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast' | 'excessAtLeast' | 'controlsTribe' | 'allTribeTags' | 'wasMighty' | 'diedAlone' | 'diedNotAlone' | 'oppScoreWithin'; value: number; tag?: string } | null
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
@@ -351,6 +351,10 @@ function parse(text: string): ParsedEffect {
   if (/if i was[^.]*mighty/.test(t) || /if i was\s*,/.test(t)) eff.condition = { kind: 'wasMighty', value: 5 }
   if (/if i did(?:n'?t| not) die alone/.test(t)) eff.condition = { kind: 'diedNotAlone', value: 0 }
   else if (/if i died alone/.test(t)) eff.condition = { kind: 'diedAlone', value: 0 }
+  // "if an opponent's score is within N points of the Victory Score, <effect>"
+  // (Poppy - Paragon's ready+XP). Gates the whole effect via conditionMet.
+  const oppScoreM = t.match(/if an opponent'?s score is within (\d+) points? of the victory score,/)
+  if (oppScoreM) eff.condition = { kind: 'oppScoreWithin', value: parseInt(oppScoreM[1], 10) }
   // "+N Might … for each of the following tags … Bird … Poro" (Friendship) — the
   // chosen target's temp-Might is multiplied by the live distinct-tribe count.
   if (/for each of the following tags[^.]*?\bporo\b/.test(t)) eff.tribeTagCount = true

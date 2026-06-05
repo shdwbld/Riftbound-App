@@ -389,6 +389,8 @@ function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: 
   }
   // "if you assigned N+ excess damage" — supplied by the conquer trigger site.
   if (e.condition.kind === 'excessAtLeast') return excess >= e.condition.value
+  // "if an opponent's score is within N of the Victory Score" (Poppy - Paragon).
+  if (e.condition.kind === 'oppScoreWithin') return opponentScoreWithin(s, p.id, e.condition.value)
   // [Level N][>] gate — the controller must have N+ XP (Wuju Apprentice).
   if (e.condition.kind === 'xpAtLeast') return p.xp >= e.condition.value
   const hand = p.zones.hand.length
@@ -2772,6 +2774,8 @@ export function beginTurn(state: MatchState): MatchState {
   p.azirSwappedThisTurn = false
   p.pool = { energy: 0, power: {} }
   p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
+  p.holdPointsThisTurn = 0 // Needlessly Large Yordle's per-hold-point discount
+  p.nextSpellCostDiscount = 0 // Raging Firebrand's "next spell costs N less"
   p.grantRepeatNextSpell = false
   s.unitDiedThisTurn = false // reset the "a unit died this turn" gate
 
@@ -3108,6 +3112,12 @@ function eliminate(state: MatchState, player: PlayerId, reason: string): MatchSt
  *  restricted: it only counts if the player controls ALL battlefields that
  *  turn — otherwise they draw a card instead of scoring it. Hold/Burn-Out
  *  points are unrestricted. */
+/** Whether any (live) opponent's score is within `n` points of the Victory Score
+ *  (Leona - Zealot, Find Your Center, Poppy - Paragon). */
+function opponentScoreWithin(s: MatchState, player: PlayerId, n: number): boolean {
+  return s.players.some((pl, i) => i !== player && !pl.out && s.pointsToWin - pl.points <= n)
+}
+
 function awardPoints(
   s: MatchState,
   player: PlayerId,
@@ -3129,6 +3139,7 @@ function awardPoints(
     )
   }
   p.points += amount
+  if (kind === 'hold') p.holdPointsThisTurn = (p.holdPointsThisTurn ?? 0) + amount // Needlessly Large Yordle
   emit({ kind: 'score', player, amount })
   if (kind === 'conquer') emit({ kind: 'conquer', player })
   let next = log(s, player, `${p.name} ${reason} (+${amount}).`)
@@ -4755,6 +4766,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(e)) // Lillia: token-unit play synergy
           // Fizz - Trickster: "When you play me, you may play a spell from your trash…"
           if (e.playSpellFromTrash) s1 = replaySpellFromTrash(s1, action.player, e.playSpellFromTrash, ambushBf ?? -1)
+          // Raging Firebrand: "the next spell you play this turn costs N less."
+          const rfM = (card.text ?? '').toLowerCase().match(/the next spell you play this turn costs :rb_energy_(\d+): less/)
+          if (rfM) s1.players[action.player].nextSpellCostDiscount = parseInt(rfM[1], 10)
         } else {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
         }
@@ -4916,6 +4930,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s1)
       }
       emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
+      s.players[action.player].nextSpellCostDiscount = 0 // Raging Firebrand: the discount applied to THIS spell's cost; consumed now
       s.chain.push({
         id: makeChainId(),
         kind: 'spell',
@@ -5011,6 +5026,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       p.zones.base.splice(idx, 1) // token ceases to exist (no Trash)
       if (!p.pool) p.pool = { energy: 0, power: {} }
       p.pool.power[action.domain] = (p.pool.power[action.domain] ?? 0) + 1
+      // Renata Glasc - Chem-Baroness: "While your score is within 3 of the Victory
+      // Score, your Gold [ADD] an additional 1 Energy."
+      const renata = controlledPermanents(s, action.player).some((perm) => /your gold \[?add\]?[^.]*additional :rb_energy_1:/i.test(getCard(perm.cardId)?.text ?? ''))
+      if (renata && s.pointsToWin - p.points <= 3) { p.pool.energy += 1; return ok(log(s, action.player, `Cashed in Gold for 1 ${action.domain} Power + 1 Energy (Renata).`)) }
       return ok(log(s, action.player, `Cashed in Gold for 1 ${action.domain} Power.`))
     }
 

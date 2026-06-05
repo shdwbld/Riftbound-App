@@ -128,6 +128,12 @@ export interface PlayerState {
   azirSwappedThisTurn?: boolean
   /** Extra Energy non-token units cost to play this turn (Vaults of Helia). */
   unitCostBump?: number
+  /** Points scored from HOLDING battlefields this turn (Needlessly Large Yordle's
+   *  per-point cost reduction). Cleared at turn start. */
+  holdPointsThisTurn?: number
+  /** Energy discount on the NEXT spell played this turn (Raging Firebrand). Read by
+   *  effectiveCostOf; reset to 0 after the next spell is played. */
+  nextSpellCostDiscount?: number
   /** Set when a battlefield (The Academy) grants the next spell [Repeat] equal
    *  to its base cost; consumed by the next spell played. */
   grantRepeatNextSpell?: boolean

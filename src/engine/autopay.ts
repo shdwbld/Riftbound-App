@@ -94,6 +94,35 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card)
     if (oppHasStunned) energy -= Number(monchM[1])
   }
 
+  // Spoils of War: "If an enemy unit has died this turn, this costs N less."
+  const spoilsM = t.match(/if an enemy unit has died this turn, this costs :rb_energy_(\d+): less/)
+  if (spoilsM && state.unitDiedThisTurn) energy -= Number(spoilsM[1])
+
+  // Find Your Center: "If an opponent's score is within N of the Victory Score, this costs M less."
+  const fycM = t.match(/if an opponent'?s score is within (\d+) points? of the victory score, this costs :rb_energy_(\d+): less/)
+  if (fycM && state.players.some((pl, i) => i !== player && !pl.out && state.pointsToWin - pl.points <= Number(fycM[1]))) energy -= Number(fycM[2])
+
+  // Jaull-Fish: "I cost N less for each of your [Mighty] units." Mighty ~ effective
+  // Might >= 5 (base + buffs + temp − damage; gear/level omitted to avoid a circular
+  // import of mightOf — a small approximation).
+  const jaullM = t.match(/i cost :rb_energy_(\d+): less for each of your \[?mighty\]? units?/)
+  if (jaullM) {
+    const mighty = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)].filter((u) => {
+      const d = getCard(u.cardId)
+      return u.owner === player && d?.type === 'unit' && (d.might + (u.buffs ?? 0) + (u.tempMight ?? 0) - u.damage) >= 5
+    }).length
+    energy -= Number(jaullM[1]) * mighty
+  }
+
+  // Needlessly Large Yordle: "I cost N less for each point you scored from holding
+  // this turn." (Energy portion; an additional Power-per-point is left as printed.)
+  const yordleM = t.match(/i cost :rb_energy_(\d+):(?::rb_rune_[a-z]+:)? less for each point you scored from holding this turn/)
+  if (yordleM) energy -= Number(yordleM[1]) * (p.holdPointsThisTurn ?? 0)
+
+  // Raging Firebrand's gift: "the next spell you play this turn costs N less." Read
+  // here; consumed (reset to 0) in PLAY_SPELL after the spell is played.
+  if (card.type === 'spell' && (p.nextSpellCostDiscount ?? 0) > 0) energy -= p.nextSpellCostDiscount ?? 0
+
   // Flat unconditional "I cost N less" — but not the for-each / conditional /
   // play-from-elsewhere variants handled above (incl. Monch). [Legion] gates it on
   // having already played a card this turn (Noxus Hopeful).
