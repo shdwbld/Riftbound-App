@@ -130,6 +130,14 @@ export interface ParsedEffect {
    *  to your hand" — Morbid Return, Cemetery Attendant). `type` filters the trash
    *  by card type ('card' = any). Resolves by returning the highest-cost match. */
   returnFromTrash: { type: 'unit' | 'spell' | 'gear' | 'card'; count: number } | null
+  /** Opponent hand disruption — "choose an opponent. They reveal their hand. Choose
+   *  a [non-unit] card from it, and they discard / recycle / banish it." Mindsplitter
+   *  (trash), Sabotage (deck/recycle, non-unit), Ashe - Focused (banish). Auto-picks
+   *  the highest-cost matching card from the opponent holding the most cards. */
+  opponentHandStrip: { to: 'trash' | 'deck' | 'banish'; nonUnit: boolean } | null
+  /** "Choose a player/opponent. They discard N." — the opponent loses N cards of
+   *  THEIR choice (auto: their lowest-cost). Bewitching Spirit. */
+  opponentDiscards: number
   /** Play a UNIT from your trash into play (base), ignoring its cost — Soulgorger,
    *  The Harrowing, Spectral Matron, Glasc Mixologist. Optional cost cap
    *  (≤maxEnergy Energy / ≤maxPower Power). Resolves to the highest-cost qualifier.
@@ -249,6 +257,8 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   deathShield: false,
   banishOnDeath: false,
   returnFromTrash: null,
+  opponentHandStrip: null,
+  opponentDiscards: 0,
   playUnitFromTrash: null,
   playUnitFromHand: null,
   playSpellFromTrash: null,
@@ -276,7 +286,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -543,6 +553,19 @@ function parse(text: string): ParsedEffect {
     eff.returnFromTrash = { type, count }
     hit = true
   }
+  // Opponent hand disruption — "They reveal their hand. Choose a [non-unit] card
+  // from it, and they discard / recycle / banish it" (Mindsplitter → trash, Sabotage
+  // → deck, Ashe - Focused → banish). Auto-picks the highest-cost match.
+  const ohsM = t.match(/they reveal their hand\.?[\s\S]*?choose (?:a|an) (non-unit )?card[\s\S]*?(?:they discard|recycle|banish)/)
+  if (ohsM) {
+    const to: 'trash' | 'deck' | 'banish' = /recycle (?:that card|it)/.test(t) ? 'deck' : /banish (?:that card|it)\b/.test(t) ? 'banish' : 'trash'
+    eff.opponentHandStrip = { to, nonUnit: !!ohsM[1] }
+    hit = true
+  }
+  // "Choose a player/opponent. They discard N." — opponent's own choice (Bewitching
+  // Spirit). Distinct from self-discard (e.discard) and the strip above.
+  const odM = !ohsM ? t.match(/(?:choose (?:a player|an opponent)[\s\S]*?)?they discard (\d+|a|an|one)\b/) : null
+  if (odM) { eff.opponentDiscards += num(odM[1]); hit = true }
   // Play a unit from your trash, ignoring its cost (Soulgorger, The Harrowing,
   // Spectral Matron, Glasc Mixologist). Optional "no more than :rb_energy_N:
   // and no more than :rb_rune_*:" cost cap.

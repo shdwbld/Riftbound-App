@@ -113,16 +113,37 @@ are worth **generalizing into a reusable handler** because the pool has many sib
    "kill-a-friendly → Might≤killed+1" ceiling is unmodeled, and Last Rites' *delivery* (firing from
    an attached gear's conquer/hold) is blocked on the separate **gear-as-trigger-source** item. See
    [playfrom-research.md](playfrom-research.md).
-3. **Replacement / "would die" layer** (heal / recall / prevent) — gap-matrix #6; the only
-   fully-missing KIND; unlocks Sett, Zhonya's, Guardian Angel + ~16 cards.
-4. **Stun triggers + "if target stunned"** — gap-matrix #3 (4 decks).
-5. **Move an enemy unit to a chosen battlefield** — gap-matrix #7; extend `moveUnit` past the
-   Charm case to the move family's enemy/with variants.
-6. **Direct `score(N)` + `on.winCombat`** — gap-matrix #8.
-7. **Enemy-death triggers** (`on.death.enemy`) — gap-matrix #5.
-8. **`dealMight` + `copy` primitives** — generalize the bespoke handlers above (~20 cards).
+3. ~~**Replacement / "would die" layer**~~ — **DONE** (`tryRecallInsteadOfDeath` + `deathShield`
+   + `banishOnDeath`): Zhonya's, Soraka, Guardian Angel, Sett, Smite.
+4. ~~**Stun triggers + "if target stunned"**~~ — **DONE**: `ifTargetStunned` ('bounce'/'kill')
+   parsed + `fireStun` "when you stun" wired at the spell/ability stun sites.
+5. ~~**Move an enemy unit to a chosen battlefield**~~ — **DONE**: `moveToBf` parse + a `pendingChoice`
+   destination pick (Charm and the move family's enemy/with variants).
+6. ~~**Direct `score(N)` + `on.winCombat`**~~ — **DONE**: `score` effect parsed + emitted; the
+   `winCombat` self/global trigger fires after a cleared combat.
+7. ~~**Enemy-death triggers**~~ — **DONE**: the `enemyDeath` event is collected + fired.
+8. **`dealMight` + `copy` primitives** — *partial.* Marquee cases work as bespoke handlers (Strike
+   Down `strikeDown`, Mirror Image / LeBlanc `copy`); generalizing them to the long tail (~20
+   cards) remains.
 9. **Counter "unless pay N"** + conditional/aura cost-shaping — Hard Bargain, Vex, ~19 aura cards.
-10. **`discard` effect + reveal-hand** — Mindsplitter family + on-discard trigger event.
+   **The main remaining gap** (chain/aura-entangled).
+10. ~~**`discard` effect + reveal-hand**~~ — **largely DONE.** The discard *event* + self/global
+    discard triggers (Flame Chompers, Jinx) ship in `bb7cb93`; opponent hand-disruption
+    (`opponentHandStrip` reveal→discard/recycle/banish + `opponentDiscards`) added this pass —
+    Mindsplitter, Sabotage, Ashe - Focused (core), Bewitching Spirit. Deferred riders: Insightful
+    Investigator's "pay 2 XP" gate, Ashe's "when they hold, return it", and forced-discard
+    *cascading* the victim's own discard reactions.
+
+## Newly surfaced (queued, not in the original 10)
+- **`[Mighty]` state** — "a unit while it has 5+ Might." Parser only has the Deathknell `wasMighty`
+  snapshot. Gaps: the live "While I'm [Mighty], I have [Deflect]/[Ganking]/[Shield]" grant (Fiora -
+  Victorious `ogn-232-298`) and a "when a unit becomes [Mighty]" trigger (Fiora - Worthy `sfd-180`,
+  Grand Duelist `sfd-205`). Needs an `isMighty` helper + a `becomesMighty` trigger event (mirror the
+  `stun` pattern; hook the Might-change sites).
+- **Gear-as-trigger-source** — an attached gear's "When I conquer/hold" self-trigger doesn't fire
+  (blocks Last Rites delivery; `controlledPermanents` surfaces gear with its own iid, not the host's).
+- **Immortal Phoenix** `ogn-037-298` — needs a "kill a unit with a spell" trigger event (the
+  alt-cost play-from-trash helper is already in place).
 
 ## Using / regenerating
 The dataset was produced by a throwaway env-gated generator (`GEN_COVERAGE=1 npx vitest run`

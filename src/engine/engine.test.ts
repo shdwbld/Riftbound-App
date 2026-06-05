@@ -1126,6 +1126,56 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.trash.some((x) => x.iid === rocket.iid)).toBe(false)
   })
 
+  it('opponent hand-strip (Mindsplitter): reveal + discard the highest-cost card', () => {
+    const stripper = injectCard('mindsplit-t', 'When you play me, choose an opponent. They reveal their hand. Choose a card from it, and they discard that card.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const cheap = injectCard('strip-cheap-t', 'x', { type: 'unit', energy: 1, power: {}, might: 1 })
+    const pricey = injectCard('strip-pricey-t', 'x', { type: 'unit', energy: 6, power: {}, might: 6 })
+    const s = baseState()
+    s.players[1].zones.hand.push(mk(cheap, 1), mk(pricey, 1))
+    const u = mk(stripper, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.trash.some((x) => x.cardId === pricey)).toBe(true) // highest-cost discarded
+    expect(r.state.players[1].zones.hand.some((x) => x.cardId === cheap)).toBe(true) // cheap kept
+  })
+
+  it('opponent hand-strip (Sabotage): recycle the highest-cost NON-UNIT to deck, keep units', () => {
+    const sab = injectCard('sabotage-t', 'When you play me, choose an opponent. They reveal their hand. Choose a non-unit card from it, and recycle that card.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const bigUnit = injectCard('sab-unit-t', 'x', { type: 'unit', energy: 9, power: {}, might: 9 })
+    const spell = injectCard('sab-spell-t', 'Draw 1.', { type: 'spell', energy: 4, power: {} })
+    const s = baseState()
+    s.players[1].zones.hand.push(mk(bigUnit, 1), mk(spell, 1))
+    const u = mk(sab, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.mainDeck.some((x) => x.cardId === spell)).toBe(true) // non-unit recycled to deck
+    expect(r.state.players[1].zones.hand.some((x) => x.cardId === bigUnit)).toBe(true) // unit kept (non-unit filter)
+    expect(r.state.players[1].zones.trash.some((x) => x.cardId === spell)).toBe(false) // recycled, not trashed
+  })
+
+  it('opponentDiscards (Bewitching Spirit): opponent discards their lowest-cost card', () => {
+    const bew = injectCard('bewitch-t', 'When you play me, choose a player. They discard 1.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const cheap = injectCard('bw-cheap-t', 'x', { type: 'unit', energy: 1, power: {}, might: 1 })
+    const pricey = injectCard('bw-pricey-t', 'x', { type: 'unit', energy: 7, power: {}, might: 7 })
+    const s = baseState()
+    s.players[1].zones.hand.push(mk(pricey, 1), mk(cheap, 1))
+    const u = mk(bew, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.trash.some((x) => x.cardId === cheap)).toBe(true) // lowest-cost discarded
+    expect(r.state.players[1].zones.hand.some((x) => x.cardId === pricey)).toBe(true) // pricey kept
+  })
+
+  it('opponent-strip: real cards parse correctly (Mindsplitter / Sabotage / Bewitching Spirit)', async () => {
+    const { onPlayEffect, spellEffect } = await import('./effects')
+    expect(onPlayEffect(CARD_INDEX['ogn-192-298']).opponentHandStrip).toEqual({ to: 'trash', nonUnit: false }) // Mindsplitter
+    expect(spellEffect(CARD_INDEX['ogn-156-298']).opponentHandStrip).toEqual({ to: 'deck', nonUnit: true }) // Sabotage
+    expect(onPlayEffect(CARD_INDEX['unl-121-219']).opponentDiscards).toBe(1) // Bewitching Spirit
+  })
+
   it("Zhonya's Hourglass: an equipped unit that would die is healed + recalled; the gear dies", () => {
     const s = baseState()
     s.sandbox = true

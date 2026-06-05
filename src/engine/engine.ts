@@ -573,6 +573,46 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     }
     if (n) lines.push(`Returned ${n} ${type === 'card' ? 'card' : type}(s) from trash to hand.`)
   }
+  if (e.opponentHandStrip) {
+    // Opponent reveals hand; you strip the highest-cost (non-unit, for Sabotage)
+    // card to trash / deck (recycle) / banish (Mindsplitter, Sabotage, Ashe). Auto-
+    // picks the opponent holding the most cards. NOTE: a forced discard here does NOT
+    // cascade the victim's own "when you discard" reactions (applyParsed can't fire
+    // the log-cloning trigger pass) — only discardedThisTurn is set.
+    const { to, nonUnit } = e.opponentHandStrip
+    const foe = s.players
+      .filter((pl) => pl.id !== p.id && !pl.out && pl.zones.hand.length > 0)
+      .sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
+    if (foe) {
+      const pick = foe.zones.hand
+        .filter((c) => !nonUnit || getCard(c.cardId)?.type !== 'unit')
+        .sort((a, b) => cardCost(b) - cardCost(a))[0]
+      if (pick) {
+        const i = foe.zones.hand.findIndex((x) => x.iid === pick.iid)
+        const [card] = foe.zones.hand.splice(i, 1)
+        const nm = getCard(card.cardId)?.name ?? 'a card'
+        if (to === 'deck') { foe.zones.mainDeck.push({ ...card, exhausted: false, damage: 0, attached: [] }); lines.push(`Opponent revealed hand — recycled ${nm}.`) }
+        else if (to === 'banish') { foe.banished.push(card); lines.push(`Opponent revealed hand — banished ${nm}.`) }
+        else { sendToTrash(foe, card); foe.discardedThisTurn = true; lines.push(`Opponent revealed hand — discarded ${nm}.`) }
+      } else {
+        lines.push('Opponent revealed hand — nothing to take.')
+      }
+    }
+  }
+  if (e.opponentDiscards) {
+    // "They discard N" — the opponent loses N cards of their choice (auto: lowest-cost).
+    const foe = s.players
+      .filter((pl) => pl.id !== p.id && !pl.out && pl.zones.hand.length > 0)
+      .sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
+    if (foe) {
+      const n = Math.min(e.opponentDiscards, foe.zones.hand.length)
+      for (let k = 0; k < n; k++) {
+        const lowest = [...foe.zones.hand].sort((a, b) => cardCost(a) - cardCost(b))[0]
+        sendToTrash(foe, foe.zones.hand.splice(foe.zones.hand.findIndex((x) => x.iid === lowest.iid), 1)[0])
+      }
+      if (n > 0) { foe.discardedThisTurn = true; lines.push(`Opponent discarded ${n}.`) }
+    }
+  }
   if (e.playUnitFromTrash) {
     // Play a unit from your trash into base, ignoring its cost (Soulgorger,
     // Glasc Mixologist, …). Auto-picks the highest-cost qualifier.
