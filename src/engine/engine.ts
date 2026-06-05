@@ -493,7 +493,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
         if (i >= 0) sendToTrash(p, hand.splice(i, 1)[0])
       }
       lines.push(`Discarded ${n} card(s).`)
-      fireDiscard(s, p.id) // Jinx - Rebel reacts; mutations land on shared state
+      fireDiscard(s, p.id, toGo) // Jinx - Rebel reacts; mutations land on shared state
     }
   }
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
@@ -1450,11 +1450,121 @@ function fireGearAbilityUse(s: MatchState, player: PlayerId): MatchState {
   return s
 }
 
+/** Parse the cost glyphs in a fragment (":rb_energy_N:" + ":rb_rune_X:") into a
+ *  fixed {energy, power} cost — used by triggered "pay X to play me" effects. */
+function parseCostGlyphs(frag: string): { energy: number; power: Partial<Record<Domain, number>> } {
+  const energy = parseInt((frag.match(/:rb_energy_(\d+):/) || [])[1] || '0', 10)
+  const power: Partial<Record<Domain, number>> = {}
+  for (const m of frag.matchAll(/:rb_rune_([a-z]+):/g)) power[m[1] as Domain] = (power[m[1] as Domain] ?? 0) + 1
+  return { energy, power }
+}
+
+const costGlyphLabel = (c: { energy: number; power: Partial<Record<Domain, number>> }): string =>
+  [c.energy ? `${c.energy} Energy` : '', ...Object.entries(c.power).map(([d, n]) => `${n} ${d[0].toUpperCase()}${d.slice(1)} Power`)].filter(Boolean).join(' + ') || 'no cost'
+
+/** Whether `player` can afford a FIXED alternate cost from pool + ready runes —
+ *  power must be paid in its colour, energy by pool then any ready rune. No mutation. */
+function canAffordFixed(s: MatchState, player: PlayerId, energy: number, power: Partial<Record<Domain, number>>): boolean {
+  const p = s.players[player]
+  const ready = p.zones.runePool.filter((r) => !r.exhausted)
+  const producesD = (r: EngineCard, d: Domain) => ((def(r) as { produces?: Domain[] })?.produces ?? []).includes(d)
+  const used = new Set<string>()
+  for (const [d, n] of Object.entries(power) as [Domain, number][]) {
+    let need = (n ?? 0) - (p.pool?.power[d] ?? 0)
+    for (const r of ready) { if (need <= 0) break; if (!used.has(r.iid) && producesD(r, d)) { used.add(r.iid); need-- } }
+    if (need > 0) return false
+  }
+  const energyRunes = energy - Math.min(energy, p.pool?.energy ?? 0)
+  return energyRunes <= ready.filter((r) => !used.has(r.iid)).length
+}
+
+/** Auto-pay a FIXED alternate cost from `player`'s pool + ready runes (power in its
+ *  colour, energy by pool then exhausting any ready rune). Returns true if paid;
+ *  false (no mutation) if unaffordable. */
+function payFixedCost(s: MatchState, player: PlayerId, energy: number, power: Partial<Record<Domain, number>>): boolean {
+  if (!canAffordFixed(s, player, energy, power)) return false
+  const p = s.players[player]
+  if (!p.pool) p.pool = { energy: 0, power: {} }
+  const producesD = (r: EngineCard, d: Domain) => ((def(r) as { produces?: Domain[] })?.produces ?? []).includes(d)
+  for (const [d, n] of Object.entries(power) as [Domain, number][]) {
+    let need = n ?? 0
+    const fromPool = Math.min(need, p.pool.power[d] ?? 0)
+    p.pool.power[d] = (p.pool.power[d] ?? 0) - fromPool
+    if ((p.pool.power[d] ?? 0) <= 0) delete p.pool.power[d]
+    need -= fromPool
+    while (need > 0) {
+      const idx = p.zones.runePool.findIndex((r) => !r.exhausted && producesD(r, d))
+      if (idx < 0) break
+      const [r] = p.zones.runePool.splice(idx, 1)
+      p.zones.runeDeck.push({ ...r, exhausted: false, damage: 0 })
+      need--
+    }
+  }
+  const fromPoolE = Math.min(energy, p.pool.energy)
+  p.pool.energy -= fromPoolE
+  let needE = energy - fromPoolE
+  for (const r of p.zones.runePool) { if (needE <= 0) break; if (!r.exhausted) { r.exhausted = true; needE-- } }
+  return true
+}
+
+/** Play a specific card from `player`'s trash, paying a fixed alternate cost
+ *  instead of its printed cost (Flame Chompers, Immortal Phoenix). No-op if the
+ *  card isn't in trash or the cost can't be paid. */
+function playFromTrashPayingCost(s: MatchState, player: PlayerId, iid: string, cost: { energy: number; power: Partial<Record<Domain, number>> }): MatchState {
+  const p = s.players[player]
+  const idx = p.zones.trash.findIndex((c) => c.iid === iid)
+  if (idx < 0) return s
+  const name = getCard(p.zones.trash[idx].cardId)?.name ?? 'a card'
+  if (!payFixedCost(s, player, cost.energy, cost.power)) return log(s, player, `Couldn't play ${name} from trash — can't pay ${costGlyphLabel(cost)}.`)
+  const [card] = p.zones.trash.splice(idx, 1)
+  p.zones.base.push({ ...card, exhausted: !controlsBreacherAura(s, player), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher
+  return log(s, player, `Played ${name} from trash (paid ${costGlyphLabel(cost)}).`)
+}
+
+/** "When you discard me, you may pay <cost> to play me" (Flame Chompers) → the
+ *  alternate cost, or null if the card has no such trigger. */
+function discardSelfReplayCost(card: Card | undefined): { energy: number; power: Partial<Record<Domain, number>> } | null {
+  const m = (card?.text ?? '').match(/when you discard me,? you may pay (.*?) to play me/i)
+  return m ? parseCostGlyphs(m[1]) : null
+}
+
 /** Fire "when you discard one or more cards" global triggers (Jinx - Rebel —
- *  ready me + +1 Might this turn). Call once per discard event for `player`. */
-function fireDiscard(s: MatchState, player: PlayerId): MatchState {
+ *  ready me + +1 Might this turn). Call once per discard event for `player`.
+ *  `discarded` (the cards just discarded) lets "when you discard me, pay X to play
+ *  me" self-triggers (Flame Chompers) offer their optional replay. */
+function fireDiscard(s: MatchState, player: PlayerId, discarded: EngineCard[] = []): MatchState {
   if (s.players[player]) s.players[player].discardedThisTurn = true // gates Raging Soul
-  return fireTriggers(s, collectGlobal(s, player, 'discard'))
+  s = fireTriggers(s, collectGlobal(s, player, 'discard'))
+  for (const c of discarded) {
+    const cost = discardSelfReplayCost(getCard(c.cardId))
+    if (cost && s.players[player].zones.trash.some((x) => x.iid === c.iid) && canAffordFixed(s, player, cost.energy, cost.power)) {
+      offerChoice(s, {
+        player, kind: 'discardReplay', bfIndex: -1,
+        prompt: `${getCard(c.cardId)?.name} — pay ${costGlyphLabel(cost)} to play it from your trash?`,
+        options: [{ iid: c.iid, label: `Pay ${costGlyphLabel(cost)} & play` }],
+        payload: JSON.stringify(cost),
+      })
+      break // only one pendingChoice at a time
+    }
+  }
+  return s
+}
+
+/** "When you conquer, you may discard 1 to return this from your trash to your
+ *  hand" (Super Mega Death Rocket!) — a trigger that fires while the card sits in
+ *  the trash. Offered after a conquer if the player has a card to discard. */
+function offerTrashConquerReturn(s: MatchState, player: PlayerId): MatchState {
+  if (s.pendingChoice || s.players[player].zones.hand.length === 0) return s
+  const card = s.players[player].zones.trash.find((c) =>
+    /when you conquer,?[\s\S]*?discard[\s\S]*?return this from your trash to your hand/i.test(getCard(c.cardId)?.text ?? ''),
+  )
+  if (!card) return s
+  offerChoice(s, {
+    player, kind: 'trashConquerReturn', bfIndex: -1,
+    prompt: `${getCard(card.cardId)?.name} — discard 1 to return it from your trash to your hand?`,
+    options: [{ iid: card.iid, label: 'Discard 1 & return to hand' }],
+  })
+  return s
 }
 
 /** Chemtech Cask: "When you play a spell on an opponent's turn, you may exhaust
@@ -2443,6 +2553,7 @@ function moveUnits(
     const here = s2.battlefields[toBattlefield].units.filter((u) => u.owner === player).map((u) => u.iid)
     s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here), toBattlefield, 0, prevController == null)
     offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
+    s2 = offerTrashConquerReturn(s2, player) // Super Mega Death Rocket!
   }
   return ok(s2)
 }
@@ -2473,6 +2584,7 @@ function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedI
     s = fireTriggers(s, collectGlobal(s, movedOwner, 'conquer'), bfIndex, 0, priorController == null)
     s = fireTriggers(s, collectSelf(s, movedOwner, 'conquer', here), bfIndex, 0, priorController == null)
     offerLeblanc(s, movedOwner, bfIndex)
+    s = offerTrashConquerReturn(s, movedOwner) // Super Mega Death Rocket!
   }
   return s
 }
@@ -3601,6 +3713,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex, excess, prevController == null)
     s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere), bfIndex, excess, prevController == null)
     offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
+    s = offerTrashConquerReturn(s, moverOwner) // Super Mega Death Rocket!
   }
   return s
 }
@@ -4859,6 +4972,41 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s)
       }
 
+      // "When you discard me, you may pay X to play me" (Flame Chompers). pc.payload
+      // carries the alternate cost; the chosen iid is the discarded card in trash.
+      if (pc.kind === 'discardReplay') {
+        if (action.iid !== null && pc.payload) {
+          const cost = JSON.parse(pc.payload) as { energy: number; power: Partial<Record<Domain, number>> }
+          s = playFromTrashPayingCost(s, action.player, action.iid, cost)
+        } else {
+          s = log(s, action.player, 'Discard-play — declined.')
+        }
+        return ok(s)
+      }
+
+      // "When you conquer, you may discard 1 to return this from your trash to your
+      // hand" (Super Mega Death Rocket!). Discard the lowest-cost hand card as the
+      // cost, then move the chosen card from trash to hand.
+      if (pc.kind === 'trashConquerReturn') {
+        if (action.iid !== null) {
+          const p = s.players[action.player]
+          const ti = p.zones.trash.findIndex((c) => c.iid === action.iid)
+          if (ti >= 0 && p.zones.hand.length > 0) {
+            const toss = [...p.zones.hand].sort((a, b) => cardCost(a) - cardCost(b))[0]
+            const hi = p.zones.hand.findIndex((x) => x.iid === toss.iid)
+            const [discarded] = p.zones.hand.splice(hi, 1)
+            sendToTrash(p, discarded)
+            const [card] = p.zones.trash.splice(p.zones.trash.findIndex((c) => c.iid === action.iid), 1)
+            p.zones.hand.push({ ...card, exhausted: false, damage: 0, attached: [] })
+            s = log(s, action.player, `${getCard(card.cardId)?.name} — discarded 1 to return it from trash to hand.`)
+            s = fireDiscard(s, action.player, [discarded]) // the discard is itself an event
+          }
+        } else {
+          s = log(s, action.player, 'Trash-return — declined.')
+        }
+        return ok(s)
+      }
+
       // Decline the optional effect (non-resuming kinds).
       if (action.iid === null) return ok(log(s, action.player, 'Declined the battlefield effect.'))
       const name = getCard(findUnitAnywhere(s, action.iid)?.cardId ?? '')?.name ?? 'a unit'
@@ -4880,7 +5028,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           lg.exhausted = true
           s.battlefields[pc.bfIndex].units.push(makeReflection(src, action.player, s.turn, true))
           recomputeControllers(s)
-          s = fireDiscard(s, action.player) // Jinx - Rebel: "when you discard …"
+          s = fireDiscard(s, action.player, [discarded]) // Jinx - Rebel: "when you discard …"
           return ok(log(s, action.player, `LeBlanc — copied ${name} (Temporary); discarded a card.`))
         }
         case 'daisReturn': {
@@ -5037,11 +5185,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       }
       for (let i = 0; i < ab.recycleTrash && p.zones.trash.length > 0; i++) p.zones.mainDeck.push(p.zones.trash.shift()!)
       // Discard cost (Gutter Palace) — auto-discards from the front of hand.
-      let discarded = 0
-      for (let i = 0; i < ab.discard && p.zones.hand.length > 0; i++) { sendToTrash(p, p.zones.hand.shift()!); discarded++ }
+      const discardedCards: EngineCard[] = []
+      for (let i = 0; i < ab.discard && p.zones.hand.length > 0; i++) { const d = p.zones.hand.shift()!; sendToTrash(p, d); discardedCards.push(d) }
       if (ab.exhaust && !ab.killThis) u.exhausted = true
       let s1 = log(s, action.player, `${name}: activated — ${ab.effectText}.`)
-      if (discarded > 0) s1 = fireDiscard(log(s1, action.player, `Discarded ${discarded} as a cost.`), action.player)
+      if (discardedCards.length > 0) s1 = fireDiscard(log(s1, action.player, `Discarded ${discardedCards.length} as a cost.`), action.player, discardedCards)
       // "Attach an Equipment you control to a unit you control" (Jax) — a
       // two-step pick-equip → pick-target, reusing the Forge choice flow.
       if (/attach\b[^.]*\bequipment\b[^.]*\bto a unit/i.test(ab.effectText)) {

@@ -1077,6 +1077,55 @@ describe('tokens (Recruit)', () => {
     expect(ab?.effect.peekBanishPlay?.n).toBe(5)
   })
 
+  it('Flame Chompers (real card): on discard, prompt to pay Fury → play it from trash', () => {
+    const discarder = injectCard('fc-discarder-t', 'When you play me, discard 1.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const s = baseState()
+    const fc = mk('ogn-006-298', 0) // Flame Chompers (e3, no printed Power)
+    const d = mk(discarder, 0)
+    s.players[0].zones.hand.push(d, fc)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 ready Fury for the alt cost
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // discarded
+    expect(r.state.pendingChoice?.kind).toBe('discardReplay')
+    // Accept → pay Fury, play Flame Chompers from trash to base.
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: fc.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((x) => x.iid === fc.iid)).toBe(true)
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === fc.iid)).toBe(false)
+    expect(r.state.players[0].zones.runePool.filter((x) => !x.exhausted).length).toBe(0) // Fury recycled
+  })
+
+  it('Flame Chompers: declining the discard-replay prompt leaves it in the trash', () => {
+    const discarder = injectCard('fc-discarder-t2', 'When you play me, discard 1.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const s = baseState()
+    const fc = mk('ogn-006-298', 0)
+    s.players[0].zones.hand.push(mk(discarder, 0), fc)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: s.players[0].zones.hand[0].iid, payment: { exhaust: [], recycle: [] } })
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: null })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // still in trash
+    expect(r.state.players[0].zones.runePool.filter((x) => !x.exhausted).length).toBe(1) // Fury not spent
+  })
+
+  it('Super Mega Death Rocket! (real card): on conquer, discard 1 to return it from trash to hand', () => {
+    const s = baseState()
+    s.activePlayer = 0
+    const rocket = mk('ogn-252-298', 0)
+    s.players[0].zones.trash.push(rocket) // sits in the trash
+    s.players[0].zones.hand.push(mk(furyUnit.id, 0)) // a card to discard as the cost
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 }) // uncontested conquer
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('trashConquerReturn')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: rocket.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((x) => x.iid === rocket.iid)).toBe(true) // returned to hand
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === rocket.iid)).toBe(false)
+  })
+
   it("Zhonya's Hourglass: an equipped unit that would die is healed + recalled; the gear dies", () => {
     const s = baseState()
     s.sandbox = true
