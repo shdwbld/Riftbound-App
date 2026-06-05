@@ -12,6 +12,7 @@ const DeckBuilderPage = lazy(() => import('./pages/DeckBuilderPage'))
 const PlayPage = lazy(() => import('./pages/PlayPage'))
 const MatchPage = lazy(() => import('./pages/MatchPage'))
 const OnlinePage = lazy(() => import('./pages/OnlinePage'))
+const BugReportsPage = lazy(() => import('./pages/BugReportsPage'))
 
 function Loading() {
   return (
@@ -86,6 +87,14 @@ export default function App() {
           element={
             <Suspense fallback={<Loading />}>
               <OnlinePage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="bugs"
+          element={
+            <Suspense fallback={<Loading />}>
+              <BugReportsPage />
             </Suspense>
           }
         />

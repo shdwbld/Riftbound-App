@@ -10,6 +10,7 @@ const navItems = [
   { to: '/play', label: 'Goldfish' },
   { to: '/match', label: 'Match' },
   { to: '/online', label: 'Online' },
+  { to: '/bugs', label: 'Bugs' },
 ]
 
 /** Pick a click SFX for a pressed control based on its intent (text/aria). */
