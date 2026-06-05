@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { combatMightAt, deflectSurcharge, displayMight } from './engine'
+import { reduce, combatMightAt, deflectSurcharge, displayMight } from './engine'
 import { type MatchState, type PlayerState, type EngineCard, type PlayerId, type ZoneId } from './types'
 import { CARDS, CARD_INDEX } from '../data/cards'
 import { isUnit } from '../types/cards'
@@ -59,5 +59,50 @@ describe('equipment — attached effects reach the host unit', () => {
     expect(/\[assault 2\]/i.test(CARD_INDEX['opp-009-221']?.text ?? '')).toBe(true)
     expect(/when i move/i.test(CARD_INDEX['opp-153-221']?.text ?? '')).toBe(true) // Eye of the Herald
     expect(/when i conquer/i.test(CARD_INDEX['opp-124-221']?.text ?? '')).toBe(true) // Doran's Ring
+  })
+})
+
+// Inject a deterministic gear so the integration tests don't depend on a specific
+// printed card's wording staying parseable. Only `text` matters for triggersFor.
+function injectGear(id: string, text: string): string {
+  CARD_INDEX[id] = {
+    id, name: id, type: 'gear', domains: ['fury'], rarity: 'common',
+    set: 'X', number: 1, text, energy: 0, power: {},
+  } as never
+  return id
+}
+
+describe('equipment — gear triggers fire on the HOST unit’s event', () => {
+  it('"When I move, draw 1" on attached gear: moving the equipped unit draws 1', () => {
+    const gear = injectGear('test-gear-move', 'When I move, draw 1.')
+    const s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const u = mk(furyUnit.id, 0, { attached: [`${gear}|g1`] })
+    s.players[0].zones.base.push(u)
+    const { state, error } = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(error).toBeUndefined()
+    // The gear has no conquer trigger, so the only draw is from its move trigger.
+    expect(state.players[0].zones.hand.length).toBe(1)
+  })
+
+  it('"When I conquer, draw 1" on attached gear: taking an empty battlefield draws 1', () => {
+    const gear = injectGear('test-gear-conquer', 'When I conquer, draw 1.')
+    const s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const u = mk(furyUnit.id, 0, { attached: [`${gear}|g1`] })
+    s.players[0].zones.base.push(u)
+    const { state, error } = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(error).toBeUndefined()
+    expect(state.battlefields[0].controller).toBe(0) // uncontested move = conquer
+    expect(state.players[0].zones.hand.length).toBe(1)
+  })
+
+  it('a bare unit (no gear) moving onto an empty battlefield draws nothing', () => {
+    const s = baseState()
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const { state } = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 })
+    expect(state.players[0].zones.hand.length).toBe(0)
   })
 })

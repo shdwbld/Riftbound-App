@@ -1018,6 +1018,20 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
     if (only && !only.has(u.iid)) continue
     for (const ab of triggersFor(def(u), event))
       if (ab.scope === 'self') out.push({ player, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
+    // Attached gear: a gear's "when I / the equipped unit <event>" self-trigger fires
+    // on the HOST unit's event (move/attack/defend/conquer/hold/...). We resolve it
+    // with the HOST as source (sourceIid) so "here"/"me" target the unit and its
+    // battlefield, while sourceCardId stays the gear (its text supplies the effect).
+    // Gated on `only` (the host-event case); when unfiltered, controlledPermanents
+    // already surfaces gear under its own iid, so we don't double-collect here.
+    if (only && u.attached?.length) {
+      for (const ref of u.attached) {
+        const gCard = getCard(ref.split('|')[0])
+        if (!gCard) continue
+        for (const ab of triggersFor(gCard, event))
+          if (ab.scope === 'self') out.push({ player, ability: ab, sourceIid: u.iid, sourceCardId: gCard.id })
+      }
+    }
   }
   return out
 }
@@ -3805,12 +3819,21 @@ function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
     if (attackers.length) s = log(s, controller, `Ahri - Nine-Tailed Fox: gave ${attackers.length} attacker(s) −1 Might this turn (min 1).`)
   }
   const combatFired: FiredTrigger[] = []
-  for (const u of attackers)
-    for (const ab of triggersFor(def(u), 'attack'))
+  // Collect a unit's own combat triggers plus those of any attached gear ("when the
+  // equipped unit attacks/defends → …", e.g. Recurve Bow). Gear triggers resolve with
+  // the HOST as source so "here"/"me" target the unit, but carry the gear's text.
+  const collectCombat = (u: EngineCard, event: TriggerEvent) => {
+    for (const ab of triggersFor(def(u), event))
       combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
-  for (const u of defenders)
-    for (const ab of triggersFor(def(u), 'defend'))
-      combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
+    for (const ref of u.attached ?? []) {
+      const gCard = getCard(ref.split('|')[0])
+      if (!gCard) continue
+      for (const ab of triggersFor(gCard, event))
+        combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: gCard.id })
+    }
+  }
+  for (const u of attackers) collectCombat(u, 'attack')
+  for (const u of defenders) collectCombat(u, 'defend')
   return fireTriggers(s, combatFired)
 }
 
