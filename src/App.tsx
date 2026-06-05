@@ -13,6 +13,7 @@ const PlayPage = lazy(() => import('./pages/PlayPage'))
 const MatchPage = lazy(() => import('./pages/MatchPage'))
 const OnlinePage = lazy(() => import('./pages/OnlinePage'))
 const BugReportsPage = lazy(() => import('./pages/BugReportsPage'))
+const CardSpecPage = lazy(() => import('./pages/CardSpecPage'))
 
 function Loading() {
   return (
@@ -95,6 +96,14 @@ export default function App() {
           element={
             <Suspense fallback={<Loading />}>
               <BugReportsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="cards/spec"
+          element={
+            <Suspense fallback={<Loading />}>
+              <CardSpecPage />
             </Suspense>
           }
         />

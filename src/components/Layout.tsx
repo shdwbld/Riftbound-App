@@ -11,6 +11,7 @@ const navItems = [
   { to: '/match', label: 'Match' },
   { to: '/online', label: 'Online' },
   { to: '/bugs', label: 'Bugs' },
+  { to: '/cards/spec', label: 'Spec' },
 ]
 
 /** Pick a click SFX for a pressed control based on its intent (text/aria). */
