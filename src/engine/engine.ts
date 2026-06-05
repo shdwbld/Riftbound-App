@@ -5063,11 +5063,24 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // cease to exist; attached gear detaches to base (bounceUnitToHand).
           if (/(return|put|bounce)/i.test(ab.effectText) && /\bhand\b/i.test(ab.effectText))
             s1 = bounceUnitToHand(s1, t, action.player, name, 0)
+          // Stun / kill / grant-keyword / ready a chosen unit — activated effects
+          // beyond the original curated set (the parser already reads these).
+          if (ab.effect.stun) { const tu = findUnitAnywhere(s1, t); if (tu && !tu.stunned) { tu.stunned = true; emit({ kind: 'stun', iid: t, player: action.player }) } }
+          if (ab.effect.kill) s1 = fireDeaths(s1, killTarget(s1, t))
+          if (ab.effect.grantAssault) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantAssault = (tu.grantAssault ?? 0) + ab.effect.grantAssault }
+          if (ab.effect.grantGanking) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantGanking = true }
+          if (ab.effect.readyUnits) { const tu = findUnitAnywhere(s1, t); if (tu) tu.exhausted = false }
         }
       }
+      if (ab.effect.stun) s1 = fireStun(s1, action.player) // "when you stun" payoffs
       // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)
+      if (ab.effect.channelExhausted) channelN(p, ab.effect.channelExhausted, true)
+      if (ab.effect.readyAllUnits) for (const unit of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)]) { if (unit.owner === action.player) unit.exhausted = false }
+      if (ab.effect.readySelf) u.exhausted = false
+      if (ab.effect.readyRunes) { let n = ab.effect.readyRunes; for (const r of p.zones.runePool) { if (n <= 0) break; if (r.exhausted) { r.exhausted = false; n-- } } }
+      if (ab.effect.grantAssaultHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (unit.owner === action.player && unit.iid !== u.iid) unit.grantAssault = (unit.grantAssault ?? 0) + ab.effect.grantAssaultHere }
       // "[Add] <resource>" — rune-ramp gear (Seals, Energy Conduit) add Power/Energy
       // directly to the pool.
       if (ab.effect.addEnergy || Object.keys(ab.effect.addPower).length) {

@@ -40,17 +40,19 @@ handler — clustered into the families below.
 
 ## Activated abilities — the real story (updated)
 Activated abilities (`<cost>: <effect>`) are **already detected and offered generically**
-(`unitActivatedAbility` + `ACTIVATE_UNIT`); **167 cards** have one. But `ACTIVATE_UNIT`
-**resolves only a curated set of effects**: damage, tempMight, buff, move-to-base,
-return-to-hand, draw, channel, recruits, named/gold tokens, predict, gainXP — and now
-**`[Add]` resources** (added this pass: ~41 rune-ramp cards — the Seals, Energy Conduit,
-Malzahar - Fanatic — now actually add Power/Energy to the pool; previously activating them did
-nothing). Activated effects **outside** that set still parse but **don't resolve yet** — the
-biggest remaining: **ready/exhaust a unit, stun, kill, score, grant-keyword, channel-exhausted,
-move-to-battlefield**. **72 activated cards are still effectively manual** for this reason.
-**The next concrete fix is to resolve the rest of these activated effects** (route the
-activated effect through the generic `applyParsed`, or extend the inline set) — that single
-change unblocks the bulk of the remaining activated cards.
+(`unitActivatedAbility` + `ACTIVATE_UNIT`); **167 cards** have one. `ACTIVATE_UNIT` resolves a
+growing inline set of effects: damage, tempMight, buff, move-to-base, return-to-hand, draw,
+channel, recruits, named/gold tokens, predict, gainXP, **`[Add]` resources** (rune-ramp: the
+Seals, Energy Conduit, Malzahar - Fanatic — add Power/Energy to the pool), and — added in the
+#1-continuation pass — **stun, kill, grant-Assault/Ganking, ready (a unit / your units / self /
+runes / others-here), and channel-exhausted**. So the bulk of the formerly-stuck activated
+cards (the ready/stun/kill/grant/channel-exhausted family) now actually resolve; targeting for
+the new targeted effects (stun/kill/grant/ready-unit) is wired in both MatchPage and OnlinePage.
+**Still unresolved** (parse but don't yet resolve via activation): **score, move-to-battlefield
+(move an enemy/unit to a battlefield), dealMight, copy.** These are the remaining activated tail
+and overlap with the gap-matrix mechanics ranked below. Known limitation: `[Add]`/Seal abilities
+are printed at **[Reaction] speed** but `ACTIVATE_UNIT` still gates on `requireActiveAction`
+(your turn only), so a Seal can't be tapped mid-chain / on the opponent's turn yet.
 
 ## By mechanic family — "apply this learning to these cards"
 Counts are over the 341 manual/partial cards (full lists in the dataset). "Effect status" =
@@ -97,11 +99,11 @@ are worth **generalizing into a reusable handler** because the pool has many sib
 - Most other hand-coded cards are genuine one-offs; leave them.
 
 ## Prioritized fix queue (pool reach × meta impact)
-1. **Resolve the rest of the activated-ability effects** — activated abilities are already
-   offered; `ACTIVATE_UNIT` resolves a curated set, and `[Add]` resources were added this pass
-   (~41 cards fixed). The remaining ~72 activated cards need their effect *resolved*
-   (ready/stun/kill/score/grant/channel-exhausted/move-to-bf) — route the activated effect
-   through the generic `applyParsed`, or extend the inline set. Biggest single lever left.
+1. ~~**Resolve the rest of the activated-ability effects**~~ — **largely DONE.** `[Add]`
+   resources (~41 cards) plus **stun / kill / grant-Assault·Ganking / ready (unit·your-units·
+   self·runes·here) / channel-exhausted** now resolve via `ACTIVATE_UNIT`, with targeting wired
+   in both pages. **Remaining activated tail:** `score`, `move-to-battlefield`, `dealMight`,
+   `copy` — folded into items 5/6/8 below. (Also deferred: `[Reaction]`-speed for `[Add]`/Seals.)
 2. **Play-from-deck/trash for free** — gap-matrix **#1** (5 meta decks) + the trash-recursion
    family; a fully-missing `playFrom` effect.
 3. **Replacement / "would die" layer** (heal / recall / prevent) — gap-matrix #6; the only

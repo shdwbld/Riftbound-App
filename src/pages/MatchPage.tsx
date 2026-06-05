@@ -482,12 +482,12 @@ export default function MatchPage() {
   const activateUnit = (iid: string) => {
     const ab = canActivateUnit(match, controlling, iid)
     if (!ab) return
-    const needsTgt = ab.effect.damage > 0 || ab.effect.buff > 0 || /\bmove\b/i.test(ab.effectText) || /(return|put|bounce)[^.]*\bhand\b/i.test(ab.effectText) || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
+    const needsTgt = ab.effect.damage > 0 || ab.effect.buff > 0 || ab.effect.stun > 0 || ab.effect.kill > 0 || ab.effect.grantAssault > 0 || ab.effect.grantGanking || ab.effect.readyUnits > 0 || /\bmove\b/i.test(ab.effectText) || /(return|put|bounce)[^.]*\bhand\b/i.test(ab.effectText) || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf)
     if (!needsTgt) {
       act({ type: 'ACTIVATE_UNIT', player: controlling, iid })
       return
     }
-    const scope: 'enemy' | 'friendly' = ab.effect.damage > 0 ? 'enemy' : 'friendly'
+    const scope: 'enemy' | 'friendly' = (ab.effect.damage > 0 || ab.effect.stun > 0 || ab.effect.kill > 0) ? 'enemy' : 'friendly'
     setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, player: controlling, kind: 'activateUnit', count: 1, picked: [], targetScope: scope })
     flash(scope === 'enemy' ? 'Pick an enemy unit.' : 'Pick a unit to buff.')
   }

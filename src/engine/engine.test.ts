@@ -5297,6 +5297,28 @@ describe('Manual override — grant flags / setDamage / readyAll', () => {
     expect(r.state.players[0].zones.base.find((x) => x.iid === g.iid)?.exhausted).toBe(true)
   })
 
+  it('ACTIVATE_UNIT resolves a targeted activated [Stun]', () => {
+    const s = baseState()
+    const src = mk(injectCard('act-stun', ':rb_exhaust:: [Stun] an enemy unit.', { might: 3 }), 0)
+    s.players[0].zones.base.push(src)
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: src.iid, targets: [enemy.iid] })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units[0].stunned).toBe(true)
+  })
+
+  it('ACTIVATE_UNIT resolves untargeted "channel N rune exhausted"', () => {
+    const s = baseState()
+    const src = mk(injectCard('act-che', ':rb_exhaust:: Channel 1 rune exhausted.', { might: 3 }), 0)
+    s.players[0].zones.base.push(src)
+    s.players[0].zones.runeDeck.push(mk(furyRune.id, 0))
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: src.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.runePool.length).toBe(1)
+    expect(r.state.players[0].zones.runePool[0].exhausted).toBe(true)
+  })
+
   it('marker cycles and clears', () => {
     const s = baseState(); s.sandbox = true
     const u = mk(furyUnit.id, 0)
