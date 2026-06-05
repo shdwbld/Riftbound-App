@@ -878,7 +878,9 @@ describe('tokens (Recruit)', () => {
 
   it('Jax - Unrelenting: draw 1 (pay 1 Energy) when an Equipment is attached (Gap 9)', () => {
     const jax = injectCard('jax-unrel-t', 'When you attach an Equipment to me, you may pay :rb_energy_1: to draw 1.', { type: 'unit', might: 5 })
-    const gear = injectCard('jax-gear-t', '+1 Might', { type: 'gear', energy: 0, power: {} })
+    // [Quick-Draw] so the gear attaches on play (the proper attach-on-play path);
+    // a normal gear would now land on base and need a separate ATTACH.
+    const gear = injectCard('jax-gear-t', '[Quick-Draw] +1 Might', { type: 'gear', energy: 0, power: {} })
     const s = baseState()
     const j = mk(jax, 0)
     s.players[0].zones.base.push(j)
@@ -2063,7 +2065,7 @@ describe('tokens (Recruit)', () => {
 
   it('Aphelios - Exalted (champion): attaching Equipment cycles Ready/Channel/Buff per turn', () => {
     const aph = injectCard('aph-test', "When you attach an Equipment to me, choose one that hasn't been chosen this turn — Ready 2 runes. Channel 1 rune exhausted. Buff a friendly unit.", { name: 'Aphelios - Exalted', might: 4 })
-    const gearId = injectCard('aph-gear', 'A gear.', { type: 'gear', energy: 0, power: {} })
+    const gearId = injectCard('aph-gear', '[Quick-Draw] A gear.', { type: 'gear', energy: 0, power: {} }) // attaches on play
     const s = baseState()
     const aphU = mk(aph, 0)
     const ally = mk(furyUnit.id, 0)
@@ -2964,17 +2966,25 @@ describe('auto-activated abilities', () => {
 })
 
 describe('Batch F — Spiritforged attach', () => {
-  it('PLAY_GEAR attaches to a chosen friendly unit', () => {
-    const gear = injectCard('f-gear', '+1 Might', { type: 'gear' })
+  it('PLAY_GEAR: normal gear lands on base unattached; only attach-on-play gear equips from hand', () => {
+    const normal = injectCard('f-gear', '+1 Might', { type: 'gear' })
+    const qd = injectCard('f-gear-qd', '[Quick-Draw] +1 Might', { type: 'gear' })
     const s = baseState()
     const u = mk(furyUnit.id, 0)
     s.players[0].zones.base.push(u)
-    const g = mk(gear, 0)
-    s.players[0].zones.hand.push(g)
-    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, payment: { exhaust: [], recycle: [] }, targetIid: u.iid })
+    const gN = mk(normal, 0), gQ = mk(qd, 0)
+    s.players[0].zones.hand.push(gN, gQ)
+    // Normal gear ignores the target and goes to base UNATTACHED (no cost bypass);
+    // attaching it requires a separate ATTACH that pays the [Equip] cost.
+    let r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: gN.iid, payment: emptyPayment(), targetIid: u.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.some((x) => x.iid === gN.iid && x.attached.length === 0)).toBe(true)
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.length).toBe(0)
+    // [Quick-Draw] gear DOES attach to the chosen unit on play.
+    r = reduce(r.state, { type: 'PLAY_GEAR', player: 0, iid: gQ.iid, payment: emptyPayment(), targetIid: u.iid })
     expect(r.error).toBeUndefined()
     const eq = r.state.players[0].zones.base.find((x) => x.iid === u.iid)
-    expect(eq?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true)
+    expect(eq?.attached.some((a) => a.startsWith(`${qd}|`))).toBe(true)
   })
 
   it('Forge of the Future: gear on-play creates a Recruit token (Gap 10)', () => {
@@ -5312,11 +5322,13 @@ describe('Playtest Pass 2 — equip an unattached gear from base (ATTACH)', () =
     s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
     const g = mk(sword, 0)
     s.players[0].zones.base.push(g)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // a ready fury rune for the [Equip] cost
     const r = reduce(s, { type: 'ATTACH', player: 0, unitIid: u.iid, gearIid: g.iid })
     expect(r.error).toBeUndefined()
     const unit = r.state.battlefields[0].units.find((x) => x.iid === u.iid)!
     expect(unit.attached.some((a) => a.split('|')[1] === g.iid)).toBe(true) // now attached
     expect(r.state.players[0].zones.base.some((x) => x.iid === g.iid)).toBe(false) // left base
+    expect(r.state.players[0].zones.runePool.length).toBe(0) // the fury rune was recycled to pay [Equip]
     expect(combatMightAt(r.state, 0, unit, 'attacker')).toBe(5) // 3 base + 2 gear
   })
 

@@ -232,6 +232,45 @@ function applyPayment(
   return null
 }
 
+/** Auto-pay an [Equip] ability's cost (Energy + specific-domain Power + anyPower
+ *  rainbow) from a player's ready runes and pool. Validates affordability FIRST and
+ *  only mutates on success — so a caller that already cloned state can `fail` with
+ *  the untouched original when this returns false. Energy uses the pool first, then
+ *  exhausts ready runes; specific Power recycles a domain-matched ready rune; rainbow
+ *  recycles any ready rune. Runes are never reused across requirements. */
+function payEquipCost(s: MatchState, player: PlayerId, ec: { energy: number; power: Partial<Record<Domain, number>>; anyPower: number }): boolean {
+  const p = s.players[player]
+  const used = new Set<string>()
+  const recycle: string[] = []
+  // Specific-domain Power: a ready rune that produces that domain.
+  for (const [dom, n] of Object.entries(ec.power) as [Domain, number][]) {
+    for (let i = 0; i < (n ?? 0); i++) {
+      const rune = p.zones.runePool.find((r) => !r.exhausted && !used.has(r.iid) && def(r)?.type === 'rune' && (def(r) as { produces: Domain[] }).produces.includes(dom))
+      if (!rune) return false
+      used.add(rune.iid); recycle.push(rune.iid)
+    }
+  }
+  // Rainbow Power: any ready rune.
+  for (let i = 0; i < ec.anyPower; i++) {
+    const rune = p.zones.runePool.find((r) => !r.exhausted && !used.has(r.iid))
+    if (!rune) return false
+    used.add(rune.iid); recycle.push(rune.iid)
+  }
+  // Energy: pool first, then exhaust ready runes not already claimed for Power.
+  const poolPay = Math.min(ec.energy, p.pool?.energy ?? 0)
+  const exhaust: string[] = []
+  for (let i = 0; i < ec.energy - poolPay; i++) {
+    const rune = p.zones.runePool.find((r) => !r.exhausted && !used.has(r.iid))
+    if (!rune) return false
+    used.add(rune.iid); exhaust.push(rune.iid)
+  }
+  // Commit (everything above is satisfiable).
+  if (p.pool) p.pool.energy -= poolPay
+  for (const iid of exhaust) { const r = p.zones.runePool.find((x) => x.iid === iid); if (r) r.exhausted = true }
+  for (const iid of recycle) { const r = removeFromZone(p, 'runePool', iid); if (r) p.zones.runeDeck.push({ ...r, exhausted: false, damage: 0 }) }
+  return true
+}
+
 // --- effect helpers --------------------------------------------------------
 
 function drawN(p: PlayerState, n: number): number {
@@ -4993,8 +5032,13 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             st = log(st, action.player, line)
           return fireTokenPlay(st, action.player, tokenUnitsIn(gearOnPlay))
         }
-        // Attach to a target unit (granting its bonuses) if given, else base.
-        if (action.targetIid) {
+        // Attaching from hand on play is ONLY allowed for attach-on-play gear —
+        // [Quick-Draw], a Quick-Draw aura (Jax), or [Weaponmaster] — and in sandbox.
+        // Normal Equipment plays UNATTACHED to your base; you then pay its [Equip]
+        // cost via the ATTACH action (the proper two-step flow). This stops a
+        // hand-play from silently attaching for free and bypassing the equip cost.
+        const attachOnPlay = state.sandbox || parseKeywords(card).quickDraw || parseKeywords(card).weaponmaster || controlsQuickDrawAura(s, action.player)
+        if (action.targetIid && attachOnPlay) {
           for (const u of p.zones.base.concat(s.battlefields.flatMap((b) => b.units)))
             if (u.iid === action.targetIid && u.owner === action.player) {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
@@ -5107,8 +5151,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
 
     case 'ATTACH': {
       // Attach an unattached piece of Equipment sitting on your Base to one of your
-      // units (the [Equip] activated ability). The equip rune cost is treated as
-      // free here, matching the play-time auto-attach simplification.
+      // units — the [Equip] activated ability. Outside sandbox this pays the gear's
+      // [Equip] cost (auto-paid from ready runes/pool); sandbox attaches for free.
       if (!state.sandbox) { const guard = requireActiveAction(state, action.player); if (guard) return fail(state, guard) }
       const s = clone(state)
       // In sandbox, search ALL players' bases for the gear; otherwise only the acting player's.
@@ -5128,6 +5172,13 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u?.owner === action.player ? u : undefined })()
       if (!unit || getCard(unit.cardId)?.type !== 'unit')
         return fail(state, 'Choose a unit to equip.')
+      // Pay the [Equip] cost (real play only). payEquipCost mutates `s` only on
+      // success, so an unaffordable equip returns the untouched original state.
+      if (!state.sandbox) {
+        const ec = parseKeywords(getCard(s.players[gearPlayer].zones.base[gIdx!].cardId)).equipCost
+        if (ec && (ec.energy > 0 || ec.anyPower > 0 || Object.keys(ec.power).length > 0) && !payEquipCost(s, action.player, ec))
+          return fail(state, 'Not enough resources to pay the Equip cost.')
+      }
       const [gear] = s.players[gearPlayer].zones.base.splice(gIdx!, 1)
       unit.attached = [...unit.attached, `${gear.cardId}|${gear.iid}`]
       emit({ kind: 'buff', iid: unit.iid, player: action.player, cardId: gear.cardId })

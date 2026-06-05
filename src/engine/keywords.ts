@@ -57,6 +57,10 @@ export interface Keywords {
   temporary: boolean
   /** Gear with an attach activation. */
   equip: boolean
+  /** The [Equip] activated ability's cost (the glyphs right after the [Equip]
+   *  token). `anyPower` is rainbow Power — N Power of any domain. null when the card
+   *  has no [Equip] ability. */
+  equipCost: (KeywordCost & { anyPower: number }) | null
   /** Spell with an optional additional cost to resolve its effect again. */
   repeat: boolean
 }
@@ -83,6 +87,7 @@ const EMPTY: Keywords = {
   backline: false,
   temporary: false,
   equip: false,
+  equipCost: null,
   repeat: false,
 }
 
@@ -128,6 +133,28 @@ export function parseKeywords(card: Card | undefined): Keywords {
   while ((m = TOKEN.exec(text))) {
     const num = m[2] === 'X' ? 1 : m[2] ? parseInt(m[2], 10) : 0
     applyKeywordToken(kw, m[1].toLowerCase(), num)
+  }
+  // The [Equip] activated-ability cost: the cost glyphs immediately after the
+  // "[Equip]" token (optionally after an em-dash), up to the "(...)" reminder or a
+  // period. E.g. "[Equip] :rb_energy_1::rb_rune_body: (...)" → 1 Energy + 1 Body
+  // Power; "[Equip] :rb_rune_rainbow:" → 1 anyPower. Extra non-rune costs in the
+  // clause ("Recycle 2 cards from your trash", "Kill a friendly unit") are NOT
+  // captured here — only the Energy/Power glyphs are enforced.
+  if (kw.equip) {
+    const eq = text.match(/\[equip\][^\S\n]*(?:—[^\S\n]*)?([^(.\n]*)/i)
+    if (eq) {
+      const seg = eq[1]
+      const power: Partial<Record<Domain, number>> = {}
+      let anyPower = 0
+      let energy = 0
+      for (const e of seg.match(/:rb_energy_(\d+):/g) ?? []) energy += parseInt(e.replace(/\D/g, ''), 10)
+      for (const r of seg.match(/:rb_rune_([a-z]+):/g) ?? []) {
+        const dom = r.match(/:rb_rune_([a-z]+):/)![1]
+        if (dom === 'rainbow') anyPower += 1
+        else power[dom as Domain] = (power[dom as Domain] ?? 0) + 1
+      }
+      kw.equipCost = { energy, power, anyPower }
+    }
   }
   // [Temporary] that's GRANTED to a token this card creates ("… token with
   // [Temporary]") or to another unit ("give it [Temporary]" / "units … have

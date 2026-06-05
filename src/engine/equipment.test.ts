@@ -5,6 +5,8 @@ import { CARDS, CARD_INDEX } from '../data/cards'
 import { isUnit } from '../types/cards'
 
 const furyUnit = CARDS.find((c) => isUnit(c) && c.domains.length === 1 && c.domains[0] === 'fury')!
+const furyRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('fury'))!
+const calmRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('calm') && !c.produces.includes('fury'))!
 const battlefield = CARDS.find((c) => c.type === 'battlefield')!
 let n = 0
 const mk = (cardId: string, owner: PlayerId, o: Partial<EngineCard> = {}): EngineCard => ({ iid: `eq${n++}`, cardId, owner, exhausted: false, damage: 0, attached: [], ...o })
@@ -144,5 +146,60 @@ describe('equipment — bespoke per-card effects', () => {
     const u = mk(furyUnit.id, 0, { attached: ['unl-039-219|lv1'] })
     expect(displayMight(u, 0)).toBe(bare0 + 1) // flat +1 only
     expect(displayMight(u, 3)).toBe(bare3 + 2) // flat +1 + level-3 additional +1
+  })
+})
+
+describe('equipment — proper equip flow (play-to-bench + [Equip] cost is no longer bypassed)', () => {
+  const injectGear = (id: string, text: string): string => {
+    CARD_INDEX[id] = { id, name: id, type: 'gear', domains: ['fury'], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} } as never
+    return id
+  }
+
+  it('a normal gear played from hand lands on base UNATTACHED even when a target is named', () => {
+    const gear = injectGear('flow-normal', '[Equip] :rb_rune_fury: (:rb_rune_fury:: Attach this to a unit you control.) +1 :rb_might:')
+    const s = baseState()
+    const u = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u)
+    const g = mk(gear, 0)
+    s.players[0].zones.hand.push(g)
+    const { state, error } = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, payment: { exhaust: [], recycle: [] }, targetIid: u.iid })
+    expect(error).toBeUndefined()
+    expect(state.players[0].zones.base.some((x) => x.iid === g.iid && x.attached.length === 0)).toBe(true) // on base, unattached
+    expect(state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.length).toBe(0) // unit got nothing
+  })
+
+  it('ATTACH pays the [Equip] cost: recycles a matching rune, and FAILS (no attach) when unaffordable', () => {
+    const gear = injectGear('flow-equipcost', '[Equip] :rb_rune_fury: (:rb_rune_fury:: Attach this to a unit you control.) +1 :rb_might:')
+    const make = () => {
+      const s = baseState()
+      const u = mk(furyUnit.id, 0); s.battlefields[0].units.push(u)
+      const g = mk(gear, 0); s.players[0].zones.base.push(g)
+      return { s, u, g }
+    }
+    // No runes → can't pay the Fury [Equip] cost → error, gear stays on base.
+    const a = make()
+    const r1 = reduce(a.s, { type: 'ATTACH', player: 0, unitIid: a.u.iid, gearIid: a.g.iid })
+    expect(r1.error).toBeTruthy()
+    expect(r1.state.players[0].zones.base.some((x) => x.iid === a.g.iid)).toBe(true) // still on base
+    expect(r1.state.battlefields[0].units[0].attached.length).toBe(0)
+    // Wrong-color rune (Calm) can't satisfy a Fury cost → still fails.
+    const b = make(); b.s.players[0].zones.runePool.push(mk(calmRune.id, 0))
+    expect(reduce(b.s, { type: 'ATTACH', player: 0, unitIid: b.u.iid, gearIid: b.g.iid }).error).toBeTruthy()
+    // A ready Fury rune → attaches and the rune is recycled out of the pool.
+    const c = make(); c.s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const r3 = reduce(c.s, { type: 'ATTACH', player: 0, unitIid: c.u.iid, gearIid: c.g.iid })
+    expect(r3.error).toBeUndefined()
+    expect(r3.state.battlefields[0].units[0].attached.some((ref) => ref.startsWith(gear))).toBe(true)
+    expect(r3.state.players[0].zones.runePool.length).toBe(0) // Fury rune recycled to pay [Equip]
+  })
+
+  it('sandbox ATTACH stays free (no equip cost)', () => {
+    const gear = injectGear('flow-sandbox', '[Equip] :rb_rune_fury: (:rb_rune_fury:: Attach this to a unit you control.) +1 :rb_might:')
+    const s = baseState(); s.sandbox = true
+    const u = mk(furyUnit.id, 0); s.battlefields[0].units.push(u)
+    const g = mk(gear, 0); s.players[0].zones.base.push(g)
+    const r = reduce(s, { type: 'ATTACH', player: 0, unitIid: u.iid, gearIid: g.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units[0].attached.some((ref) => ref.startsWith(gear))).toBe(true) // attached, no runes needed
   })
 })
