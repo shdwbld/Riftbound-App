@@ -15,10 +15,12 @@ import { pileSize } from '../types/deck'
 import { validateDeck } from '../lib/deckValidation'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import { FEATURED_DECKS, type FeaturedDeck } from '../data/featuredDecks'
+import PromptModal from '../components/PromptModal'
 
 export default function DecksPage() {
   const navigate = useNavigate()
   const [decks, setDecks] = useState(() => listDecks())
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null)
   const [importing, setImporting] = useState(false)
   const [importText, setImportText] = useState('')
   const [codeOpen, setCodeOpen] = useState(false)
@@ -213,10 +215,7 @@ export default function DecksPage() {
                   <button
                     onClick={(e) => {
                       e.preventDefault()
-                      if (confirm(`Delete "${deck.name}"?`)) {
-                        deleteDeck(deck.id)
-                        refresh()
-                      }
+                      setPendingDelete({ id: deck.id, name: deck.name })
                     }}
                     className="rounded px-2 py-1 text-xs text-white/30 hover:bg-rose-500/20 hover:text-rose-300"
                   >
@@ -242,6 +241,17 @@ export default function DecksPage() {
           navigate(`/decks/${deck.id}`)
         }}
       />
+      {pendingDelete && (
+        <PromptModal
+          title="Delete deck?"
+          message={`Delete "${pendingDelete.name}"? This can't be undone.`}
+          options={[
+            { label: 'Delete', variant: 'primary', onClick: () => { deleteDeck(pendingDelete.id); setPendingDelete(null); refresh() } },
+            { label: 'Cancel', onClick: () => setPendingDelete(null) },
+          ]}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   )
 }

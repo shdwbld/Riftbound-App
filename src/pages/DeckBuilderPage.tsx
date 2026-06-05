@@ -379,6 +379,7 @@ export default function DeckBuilderPage() {
                     </div>
                     <PileList
                       pile={sub}
+                      cap={DECK_RULES.maxCopiesPerCard}
                       onInc={(id) => setCount('main', id, (deck.main[id] ?? 0) + 1)}
                       onDec={(id) => setCount('main', id, (deck.main[id] ?? 0) - 1)}
                     />
@@ -400,6 +401,7 @@ export default function DeckBuilderPage() {
             )}
             <PileList
               pile={deck.runes}
+              cap={DECK_RULES.runeDeckSize}
               onInc={(id) => setCount('runes', id, (deck.runes[id] ?? 0) + 1)}
               onDec={(id) => setCount('runes', id, (deck.runes[id] ?? 0) - 1)}
             />
@@ -449,6 +451,7 @@ export default function DeckBuilderPage() {
             ) : (
               <PileList
                 pile={deck.sideboard}
+                cap={DECK_RULES.maxCopiesPerCard}
                 onInc={(id) => setCount('sideboard', id, (deck.sideboard[id] ?? 0) + 1)}
                 onDec={(id) => setCount('sideboard', id, (deck.sideboard[id] ?? 0) - 1)}
               />
@@ -533,10 +536,13 @@ function PileList({
   pile,
   onInc,
   onDec,
+  cap,
 }: {
   pile: Record<string, number>
   onInc: (id: string) => void
   onDec: (id: string) => void
+  /** Per-card copy cap — disables "+" once reached. */
+  cap?: number
 }) {
   const entries = Object.entries(pile)
     .map(([id, n]) => ({ card: getCard(id), id, n }))
@@ -568,7 +574,9 @@ function PileList({
             <span className="w-4 text-center font-mono text-xs">{n}</span>
             <button
               onClick={() => onInc(id)}
-              className="h-5 w-5 rounded bg-white/5 text-white/60 hover:bg-white/10"
+              disabled={cap != null && n >= cap}
+              title={cap != null && n >= cap ? `Max ${cap}` : undefined}
+              className="h-5 w-5 rounded bg-white/5 text-white/60 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
             >
               +
             </button>
@@ -632,7 +640,7 @@ function CardPool({
                 ? deck.battlefields.includes(c.id)
                   ? 1
                   : 0
-                : deck.main[c.id]
+                : (deck.main[c.id] ?? 0) + (deck.sideboard[c.id] ?? 0) // main + sideboard total
           return (
             <button
               key={c.id}
