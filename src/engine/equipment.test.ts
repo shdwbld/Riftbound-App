@@ -106,3 +106,43 @@ describe('equipment — gear triggers fire on the HOST unit’s event', () => {
     expect(state.players[0].zones.hand.length).toBe(0)
   })
 })
+
+describe('equipment — bespoke per-card effects', () => {
+  it('Guardian Angel: the equipped unit that would die is recalled; the gear kills itself', () => {
+    const s = baseState()
+    s.sandbox = true
+    const u = mk(furyUnit.id, 0, { attached: ['sfd-051-221|ga1'], damage: 1 })
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(false)
+    const recalled = r.state.players[0].zones.base.find((x) => x.iid === u.iid)
+    expect(recalled).toBeTruthy()
+    expect(recalled?.damage).toBe(0) // healed
+    expect(recalled?.attached.some((a) => a.startsWith('sfd-051-221'))).toBe(false) // gear gone
+    expect(r.state.players[0].zones.trash.some((x) => x.cardId === 'sfd-051-221')).toBe(true) // GA trashed
+  })
+
+  it('Skyfall: with "hold effects are also conquer effects", a hold-gear fires on conquer', () => {
+    const holdGear = injectGear('test-gear-hold', 'When I hold, draw 1.')
+    const withSkyfall = (attach: string[]) => {
+      const s = baseState()
+      s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+      const u = mk(furyUnit.id, 0, { attached: attach })
+      s.players[0].zones.base.push(u)
+      return reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 0 }).state
+    }
+    // Without Skyfall, a hold trigger does NOT fire on conquer.
+    expect(withSkyfall([`${holdGear}|h1`]).players[0].zones.hand.length).toBe(0)
+    // With Skyfall (sfd-030), conquer is aliased to hold → the hold-gear draws.
+    expect(withSkyfall([`${holdGear}|h2`, 'sfd-030-221|sky1']).players[0].zones.hand.length).toBe(1)
+  })
+
+  it('level-gated gear Might: unl-039 gives +1, plus an extra +1 at 3+ XP', () => {
+    const bare0 = displayMight(mk(furyUnit.id, 0), 0)
+    const bare3 = displayMight(mk(furyUnit.id, 0), 3)
+    const u = mk(furyUnit.id, 0, { attached: ['unl-039-219|lv1'] })
+    expect(displayMight(u, 0)).toBe(bare0 + 1) // flat +1 only
+    expect(displayMight(u, 3)).toBe(bare3 + 2) // flat +1 + level-3 additional +1
+  })
+})

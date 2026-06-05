@@ -1014,23 +1014,37 @@ function collectGlobal(s: MatchState, player: PlayerId, event: TriggerEvent): Fi
 function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?: string[]): FiredTrigger[] {
   const only = iids ? new Set(iids) : null
   const out: FiredTrigger[] = []
-  for (const u of controlledPermanents(s, player)) {
-    if (only && !only.has(u.iid)) continue
-    for (const ab of triggersFor(def(u), event))
+  // Collect a unit's own self-triggers for `ev`, plus those of any gear attached to it.
+  // Gear triggers resolve with the HOST as source (sourceIid) so "here"/"me" target the
+  // unit and its battlefield, while sourceCardId stays the gear (its text supplies the
+  // effect). Gear is only folded in for the filtered (host-event) case — the unfiltered
+  // path already surfaces gear under its own iid via controlledPermanents.
+  const pushFor = (u: EngineCard, ev: TriggerEvent) => {
+    for (const ab of triggersFor(def(u), ev))
       if (ab.scope === 'self') out.push({ player, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
-    // Attached gear: a gear's "when I / the equipped unit <event>" self-trigger fires
-    // on the HOST unit's event (move/attack/defend/conquer/hold/...). We resolve it
-    // with the HOST as source (sourceIid) so "here"/"me" target the unit and its
-    // battlefield, while sourceCardId stays the gear (its text supplies the effect).
-    // Gated on `only` (the host-event case); when unfiltered, controlledPermanents
-    // already surfaces gear under its own iid, so we don't double-collect here.
-    if (only && u.attached?.length) {
+    if (only && u.attached?.length)
       for (const ref of u.attached) {
         const gCard = getCard(ref.split('|')[0])
         if (!gCard) continue
-        for (const ab of triggersFor(gCard, event))
+        for (const ab of triggersFor(gCard, ev))
           if (ab.scope === 'self') out.push({ player, ability: ab, sourceIid: u.iid, sourceCardId: gCard.id })
       }
+  }
+  for (const u of controlledPermanents(s, player)) {
+    if (only && !only.has(u.iid)) continue
+    pushFor(u, event)
+  }
+  // Skyfall (sfd-030): "My hold effects are also conquer effects, and vice versa." A
+  // unit carrying this clause (printed or via attached gear) also fires the OTHER
+  // event's self-triggers on a hold/conquer collection.
+  const alias = event === 'conquer' ? 'hold' : event === 'hold' ? 'conquer' : null
+  if (only && alias) {
+    const hasSkyfall = (u: EngineCard) =>
+      /hold effects are also conquer effects/i.test(getCard(u.cardId)?.text ?? '') ||
+      (u.attached ?? []).some((ref) => /hold effects are also conquer effects/i.test(getCard(ref.split('|')[0])?.text ?? ''))
+    for (const u of controlledPermanents(s, player)) {
+      if (!only.has(u.iid) || !hasSkyfall(u)) continue
+      pushFor(u, alias)
     }
   }
   return out
@@ -1376,7 +1390,7 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
   // no other friendly units at its battlefield (survivors + same-batch casualties).
   const mightyAtDeath = (u: EngineCard) => {
     const d = getCard(u.cardId)
-    return !!d && d.type === 'unit' && d.might + (u.buffs ?? 0) + (u.tempMight ?? 0) + gearMight(u) + levelBonus(d, s.players[u.owner]?.xp ?? 0).might >= 5
+    return !!d && d.type === 'unit' && d.might + (u.buffs ?? 0) + (u.tempMight ?? 0) + gearMight(u, s.players[u.owner]?.xp ?? 0) + levelBonus(d, s.players[u.owner]?.xp ?? 0).might >= 5
   }
   const aloneAtDeath = (u: EngineCard) => {
     const bf = u.diedAtBf != null ? s.battlefields[u.diedAtBf] : null
@@ -2559,10 +2573,18 @@ function grantHunt(s: MatchState, player: PlayerId, bfIndex: number): MatchState
  *  scopes the location-bound saves ("…you control here"). */
 function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard, bfIndex?: number): boolean {
   if (u.deathShield) { u.deathShield = false; return true }
-  const zh = u.attached.find((ref) => /if a friendly unit would die, kill this/i.test(getCard(ref.split('|')[0])?.text ?? ''))
-  if (zh) {
-    const [gid, giid] = zh.split('|')
-    u.attached = u.attached.filter((r) => r !== zh)
+  // Self-sacrificing attached gear that saves the equipped unit: Zhonya's Hourglass
+  // ("if a friendly unit would die, kill this instead") and Guardian Angel ("if I
+  // would die, kill Guardian Angel instead. Heal me, exhaust me, and recall me."). The
+  // gear kills itself (→ its owner's trash) and the host is recalled by the caller.
+  const saver = u.attached.find((ref) => {
+    const gc = getCard(ref.split('|')[0])
+    const txt = (gc?.text ?? '').toLowerCase()
+    return /would die/.test(txt) && (txt.includes('kill this') || (gc != null && txt.includes(`kill ${gc.name.toLowerCase()}`)))
+  })
+  if (saver) {
+    const [gid, giid] = saver.split('|')
+    u.attached = u.attached.filter((r) => r !== saver)
     s.players[u.owner].zones.trash.push({ iid: giid || `${u.owner}:gear:${gid}`, cardId: gid, owner: u.owner, exhausted: false, damage: 0, attached: [] })
     return true
   }
@@ -3204,7 +3226,7 @@ function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
   if (!d || !isUnit(d)) return 0
   const k = parseKeywords(d)
   if (k.backline) return 0
-  let m = d.might - ci.damage + gearMight(ci) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
+  let m = d.might - ci.damage + gearMight(ci, xp) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
   if (role === 'attacker') m += k.assault + (ci.grantAssault ?? 0) // [Assault] granted this turn
   if (role === 'defender') m += k.shield
   // Attached gear grants its [Assault]/[Shield] to the equipped unit's combat role
@@ -3272,7 +3294,7 @@ function unitStateNames(s: MatchState, u: EngineCard): StateName[] {
 export function displayMight(ci: EngineCard, xp = 0): number {
   const d = getCard(ci.cardId)
   if (!d || d.type !== 'unit') return 0
-  return Math.max(0, d.might + (ci.buffs ?? 0) + (ci.tempMight ?? 0) + gearMight(ci) + levelBonus(d, xp).might - ci.damage)
+  return Math.max(0, d.might + (ci.buffs ?? 0) + (ci.tempMight ?? 0) + gearMight(ci, xp) + levelBonus(d, xp).might - ci.damage)
 }
 
 /** A breakdown of a unit's Might for UI ("2 + 1 = 3 (this turn)"). */
@@ -3290,7 +3312,7 @@ export function mightBreakdown(ci: EngineCard, xp = 0): MightBreakdown | null {
   if (!d || d.type !== 'unit') return null
   const base = d.might
   const buffs = ci.buffs ?? 0
-  const gear = gearMight(ci)
+  const gear = gearMight(ci, xp)
   const temp = ci.tempMight ?? 0
   const level = levelBonus(d, xp).might
   const damage = ci.damage
@@ -3329,7 +3351,7 @@ export function mightBreakdownAt(
   if (!d || d.type !== 'unit') return null
   const xp = s.players[u.owner]?.xp ?? 0
   const level = levelBonus(d, xp).might
-  const mods = (u.buffs ?? 0) + (u.tempMight ?? 0) + gearMight(u) + level + auraMightFor(s, bfIndex, u)
+  const mods = (u.buffs ?? 0) + (u.tempMight ?? 0) + gearMight(u, xp) + level + auraMightFor(s, bfIndex, u)
   return { base: d.might, effective: Math.max(0, d.might + mods - u.damage), mods }
 }
 
@@ -3378,7 +3400,7 @@ export function gearBonus(ci: EngineCard): number {
 }
 
 /** Flat +Might granted by attached gear (parsed from "+N Might" gear text). */
-function gearMight(unit: EngineCard): number {
+function gearMight(unit: EngineCard, xp = 0): number {
   let bonus = 0
   for (const gid of unit.attached) {
     const g = getCard(gid.split('|')[0]) // attached stored as "cardId|iid"
@@ -3391,6 +3413,11 @@ function gearMight(unit: EngineCard): number {
     const m = t.match(/\+(\d+)\s*(?::rb_might:|might\b)(?!\s+while)/i)
     // Excludes granted/temporary pumps (Spirit's Refuge buff, Mask of Foresight).
     if (m && !/this turn|buff|give|gets|gains/i.test(t)) bonus += parseInt(m[1], 10)
+    // Level-gated additional gear Might (e.g. "[Level 3][>] I have an additional +1
+    // :rb_might:.") applies while the controller has that many XP. `.match` above
+    // already took the FLAT base from the first "+N Might", so this adds the extra.
+    const lvl = t.match(/\[level (\d+)\][^.]*?additional \+(\d+)\s*(?::rb_might:|might\b)/i)
+    if (lvl && xp >= parseInt(lvl[1], 10)) bonus += parseInt(lvl[2], 10)
   }
   // Gearhead: "Each Equipment attached to me gives double its base Might bonus."
   if (/each equipment attached to me gives double its base might/i.test(getCard(unit.cardId)?.text ?? '')) bonus *= 2
