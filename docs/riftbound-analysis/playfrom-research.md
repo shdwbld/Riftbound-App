@@ -1,5 +1,19 @@
 # `playFrom` research — play a card from deck/trash (fix-queue #2)
 
+> **STATUS (implemented):** All 6 patterns now resolve in the engine. The `cc54f4b`
+> "trash 3/3" series built A (reveal-until-unit), C (choose-from-trash free), D
+> (choose-from-trash energy-only + recycle), and B's auto-play core. This pass added
+> **E (full-cost trash play)** for Last Rites (+ a `cards.ts` text-patch restoring its
+> dropped conquer/hold bonus), **F (play-from-hand)** for Rift Herald, and routed B
+> (`peekBanishPlay`) through `ACTIVATE_UNIT` so activated gear like **Baited Hook**
+> resolves (incl. a multi-sentence graft in `unitActivatedAbility` so the deck-dig
+> isn't truncated). Known simplifications: Baited Hook's "kill-a-friendly → Might≤
+> killed+1" ceiling is unmodeled (auto-plays highest-cost); Last Rites' delivery from
+> an attached gear's conquer/hold awaits the separate gear-as-trigger-source fix; and
+> `[Add]`/Seal `[Reaction]` timing is still your-turn-only. Tests: `engine.test.ts`
+> ("Glasc", "Rift Herald", "full-cost play-from-trash", "Baited Hook", + parse cases).
+
+
 Implementation-grade research for the **"Play a card from deck/trash for free"** gap
 (gap-matrix top fix #1 / handler-coverage fix-queue #2). Produced by a Sonnet research
 agent (June 2026, Unleashed meta) reading our dossiers + card data + web rulings. **Fan

@@ -135,7 +135,12 @@ export interface ParsedEffect {
    *  (≤maxEnergy Energy / ≤maxPower Power). Resolves to the highest-cost qualifier.
    *  `energyOnly` = "ignoring its ENERGY cost" (still pay Power) vs "ignoring its
    *  cost" (free). */
-  playUnitFromTrash: { maxEnergy: number | null; maxPower: number | null; energyOnly: boolean } | null
+  playUnitFromTrash: { maxEnergy: number | null; maxPower: number | null; energyOnly: boolean; fullCost?: boolean } | null
+  /** Play a UNIT from your HAND, ignoring its (Energy) cost — Rift Herald's
+   *  Deathknell ("Play a unit from your hand to your base, ignoring its Energy
+   *  cost"). `energyOnly` keeps the Power cost due (Rift Herald); otherwise free.
+   *  Auto-plays the highest-cost unit in hand into base. */
+  playUnitFromHand: { energyOnly: boolean } | null
   /** Play a SPELL from your trash, then recycle it — Fizz - Trickster (Energy cost
    *  ≤ maxEnergy), Kai'Sa - Evolutionary (`dynamicCap:'points'` = Energy cost <
    *  your points). `energyOnly` ignores only the Energy cost (still pay Power). */
@@ -201,7 +206,7 @@ export interface ParsedEffect {
   manual: boolean
 }
 
-const EMPTY_EFFECT = (): ParsedEffect => ({
+export const EMPTY_EFFECT = (): ParsedEffect => ({
   draw: 0,
   discard: 0,
   channel: 0,
@@ -245,6 +250,7 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   banishOnDeath: false,
   returnFromTrash: null,
   playUnitFromTrash: null,
+  playUnitFromHand: null,
   playSpellFromTrash: null,
   revealPlayFromDeck: false,
   peekDraw: null,
@@ -547,6 +553,21 @@ function parse(text: string): ParsedEffect {
     // "ignoring its ENERGY cost" (The Harrowing, Soulgorger) still charges the
     // Power cost; "ignoring its cost" (Spectral Matron, Glasc) waives everything.
     eff.playUnitFromTrash = { maxEnergy: me ? parseInt(me[1], 10) : null, maxPower: mp || null, energyOnly: !!putM[1] }
+    hit = true
+  }
+  // Full-cost variant — "play a unit from your trash. (You still pay its costs.)"
+  // (Last Rites). No cost is ignored; only the from-hand restriction is bypassed,
+  // so the unit's full Energy + Power is paid from the pool.
+  if (!eff.playUnitFromTrash && /play a unit from your trash\b/.test(t) && /(?:you )?still pay its costs?\b/.test(t)) {
+    eff.playUnitFromTrash = { maxEnergy: null, maxPower: null, energyOnly: false, fullCost: true }
+    hit = true
+  }
+  // Play a unit from your HAND, ignoring its (Energy) cost — Rift Herald's
+  // [Deathknell] ("Play a unit from your hand to your base, ignoring its Energy
+  // cost"). "ignoring its ENERGY cost" still owes Power.
+  const pufhM = t.match(/play a unit from your hand(?: to your base)?[^.]*?ignoring its (energy )?cost/)
+  if (pufhM) {
+    eff.playUnitFromHand = { energyOnly: !!pufhM[1] }
     hit = true
   }
   // Play a SPELL from your trash, then recycle it — Fizz - Trickster ("Energy cost

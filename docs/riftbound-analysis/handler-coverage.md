@@ -104,8 +104,15 @@ are worth **generalizing into a reusable handler** because the pool has many sib
    self·runes·here) / channel-exhausted** now resolve via `ACTIVATE_UNIT`, with targeting wired
    in both pages. **Remaining activated tail:** `score`, `move-to-battlefield`, `dealMight`,
    `copy` — folded into items 5/6/8 below. (Also deferred: `[Reaction]`-speed for `[Add]`/Seals.)
-2. **Play-from-deck/trash for free** — gap-matrix **#1** (5 meta decks) + the trash-recursion
-   family; a fully-missing `playFrom` effect.
+2. ~~**Play-from-deck/trash for free**~~ — **DONE.** The `cc54f4b` trash-recursion series + this
+   pass built all 6 `playFrom` patterns: reveal-until-unit (Dazzling Aurora), choose-from-trash
+   free/energy-only (Glasc, Fizz, Soulgorger, Kai'Sa), **full-cost** (Last Rites — added this pass,
+   + a `cards.ts` text-patch for its dropped bonus), look-top-N→banish→play (Baited Hook — now
+   routed through `ACTIVATE_UNIT`), and **play-from-hand** (Rift Herald — added this pass). All
+   auto-resolve to the highest-cost qualifier. Remaining nuance, deferred: Baited Hook's
+   "kill-a-friendly → Might≤killed+1" ceiling is unmodeled, and Last Rites' *delivery* (firing from
+   an attached gear's conquer/hold) is blocked on the separate **gear-as-trigger-source** item. See
+   [playfrom-research.md](playfrom-research.md).
 3. **Replacement / "would die" layer** (heal / recall / prevent) — gap-matrix #6; the only
    fully-missing KIND; unlocks Sett, Zhonya's, Guardian Angel + ~16 cards.
 4. **Stun triggers + "if target stunned"** — gap-matrix #3 (4 decks).

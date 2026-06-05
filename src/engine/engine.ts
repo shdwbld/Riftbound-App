@@ -25,7 +25,7 @@ function playerTurnOrdinal(s: MatchState, player: PlayerId): number {
   const rank = (player - s.firstPlayer + s.players.length) % s.players.length
   return Math.floor((s.turn - 1 - rank) / s.players.length) + 1
 }
-import { spellEffect, onPlayEffect, paidBonusEffect, endOfTurnEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, parseEffectText, type ParsedEffect } from './effects'
+import { spellEffect, onPlayEffect, paidBonusEffect, endOfTurnEffect, needsTarget, hasUntargetedPart, hasTargetedPart, isCopySpell, parseEffectText, EMPTY_EFFECT, type ParsedEffect } from './effects'
 import { triggersFor, parseTriggers, orderTriggers, type TriggerEvent, type FiredTrigger } from './triggers'
 import { battlefieldPassive } from './battlefields'
 
@@ -587,16 +587,47 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       .sort((a, b) => (stats(b).energy + stats(b).power) - (stats(a).energy + stats(a).power))[0]
     if (pick) {
       // "ignoring its ENERGY cost" still charges the unit's Power cost (The
-      // Harrowing, Soulgorger). Auto-pay it from the pool (generic, like Altar);
-      // if it can't be paid, the play doesn't happen.
-      const powerDue = e.playUnitFromTrash.energyOnly ? stats(pick).power : 0
-      if (powerDue > 0 && !makeBfApi(s).payPowerAny(p.id, powerDue)) {
-        lines.push(`Couldn't play ${getCard(pick.cardId)?.name ?? 'a unit'} from trash — can't pay its Power cost.`)
+      // Harrowing, Soulgorger); the full-cost variant (Last Rites — "you still pay
+      // its costs") pays BOTH Energy and Power from the pool; "ignoring its cost"
+      // is free. Pre-check affordability so we never half-pay; if unaffordable, the
+      // play doesn't happen.
+      const st = stats(pick)
+      const energyDue = e.playUnitFromTrash.fullCost ? st.energy : 0
+      const powerDue = e.playUnitFromTrash.fullCost || e.playUnitFromTrash.energyOnly ? st.power : 0
+      const readyRunes = p.zones.runePool.filter((r) => !r.exhausted).length
+      const poolE = p.pool?.energy ?? 0
+      const canPay = powerDue + Math.max(0, energyDue - poolE) <= readyRunes
+      if ((powerDue > 0 || energyDue > 0) && !canPay) {
+        lines.push(`Couldn't play ${getCard(pick.cardId)?.name ?? 'a unit'} from trash — can't pay its cost.`)
       } else {
+        const api = makeBfApi(s)
+        if (powerDue > 0) api.payPowerAny(p.id, powerDue)
+        if (energyDue > 0) api.payEnergy(p.id, energyDue)
         const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
         const [card] = p.zones.trash.splice(i, 1)
         p.zones.base.push({ ...card, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher: non-hand plays enter ready
-        lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (ignoring ${powerDue > 0 ? 'Energy' : ''} cost${powerDue > 0 ? `, paid ${powerDue} Power` : ''}).`)
+        const note = e.playUnitFromTrash.fullCost ? `paid ${energyDue} Energy${powerDue ? ` + ${powerDue} Power` : ''}` : powerDue > 0 ? `ignoring Energy, paid ${powerDue} Power` : 'free'
+        lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (${note}).`)
+      }
+    }
+  }
+  if (e.playUnitFromHand) {
+    // Play the highest-cost unit from your hand, ignoring its (Energy) cost —
+    // Rift Herald's [Deathknell]. "ignoring its ENERGY cost" still charges Power.
+    const powerOf = (c: EngineCard) => {
+      const d = getCard(c.cardId) as { power?: Record<string, number> } | undefined
+      return d?.power ? Object.values(d.power).reduce((a, b) => a + (b || 0), 0) : 0
+    }
+    const pick = p.zones.hand.filter((c) => getCard(c.cardId)?.type === 'unit').sort((a, b) => cardCost(b) - cardCost(a))[0]
+    if (pick) {
+      const powerDue = e.playUnitFromHand.energyOnly ? powerOf(pick) : 0
+      if (powerDue > 0 && !makeBfApi(s).payPowerAny(p.id, powerDue)) {
+        lines.push(`Couldn't play ${getCard(pick.cardId)?.name ?? 'a unit'} from hand — can't pay its Power cost.`)
+      } else {
+        const i = p.zones.hand.findIndex((x) => x.iid === pick.iid)
+        const [card] = p.zones.hand.splice(i, 1)
+        p.zones.base.push({ ...card, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher
+        lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from hand (ignoring ${powerDue > 0 ? 'Energy' : ''} cost${powerDue > 0 ? `, paid ${powerDue} Power` : ''}).`)
       }
     }
   }
@@ -1947,6 +1978,20 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
   const effectText = (pIdx >= 0 ? rest.slice(0, pIdx) : rest).trim()
   const power: Partial<Record<Domain, number>> = {}
   for (const rm of cl.matchAll(/:rb_rune_([a-z]+):/g)) power[rm[1] as Domain] = (power[rm[1] as Domain] ?? 0) + 1
+  // Most activated abilities are one sentence, but deck-dig / play-from-zone ones
+  // span sentences (Baited Hook: "Kill a friendly unit. Look at the top 5 …") and
+  // the first-sentence `effectText` drops the play step. Graft those fields from a
+  // full-clause parse so they resolve — without disturbing single-sentence cards or
+  // the ones whose later sentence is handled via srcText.
+  const effect = parseEffectText(effectText)
+  const full = parseEffectText(rest)
+  if (!effect.peekBanishPlay && full.peekBanishPlay) effect.peekBanishPlay = full.peekBanishPlay
+  if (!effect.peekDraw && full.peekDraw) effect.peekDraw = full.peekDraw
+  if (!effect.peekToHand && full.peekToHand) effect.peekToHand = full.peekToHand
+  if (!effect.playUnitFromTrash && full.playUnitFromTrash) effect.playUnitFromTrash = full.playUnitFromTrash
+  if (!effect.playUnitFromHand && full.playUnitFromHand) effect.playUnitFromHand = full.playUnitFromHand
+  if (!effect.returnFromTrash && full.returnFromTrash) effect.returnFromTrash = full.returnFromTrash
+  if (!effect.revealPlayFromDeck && full.revealPlayFromDeck) effect.revealPlayFromDeck = true
   return {
     exhaust: /:rb_exhaust:/.test(cl),
     energy: parseInt((cl.match(/:rb_energy_(\d+):/) || [])[1] || '0', 10),
@@ -1965,7 +2010,7 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
     killThis: /\bkill this\b/.test(cl),
     requiresBattlefield: /only while (?:i'm|i am) at a battlefield/i.test(text),
     doubleMight: /double my might/i.test(effectText),
-    effect: parseEffectText(effectText),
+    effect,
     effectText,
     label: effectText.replace(/\s*:rb_[a-z_0-9]+:\s*/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40),
   }
@@ -5087,6 +5132,26 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (!p.pool) p.pool = { energy: 0, power: {} }
         p.pool.energy += ab.effect.addEnergy
         for (const [d, n] of Object.entries(ab.effect.addPower)) p.pool.power[d as Domain] = (p.pool.power[d as Domain] ?? 0) + (n ?? 0)
+      }
+      // Deck/trash play-from-zone + deck-dig families aren't in the curated set
+      // above — route them through the generic applier so activated gear like
+      // Baited Hook ("Look at the top 5 → banish a unit → play it free") resolves.
+      // A minimal effect carrying only these fields avoids re-applying the curated
+      // ones. (The Might-ceiling tied to the killed unit is a known simplification:
+      // peekBanishPlay auto-plays the highest-cost unit in the revealed cards.)
+      if (ab.effect.peekBanishPlay || ab.effect.playUnitFromTrash || ab.effect.playUnitFromHand || ab.effect.revealPlayFromDeck || ab.effect.peekDraw || ab.effect.peekToHand || ab.effect.returnFromTrash) {
+        const sub: ParsedEffect = {
+          ...EMPTY_EFFECT(),
+          peekBanishPlay: ab.effect.peekBanishPlay,
+          playUnitFromTrash: ab.effect.playUnitFromTrash,
+          playUnitFromHand: ab.effect.playUnitFromHand,
+          revealPlayFromDeck: ab.effect.revealPlayFromDeck,
+          peekDraw: ab.effect.peekDraw,
+          peekToHand: ab.effect.peekToHand,
+          returnFromTrash: ab.effect.returnFromTrash,
+        }
+        const bi = battlefieldOf(s1, u.iid)
+        for (const line of applyParsed(s1, p, sub, bi >= 0 ? bi : undefined, u.iid)) s1 = log(s1, action.player, line)
       }
       // Recruit token(s) (Viktor - Herald of the Arcane: "Play a 1 Might Recruit").
       if (ab.effect.recruits) {

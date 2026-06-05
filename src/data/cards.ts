@@ -12,10 +12,24 @@ import extra from './extraCards.json'
 // Re-generate after a new set releases:  node scripts/ingest-cards.mjs
 // ---------------------------------------------------------------------------
 
+/** Rules-text patches for cards whose ingested text is incomplete — the Riftcodex
+ *  API occasionally stores only an [Equip] cost line and drops the equipped-unit
+ *  bonus. Keyed by card id; the value REPLACES the card's `text`. Re-applied after
+ *  every ingest (so `node scripts/ingest-cards.mjs` won't lose the fix). */
+const TEXT_PATCHES: Record<string, string> = {
+  // Last Rites — ingest captured only the [Equip] cost; restore the conquer/hold
+  // bonus so its full-cost play-from-trash resolves (see playfrom-research.md).
+  'sfd-150-221':
+    '[Equip] — :rb_rune_chaos:, Recycle 2 cards from your trash (Pay the cost: Attach this to a unit you control.) When I conquer or hold, you may play a unit from your trash. (You still pay its costs.)',
+}
+
+const applyPatches = (cards: Card[]): Card[] =>
+  cards.map((c) => (TEXT_PATCHES[c.id] ? { ...c, text: TEXT_PATCHES[c.id] } : c))
+
 /** Every card, including alternate-art reprints, plus supplemental cards missing
  *  from the ingested dataset (see extraCards.json). */
 export const ALL_CARDS = [
-  ...(generated as unknown as Card[]),
+  ...applyPatches(generated as unknown as Card[]),
   ...(extra as unknown as Card[]),
 ]
 

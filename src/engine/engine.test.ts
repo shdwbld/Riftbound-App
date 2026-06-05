@@ -1002,6 +1002,81 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.mainDeck.some((x) => x.iid === unitInDeck.iid)).toBe(false)
   })
 
+  it('Glasc Mixologist (real card): Deathknell plays a qualifying unit from trash, skips over-cost ones', () => {
+    const small = injectCard('glasc-small-t', 'A small unit.', { type: 'unit', energy: 2, power: { order: 1 }, might: 2 })
+    const big = injectCard('glasc-big-t', 'Too expensive.', { type: 'unit', energy: 9, power: {}, might: 9 })
+    const s = baseState()
+    s.sandbox = true
+    const glasc = mk('sfd-165-221', 0)
+    s.players[0].zones.base.push(glasc)
+    s.players[0].zones.trash.push(mk(big, 0), mk(small, 0))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: glasc.iid })
+    expect(r.error).toBeFalsy()
+    // The ≤3 Energy / ≤1 rune unit came into base for free; the 9-cost one stayed in trash.
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === small)).toBe(true)
+    expect(r.state.players[0].zones.trash.some((x) => x.cardId === big)).toBe(true)
+  })
+
+  it('Rift Herald (real card): Deathknell plays a unit from hand, ignoring its Energy cost', () => {
+    const handUnit = injectCard('rh-hand-t', 'A unit to drop.', { type: 'unit', energy: 7, power: {}, might: 5 })
+    const s = baseState()
+    s.sandbox = true
+    const rh = mk('unl-179-219', 0)
+    s.players[0].zones.base.push(rh)
+    s.players[0].zones.hand.push(mk(handUnit, 0))
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: rh.iid })
+    expect(r.error).toBeFalsy()
+    // 7-Energy unit dropped into base for free (no Power cost); gone from hand.
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === handUnit)).toBe(true)
+    expect(r.state.players[0].zones.hand.some((x) => x.cardId === handUnit)).toBe(false)
+  })
+
+  it('parse: play-from-hand (Rift Herald) and full-cost play-from-trash (Last Rites)', async () => {
+    const { parseEffectText } = await import('./effects')
+    expect(parseEffectText('Play a unit from your hand to your base, ignoring its Energy cost.').playUnitFromHand)
+      .toEqual({ energyOnly: true })
+    expect(parseEffectText('Play a unit from your hand, ignoring its cost.').playUnitFromHand)
+      .toEqual({ energyOnly: false })
+    expect(parseEffectText('When I conquer or hold, you may play a unit from your trash. (You still pay its costs.)').playUnitFromTrash)
+      .toEqual({ maxEnergy: null, maxPower: null, energyOnly: false, fullCost: true })
+  })
+
+  it('Last Rites (real card): text patch restores the conquer/hold play-from-trash bonus', () => {
+    expect(/play a unit from your trash/i.test(CARD_INDEX['sfd-150-221']?.text ?? '')).toBe(true)
+  })
+
+  it('full-cost play-from-trash pays the unit\'s full Energy + Power (Last Rites pattern)', () => {
+    const trashUnit = injectCard('fullcost-trash-t', 'A unit.', { type: 'unit', energy: 2, power: { fury: 1 }, might: 4 })
+    const src = injectCard('fullcost-src-t', 'When you play me, play a unit from your trash. (You still pay its costs.)', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const s = baseState()
+    s.players[0].pool.energy = 2 // 2 Energy from the pool
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 ready rune for the 1 Power
+    s.players[0].zones.trash.push(mk(trashUnit, 0))
+    const u = mk(src, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === trashUnit)).toBe(true)
+    expect(r.state.players[0].pool.energy).toBe(0) // 2 Energy spent
+    expect(r.state.players[0].zones.runePool.length).toBe(0) // 1 Power rune spent
+  })
+
+  it('activated peekBanishPlay resolves via ACTIVATE_UNIT (Baited Hook pattern)', () => {
+    const gear = injectCard('peek-gear-t', ':rb_exhaust:: Look at the top 5 cards of your Main Deck. You may banish a unit from among them and play it, ignoring its cost. Then recycle the rest.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const g = mk(gear, 0)
+    s.players[0].zones.base.push(g)
+    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0), mk(furyUnit.id, 0)]
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: g.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === furyUnit.id)).toBe(true)
+  })
+
+  it('Baited Hook (real card): activated effect parses to peekBanishPlay (top 5)', () => {
+    const ab = unitActivatedAbility(CARD_INDEX['ogn-242-298'])
+    expect(ab?.effect.peekBanishPlay?.n).toBe(5)
+  })
+
   it("Zhonya's Hourglass: an equipped unit that would die is healed + recalled; the gear dies", () => {
     const s = baseState()
     s.sandbox = true
