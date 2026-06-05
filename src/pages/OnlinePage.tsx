@@ -17,6 +17,7 @@ import { createMatch } from '../engine/setup'
 import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
+import { checkInvariants } from '../engine/invariants'
 import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import PaymentModal from '../components/PaymentModal'
@@ -265,6 +266,7 @@ export default function OnlinePage() {
           historyRef.current.push(cur)
           if (historyRef.current.length > 100) historyRef.current.shift()
           lastStepRef.current = { pre: cur, action: msg.action, post: state, events: events ?? [] }
+          if (import.meta.env.DEV) { const viol = checkInvariants(state); if (viol.length) console.warn('[invariants]', msg.action.type, viol) }
           matchRef.current = state
           setLastEvents(events)
           setMatch(state)
@@ -395,6 +397,7 @@ export default function OnlinePage() {
       historyRef.current.push(cur)
       if (historyRef.current.length > 100) historyRef.current.shift()
       lastStepRef.current = { pre: cur, action, post: state, events: events ?? [] }
+      if (import.meta.env.DEV) { const viol = checkInvariants(state); if (viol.length) console.warn('[invariants]', action.type, viol) }
       matchRef.current = state
       setLastEvents(events)
       setMatch(state)
