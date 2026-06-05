@@ -23,25 +23,34 @@
 ## Coverage summary (984 cards)
 | Bucket | Count | % | Meaning |
 |---|--:|--:|---|
-| `fully-parsed` | 406 | 41% | every text clause maps to a `ParsedEffect` key |
-| `keyword-only` | 213 | 22% | only `[Keyword]`s (Tank/Assault/…), already handled |
-| `manual-unhandled` | 315 | 32% | text present, parser extracted nothing usable |
-| `partial` | 26 | 3% | some clauses parsed, some flagged `manual` |
+| `fully-parsed` | 490 | 50% | every text clause maps to a `ParsedEffect` key |
+| `keyword-only` | 109 | 11% | only `[Keyword]`s (Tank/Assault/…), already handled |
+| `manual-unhandled` | 332 | 34% | text present, parser extracted nothing usable |
+| `partial` | 29 | 3% | some clauses parsed, some flagged `manual` |
 | `vanilla` | 24 | 2% | no rules text (basic runes etc.) |
 | hand-coded | 99 | — | bespoke per-card/ -battlefield handlers (overlaps the above) |
 
-So **~63% of the pool already resolves** (parsed + keyword + vanilla), bespoke code covers
-~66 more of the manual ones, leaving **~275 cards** that need a handler — and they cluster
-tightly into a handful of families below.
+So **~63% of the pool resolves on its own** (parsed + keyword + vanilla), bespoke code covers
+more of the rest, leaving **~290 cards** (manual/partial and not hand-coded) that need a
+handler — clustered into the families below.
 
-## The headline lever: wire generic **activated abilities** (`<cost>: <effect>`)
-**~75 manual/partial cards are activated abilities** — `:rb_exhaust:`/`:rb_energy_N:`/rune
-`: <effect>`. The *effect* almost always already parses (buff / ready / deal / draw / move /
-token); what's missing is auto-detecting the **activated KIND** (`card-grammar.md` §3) and
-offering it via `ACTIVATE_UNIT`. Examples: Iron Ballista, Unlicensed Armory, Caitlyn -
-Patrolling, Arena Bar, Orb of Regret, Ravenborn Tome, Garbage Grabber. **One generic
-"parse `<cost>: <effect>` → offer as an activated ability" pass would reclaim the single
-largest slice of the manual bucket.**
+> **Important nuance (discovered this pass): the scan measures PARSE coverage, not RESOLUTION.**
+> A card can be `fully-parsed` (the parser understood the text) yet not be *resolved* by the
+> reducer. This matters most for **activated abilities** — see below.
+
+## Activated abilities — the real story (updated)
+Activated abilities (`<cost>: <effect>`) are **already detected and offered generically**
+(`unitActivatedAbility` + `ACTIVATE_UNIT`); **167 cards** have one. But `ACTIVATE_UNIT`
+**resolves only a curated set of effects**: damage, tempMight, buff, move-to-base,
+return-to-hand, draw, channel, recruits, named/gold tokens, predict, gainXP — and now
+**`[Add]` resources** (added this pass: ~41 rune-ramp cards — the Seals, Energy Conduit,
+Malzahar - Fanatic — now actually add Power/Energy to the pool; previously activating them did
+nothing). Activated effects **outside** that set still parse but **don't resolve yet** — the
+biggest remaining: **ready/exhaust a unit, stun, kill, score, grant-keyword, channel-exhausted,
+move-to-battlefield**. **72 activated cards are still effectively manual** for this reason.
+**The next concrete fix is to resolve the rest of these activated effects** (route the
+activated effect through the generic `applyParsed`, or extend the inline set) — that single
+change unblocks the bulk of the remaining activated cards.
 
 ## By mechanic family — "apply this learning to these cards"
 Counts are over the 341 manual/partial cards (full lists in the dataset). "Effect status" =
@@ -88,8 +97,11 @@ are worth **generalizing into a reusable handler** because the pool has many sib
 - Most other hand-coded cards are genuine one-offs; leave them.
 
 ## Prioritized fix queue (pool reach × meta impact)
-1. **Generic activated abilities** (`<cost>: <effect>`) — **~75 cards**, biggest single pool
-   lever; the effects already parse. (`card-grammar.md` §3 KIND `activated`.)
+1. **Resolve the rest of the activated-ability effects** — activated abilities are already
+   offered; `ACTIVATE_UNIT` resolves a curated set, and `[Add]` resources were added this pass
+   (~41 cards fixed). The remaining ~72 activated cards need their effect *resolved*
+   (ready/stun/kill/score/grant/channel-exhausted/move-to-bf) — route the activated effect
+   through the generic `applyParsed`, or extend the inline set. Biggest single lever left.
 2. **Play-from-deck/trash for free** — gap-matrix **#1** (5 meta decks) + the trash-recursion
    family; a fully-missing `playFrom` effect.
 3. **Replacement / "would die" layer** (heal / recall / prevent) — gap-matrix #6; the only

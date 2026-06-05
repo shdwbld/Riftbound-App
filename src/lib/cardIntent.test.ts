@@ -33,6 +33,16 @@ describe('cardIntent', () => {
     }
   })
 
+  it('prefill includes activated abilities (<cost>: <effect>)', () => {
+    const ballista = CARDS.find((c) => c.name.startsWith('Iron Ballista'))
+    if (!ballista) return
+    const spec = prefillSpecFromCard(ballista)
+    const act = spec.abilities.find((a) => a.kind === 'activated')
+    expect(act).toBeTruthy()
+    expect(act?.cost?.exhaustSelf).toBe(true)
+    expect((act?.effects ?? []).some((e) => e.key === 'damage')).toBe(true)
+  })
+
   it('summarizeSpec produces a short non-crashing summary', () => {
     expect(summarizeSpec(null)).toBe('')
     expect(summarizeSpec({ abilities: [{ kind: 'play', effects: [{ key: 'draw', amount: 2 }] }], comments: '' })).toMatch(/Draw/i)

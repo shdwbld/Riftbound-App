@@ -5068,6 +5068,13 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)
+      // "[Add] <resource>" — rune-ramp gear (Seals, Energy Conduit) add Power/Energy
+      // directly to the pool.
+      if (ab.effect.addEnergy || Object.keys(ab.effect.addPower).length) {
+        if (!p.pool) p.pool = { energy: 0, power: {} }
+        p.pool.energy += ab.effect.addEnergy
+        for (const [d, n] of Object.entries(ab.effect.addPower)) p.pool.power[d as Domain] = (p.pool.power[d as Domain] ?? 0) + (n ?? 0)
+      }
       // Recruit token(s) (Viktor - Herald of the Arcane: "Play a 1 Might Recruit").
       if (ab.effect.recruits) {
         spawnRecruits(p, ab.effect.recruits, s1.turn)

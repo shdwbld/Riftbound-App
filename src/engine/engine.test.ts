@@ -5286,6 +5286,17 @@ describe('Manual override — grant flags / setDamage / readyAll', () => {
     expect(r.state.players[0].zones.hand.length).toBe(before + 1)
   })
 
+  it('ACTIVATE_UNIT resolves "[Add] <resource>" rune-ramp abilities', () => {
+    const s = baseState()
+    const gid = injectCard('seal-add-test', ':rb_exhaust:: [Add] :rb_rune_fury:.', { type: 'gear', energy: 0, power: {} })
+    const g = mk(gid, 0)
+    s.players[0].zones.base.push(g)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: g.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].pool?.power.fury).toBe(1)
+    expect(r.state.players[0].zones.base.find((x) => x.iid === g.iid)?.exhausted).toBe(true)
+  })
+
   it('marker cycles and clears', () => {
     const s = baseState(); s.sandbox = true
     const u = mk(furyUnit.id, 0)

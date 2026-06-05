@@ -5,6 +5,13 @@ const spell = (text: string) =>
   ({ id: 'x', name: 'X', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
 
 describe('effect DSL (Phase 2)', () => {
+  it('parses "[Add] <resource>" rune-ramp (Seals / Energy Conduit)', () => {
+    const fury = parseEffectText('[Add] :rb_rune_fury:.')
+    expect(fury.addPower.fury).toBe(1)
+    const en = parseEffectText('[Add] :rb_energy_2:.')
+    expect(en.addEnergy).toBe(2)
+  })
+
   it('targeted damage at a battlefield is enemy-scoped', () => {
     const e = parseEffectText('Deal 3 to a unit at a battlefield.')
     expect(e.damage).toBe(3)

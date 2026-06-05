@@ -2,6 +2,7 @@ import type { Card } from '../types/cards'
 import { onPlayEffect, spellEffect, endOfTurnEffect, type ParsedEffect } from '../engine/effects'
 import { parseTriggers } from '../engine/triggers'
 import { keywordLabels } from '../engine/keywords'
+import { unitActivatedAbility } from '../engine/engine'
 import { actionDef } from './cardSpecVocab'
 import { emptySpec, type CardSpec, type CardSpecRow, type SpecEffect, type SpecTarget, type SpecTargetScope, type SpecCondition } from './cardSpecs'
 
@@ -23,6 +24,8 @@ export function parsedEffectToSpecEffects(pe: ParsedEffect): SpecEffect[] {
   if (pe.discard) push('discard', { amount: pe.discard })
   if (pe.channel) push('channel', { amount: pe.channel })
   if (pe.channelExhausted) push('channelExhausted', { amount: pe.channelExhausted })
+  if (pe.addEnergy) push('addEnergy', { amount: pe.addEnergy })
+  for (const [d, n] of Object.entries(pe.addPower)) push('addPower', { amount: n, sub: { domain: d } })
   if (pe.readyRunes) push('readyRunes', { amount: pe.readyRunes })
   if (pe.damage) push('damage', { amount: pe.damage, scope: mapScope(pe.targetScope), count: pe.targetCount })
   if (pe.kill) push('kill', { count: pe.kill, scope: mapScope(pe.targetScope), sub: pe.killMightMax != null ? { mightMax: pe.killMightMax } : undefined })
@@ -123,6 +126,28 @@ export function prefillSpecFromCard(card: Card): CardSpec {
   const eot = endOfTurnEffect(card)
   if (hasEffect(eot)) {
     spec.abilities.push({ kind: 'triggered', trigger: 'endOfTurn', effects: parsedEffectToSpecEffects(eot), fromParser: true })
+  }
+
+  // Activated ability ("<cost>: <effect>"). The engine already offers + resolves
+  // these generically (unitActivatedAbility → ACTIVATE_UNIT), so reflect it here.
+  // If the effect clause didn't parse to anything, mark it 'other' (a real gap).
+  const act = unitActivatedAbility(card)
+  if (act) {
+    const effects = parsedEffectToSpecEffects(act.effect)
+    if (effects.length === 0) effects.push({ key: 'other', note: act.effectText || 'activated effect (parser did not resolve)' })
+    spec.abilities.push({
+      kind: 'activated',
+      cost: {
+        energy: act.energy || undefined,
+        power: Object.keys(act.power).length ? (act.power as Record<string, number>) : undefined,
+        exhaustSelf: act.exhaust || undefined,
+        recycleTrash: act.recycleTrash || undefined,
+        discard: act.discard || undefined,
+        killThis: act.killThis || undefined,
+      },
+      effects,
+      fromParser: true,
+    })
   }
 
   return spec

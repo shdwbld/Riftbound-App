@@ -1,4 +1,4 @@
-import type { Card } from '../types/cards'
+import type { Card, Domain } from '../types/cards'
 
 // ---------------------------------------------------------------------------
 // Lightweight effect parsing. We can't script all ~1000 bespoke cards, but we
@@ -21,6 +21,10 @@ export interface ParsedEffect {
    *  discards ("they discard"), optional additional-cost discards, and "discard me". */
   discard: number
   channel: number
+  /** "[Add] <resource>" — rune-ramp gear/abilities that add Power/Energy directly to
+   *  the pool (Seal of Rage/Focus/…, Energy Conduit). addPower is per-domain pips. */
+  addEnergy: number
+  addPower: Partial<Record<Domain, number>>
   /** The killed unit's CONTROLLER draws N ("kill a unit. Its controller draws 2"
    *  — Hidden Blade). Distinct from drawOnKill, which the caster draws. */
   controllerDrawOnKill: number
@@ -201,6 +205,8 @@ const EMPTY_EFFECT = (): ParsedEffect => ({
   draw: 0,
   discard: 0,
   channel: 0,
+  addEnergy: 0,
+  addPower: {},
   controllerDrawOnKill: 0,
   tempMightFloor: 0,
   cullEachPlayer: false,
@@ -357,6 +363,14 @@ function parse(text: string): ParsedEffect {
   if (chM && !/channel[^.]*?exhausted/.test(t)) {
     eff.channel += num(chM[1]); hit = true
   }
+
+  // "[Add] <resource>" — rune-ramp (Seal of Rage/Focus/…, Energy Conduit, Malzahar):
+  // add Power pips and/or Energy directly to the pool.
+  for (const m of t.matchAll(/\[add\]\s*:rb_rune_([a-z]+):/g)) {
+    eff.addPower[m[1] as Domain] = (eff.addPower[m[1] as Domain] ?? 0) + 1; hit = true
+  }
+  const addEM = t.match(/\[add\]\s*:rb_energy_(\d+):/)
+  if (addEM) { eff.addEnergy += parseInt(addEM[1], 10); hit = true }
 
   // "Its controller draws N" (Hidden Blade) — the KILLED unit's owner draws.
   const ctrlDrawM = t.match(new RegExp(`controller draws? ${NUM}`))
