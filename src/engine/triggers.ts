@@ -31,6 +31,13 @@ export type TriggerEvent =
   | 'recycleCard' // you recycle one or more (non-rune) cards to your Main Deck (Karma - Channeler)
   | 'spendBuff' // you spend a buff (Fae Dragon)
 
+/** Runtime list of all trigger events (mirrors the TriggerEvent union above) —
+ *  used by the card-spec editor vocabulary so its options can't drift from the engine. */
+export const TRIGGER_EVENTS: TriggerEvent[] = [
+  'play', 'conquer', 'hold', 'death', 'startOfTurn', 'attack', 'defend', 'move',
+  'winCombat', 'stun', 'enemyDeath', 'discard', 'recycleRune', 'recycleCard', 'spendBuff',
+]
+
 export interface TriggeredAbility {
   event: TriggerEvent
   /** 'self' = refers to this card ("I"/"this"); 'global' = "when you …". */
