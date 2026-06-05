@@ -43,7 +43,9 @@ export function computeStats(deck: Deck): DeckStats {
     if (!card) continue
     mainTotal += copies
     typeCounts[card.type] = (typeCounts[card.type] ?? 0) + copies
-    if (isUnit(card) || isSpell(card) || isGear(card)) {
+    // The Chosen Champion is set aside at game start — it's part of the 40 but not
+    // a card you draw, so exclude it from the cost curve / average.
+    if ((isUnit(card) || isSpell(card) || isGear(card)) && id !== deck.championId) {
       const cost = totalCost(card)
       curve[Math.min(cost, CURVE_MAX)] += copies
       powerCurve[Math.min(totalPower(card.power), CURVE_MAX)] += copies
@@ -65,6 +67,7 @@ export function computeStats(deck: Deck): DeckStats {
 export function sampleHand(deck: Deck, n = 5): Card[] {
   const pool: Card[] = []
   for (const [id, copies] of Object.entries(deck.main)) {
+    if (id === deck.championId) continue // set aside at game start — not drawable
     const card = getCard(id)
     if (!card) continue
     for (let i = 0; i < copies; i++) pool.push(card)

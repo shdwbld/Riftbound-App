@@ -10,10 +10,21 @@ const KEY = 'riftbound.decks.v1'
 
 function readAll(): Record<string, Deck> {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, Deck>
-    // Back-fill fields added after a deck was first saved.
-    for (const d of Object.values(raw)) if (!d.sideboard) d.sideboard = {}
-    return raw
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}')
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    // Drop non-object entries and back-fill any missing piles so callers never
+    // read undefined (corrupt/old/hand-edited localStorage shouldn't crash).
+    const out: Record<string, Deck> = {}
+    for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue
+      const d = v as Deck
+      d.main = d.main ?? {}
+      d.runes = d.runes ?? {}
+      d.sideboard = d.sideboard ?? {}
+      d.battlefields = Array.isArray(d.battlefields) ? d.battlefields : []
+      out[id] = d
+    }
+    return out
   } catch {
     return {}
   }
@@ -23,11 +34,12 @@ function writeAll(decks: Record<string, Deck>) {
   localStorage.setItem(KEY, JSON.stringify(decks))
 }
 
-/** Time-ordered id without Date/Math.random reliance in the hot path. */
+/** Time-ordered id. The counter is seeded once (module load) from a random base so
+ *  two decks created in the same millisecond after a reload don't collide. */
 function newId(): string {
   return 'deck_' + Date.now().toString(36) + '_' + (counter++).toString(36)
 }
-let counter = 0
+let counter = Math.floor(Math.random() * 1_000_000)
 
 export function listDecks(): Deck[] {
   return Object.values(readAll()).sort((a, b) => b.updatedAt - a.updatedAt)
@@ -66,17 +78,18 @@ export function cloneIntoLibrary(template: {
   name: string
   legendId: string | null
   championId?: string | null
-  main: Record<string, number>
-  runes: Record<string, number>
-  battlefields: string[]
+  main?: Record<string, number>
+  runes?: Record<string, number>
+  battlefields?: string[]
   sideboard?: Record<string, number>
 }): Deck {
+  // Default every pile — a malformed share payload (missing a field) must not throw.
   const deck = emptyDeck(newId(), template.name)
   deck.legendId = template.legendId
   deck.championId = template.championId ?? null
-  deck.main = { ...template.main }
-  deck.runes = { ...template.runes }
-  deck.battlefields = [...template.battlefields]
+  deck.main = { ...(template.main ?? {}) }
+  deck.runes = { ...(template.runes ?? {}) }
+  deck.battlefields = [...(template.battlefields ?? [])]
   deck.sideboard = { ...(template.sideboard ?? {}) }
   return saveDeck(deck)
 }
@@ -113,6 +126,7 @@ export function exportDeck(deck: Deck): string {
   const lines: string[] = []
   lines.push(`Name: ${deck.name}`)
   if (deck.legendId) lines.push(`Legend: ${deck.legendId}`)
+  if (deck.championId) lines.push(`Champion: ${deck.championId}`)
   lines.push('# Main')
   for (const [id, n] of Object.entries(deck.main)) lines.push(`${n} ${id}`)
   lines.push('# Runes')
@@ -211,9 +225,9 @@ export function parseDeck(text: string, id: string): Deck {
         deck.legendId = cid
         break
       case 'champion':
-        // Set the Chosen Champion and keep it in the deck so setup can set it aside.
+        // Set the Chosen Champion only — the champion card is also listed under
+        // # Main (don't add it again here, or a round-tripped deck double-counts).
         deck.championId = cid
-        deck.main[cid] = (deck.main[cid] ?? 0) + count
         break
       case 'battlefields':
         if (!deck.battlefields.includes(cid)) deck.battlefields.push(cid)
@@ -224,6 +238,9 @@ export function parseDeck(text: string, id: string): Deck {
         break
     }
   }
+  // The Chosen Champion is set aside FROM the main deck — ensure it's present
+  // (covers external formats that list it only in a Champion: section).
+  if (deck.championId && !deck.main[deck.championId]) deck.main[deck.championId] = 1
   deck.updatedAt = Date.now()
   return deck
 }

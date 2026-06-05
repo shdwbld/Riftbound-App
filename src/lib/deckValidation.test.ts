@@ -47,4 +47,21 @@ describe('deck validation (Core Rules §103–110)', () => {
     if (!nonChampion) return
     expect(has(deckOf({ [nonChampion.id]: 3 }), /chosen champion/i)).toBe(true)
   })
+
+  it('a deck with ≠3 battlefields is ILLEGAL (error, not just a warning)', () => {
+    const bf = CARDS.find((c) => c.type === 'battlefield')!
+    const issues = validateDeck(deckOf({}, { battlefields: [bf.id, bf.id] })).issues
+    const bfIssue = issues.find((i) => /Battlefields:/i.test(i.message))
+    expect(bfIssue?.level).toBe('error')
+    // and exactly 3 produces no battlefield-count error
+    expect(has(deckOf({}, { battlefields: [bf.id, bf.id, bf.id] }), /Battlefields:/i)).toBe(false)
+  })
+
+  it('signature count sums main + runes (not a spread-merge that drops one)', () => {
+    const sig = CARDS.find((c) => c.supertype === 'signature')
+    if (!sig) return
+    // Same id in BOTH piles: the old spread-merge counted only 2; now it's 4 → over cap.
+    const d = deckOf({ [sig.id]: 2 }, { runes: { [sig.id]: 2 } })
+    expect(has(d, /too many signature/i)).toBe(true)
+  })
 })

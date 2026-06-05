@@ -35,7 +35,6 @@ export function validateDeck(deck: Deck): DeckValidation {
   const runeCount = pileSize(deck.runes)
 
   const err = (message: string) => issues.push({ level: 'error', message })
-  const warn = (message: string) => issues.push({ level: 'warning', message })
 
   // Legend
   if (!deck.legendId) {
@@ -46,15 +45,14 @@ export function validateDeck(deck: Deck): DeckValidation {
   }
 
   // Sizes. Main deck is "at least 40" (≥40 is legal); the rune deck is exactly
-  // 12; a deck provides 3 battlefields (precons sometimes ship fewer → warn).
+  // 12; a playable deck needs exactly 3 battlefields (the game can't start without
+  // them, so any count ≠ 3 is illegal — not just a warning).
   if (mainCount < DECK_RULES.mainDeckSize)
     err(`Main deck has ${mainCount} cards — needs at least ${DECK_RULES.mainDeckSize}.`)
   if (runeCount !== DECK_RULES.runeDeckSize)
     err(`Rune deck has ${runeCount}/${DECK_RULES.runeDeckSize} runes (must be exactly ${DECK_RULES.runeDeckSize}).`)
   if (deck.battlefields.length !== DECK_RULES.battlefieldCount)
-    (deck.battlefields.length < DECK_RULES.battlefieldCount ? warn : err)(
-      `Battlefields: ${deck.battlefields.length}/${DECK_RULES.battlefieldCount}.`,
-    )
+    err(`Battlefields: ${deck.battlefields.length}/${DECK_RULES.battlefieldCount} (need exactly ${DECK_RULES.battlefieldCount}).`)
 
   // Per-card type placement + identity (and tally copies per NAME).
   const copiesByName = new Map<string, number>()
@@ -131,8 +129,10 @@ export function validateDeck(deck: Deck): DeckValidation {
   }
 
   // Signature: at most 3 total, and each must share the legend's champion tag.
+  // Iterate main + runes as concatenated entries (NOT a spread merge, which would
+  // drop one pile's count when an id appears in both).
   let signatureCount = 0
-  for (const [id, count] of Object.entries({ ...deck.main, ...deck.runes })) {
+  for (const [id, count] of [...Object.entries(deck.main), ...Object.entries(deck.runes)]) {
     const card = getCard(id)
     if (card?.supertype === 'signature') {
       signatureCount += count

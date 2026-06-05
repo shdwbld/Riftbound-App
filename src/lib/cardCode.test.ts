@@ -58,9 +58,10 @@ Sideboard:
     const deck = parseDeck(text, 'jhin')
     expect(deck.legendId).toBe('unl-181-219')
     expect(deck.championId).toBe('unl-022-219')
-    // champion is kept in the deck (Champion section + MainDeck copy) so setup
-    // can set it aside.
-    expect(deck.main['unl-022-219']).toBe(2)
+    // The champion is the same card listed in both the Champion: designation and
+    // the MainDeck section — that's ONE copy (the Champion line designates, it does
+    // not add a second copy). It stays in the main deck so setup can set it aside.
+    expect(deck.main['unl-022-219']).toBe(1)
     expect(deck.main['ogn-005-298']).toBe(3)
     expect(deck.runes['ogn-007-298']).toBe(7)
     expect(deck.runes['ogn-089-298']).toBe(5)
