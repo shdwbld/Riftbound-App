@@ -254,7 +254,23 @@ function channelN(p: PlayerState, n: number, exhausted = false): number {
 
 /** Send a card to a player's Trash as it leaves play. Tokens cease to exist
  *  (they don't go to the Trash), and buffs/temp modifiers are cleared. */
+/** A unit leaving play (death/banish) sheds its attached Equipment back to its
+ *  owner's base — gear is NEVER trashed/banished with the unit (Riftbound rule).
+ *  No-op for non-units / no gear; token gear ceases to exist. `p` is the unit's
+ *  owner. Mutates `card.attached` to []. (Recall/bounce keep gear on the unit and
+ *  detach via their own paths.) */
+function detachGearToBase(p: PlayerState, card: EngineCard): void {
+  if (!card.attached?.length) return
+  for (const ref of card.attached) {
+    const [gCardId, gIid] = ref.split('|')
+    if (!gCardId || getCard(gCardId)?.supertype === 'token') continue
+    p.zones.base.push({ iid: gIid || `${p.id}:gear:${gCardId}`, cardId: gCardId, owner: p.id, exhausted: false, damage: 0, attached: [] })
+  }
+  card.attached = []
+}
+
 function sendToTrash(p: PlayerState, card: EngineCard): void {
+  detachGearToBase(p, card) // gear survives the unit's death — return it to base
   if (getCard(card.cardId)?.supertype === 'token' || card.token) return // tokens cease to exist
   p.zones.trash.push({
     ...card,
@@ -272,6 +288,7 @@ function sendToTrash(p: PlayerState, card: EngineCard): void {
  *  but Burn Out can't recycle it; tokens still cease to exist. Banish is NOT a
  *  Kill, so the caller must not fire death triggers. */
 function banishCard(p: PlayerState, card: EngineCard): void {
+  detachGearToBase(p, card) // gear survives a banished unit — return it to base
   if (getCard(card.cardId)?.supertype === 'token') return // tokens cease to exist
   p.banished.push({
     ...card,
@@ -5712,12 +5729,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (!action.iid) break
           for (const bf of s.battlefields) {
             const i = bf.units.findIndex((x) => x.iid === action.iid)
-            if (i >= 0) { const [x] = bf.units.splice(i, 1); (action.op === 'banish' ? s.players[x.owner].banished : s.players[x.owner].zones.trash).push(x); break }
+            if (i >= 0) { const [x] = bf.units.splice(i, 1); detachGearToBase(s.players[x.owner], x); (action.op === 'banish' ? s.players[x.owner].banished : s.players[x.owner].zones.trash).push(x); break }
           }
           for (const pl of s.players)
             for (const z of Object.keys(pl.zones) as ZoneId[]) {
               const i = pl.zones[z].findIndex((x) => x.iid === action.iid)
-              if (i >= 0) { const [x] = pl.zones[z].splice(i, 1); (action.op === 'banish' ? pl.banished : pl.zones.trash).push(x); break }
+              if (i >= 0) { const [x] = pl.zones[z].splice(i, 1); detachGearToBase(pl, x); (action.op === 'banish' ? pl.banished : pl.zones.trash).push(x); break }
             }
           break
         }

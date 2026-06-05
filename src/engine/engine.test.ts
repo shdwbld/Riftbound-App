@@ -1191,6 +1191,34 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.trash.some((x) => x.cardId === 'ogn-077-298')).toBe(true) // Hourglass trashed
   })
 
+  it('attached gear survives the equipped unit dying — detaches to the owner\'s base (not lost/trashed)', () => {
+    const gearId = injectCard('surv-gear-t', 'When the equipped unit attacks, draw 1.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.sandbox = true
+    const u = mk(furyUnit.id, 0, { attached: [`${gearId}|surv-1`] })
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(false) // unit dead
+    // The gear is back in its owner's base, unattached — NOT in the trash, NOT lost.
+    const inBase = r.state.players[0].zones.base.find((x) => x.cardId === gearId)
+    expect(inBase).toBeTruthy()
+    expect(inBase?.attached.length).toBe(0)
+    expect(r.state.players[0].zones.trash.some((x) => x.cardId === gearId)).toBe(false)
+  })
+
+  it('attached gear survives a banished unit — detaches to base', () => {
+    const gearId = injectCard('surv-gear-t2', 'x', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.sandbox = true
+    const u = mk(furyUnit.id, 0, { attached: [`${gearId}|surv-2`] })
+    s.battlefields[0].units.push(u)
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'banish', iid: u.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((x) => x.cardId === gearId && x.attached.length === 0)).toBe(true)
+    expect(r.state.players[0].banished.some((x) => x.cardId === gearId)).toBe(false) // gear not banished
+  })
+
   it('death shield: a shielded unit recalls to base instead of dying; shield consumed', async () => {
     const { spellEffect } = await import('./effects')
     const mkCard = (text: string) => ({ id: 't', name: 'T', type: 'spell', domains: [], rarity: 'common', set: 'X', number: 1, text, energy: 0, power: {} }) as never
