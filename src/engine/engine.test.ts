@@ -6870,4 +6870,15 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.error).toBeFalsy()
     expect(r.state.battlefields[0].units.some((u) => u.iid === tok.iid)).toBe(true) // token moved in
   })
+
+  it('Jhin - Meticulous Killer: alt cost (1 Mind) when you spent 4+ Energy on spells this turn', async () => {
+    const { effectiveCostOf } = await import('./autopay')
+    const jhin = CARD_INDEX['unl-089-219']
+    const s = baseState()
+    expect(effectiveCostOf(s, 0, jhin).energy).toBeGreaterThan(0) // normal printed cost
+    s.players[0].energySpentOnSpellsThisTurn = 4
+    const alt = effectiveCostOf(s, 0, jhin)
+    expect(alt.energy).toBe(0)
+    expect(alt.power.mind).toBe(1) // alt cost = 1 Mind
+  })
 })

@@ -27,6 +27,18 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
   let energy = base.energy
   let floor = 0
 
+  // Jhin - Meticulous Killer: "If you've spent :rb_energy_N: or more to play a spell
+  // this turn, you may play me for :rb_rune_X:." — a full ALT cost (replaces the base).
+  const altM = t.match(/if you've spent :rb_energy_(\d+): or more to play a spell this turn, you may play me for ((?::rb_rune_[a-z]+:)+)/)
+  if (altM && (p.energySpentOnSpellsThisTurn ?? 0) >= Number(altM[1])) {
+    const power: Partial<Record<Domain, number>> = {}
+    for (const g of altM[2].match(/:rb_rune_([a-z]+):/g) ?? []) {
+      const dom = g.replace(/:rb_rune_|:/g, '') as Domain
+      power[dom] = (power[dom] ?? 0) + 1
+    }
+    return { ...base, energy: 0, power }
+  }
+
   const controlsTag = (tag: string): boolean =>
     [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)].some(
       (u) => u.owner === player && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
