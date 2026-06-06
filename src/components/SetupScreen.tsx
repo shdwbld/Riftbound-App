@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { getCard } from '../data/cards'
+import { toChampionKey } from '../lib/audio'
 import type { MatchState, Action, PlayerId } from '../engine/types'
 import CardDetailModal from './CardDetailModal'
 import MulliganHand from './MulliganHand'
@@ -124,12 +125,31 @@ function PregameSelect({
   const toggle = (iid: string) =>
     setAside((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : s.length < 2 ? [...s, iid] : s))
 
+  // Playmat picker: the player's Legend champion's splash skins (skins.json,
+  // fetched once). pmIdx tracks the focused variant; its id is persisted.
+  const legendKey = me.legend
+    ? toChampionKey(getCard(me.legend.cardId)?.name.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim() ?? '')
+    : ''
+  const [skins, setSkins] = useState<{ id: string; label: string; file: string }[]>([])
+  const [pmIdx, setPmIdx] = useState(0)
+  useEffect(() => {
+    if (!legendKey) return
+    let alive = true
+    fetch(`/img/champions/${legendKey}/skins.json`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((arr) => { if (alive) setSkins(Array.isArray(arr) ? arr : []) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [legendKey])
+  const playmatId = skins[pmIdx]?.id
+
   // Only show a selection screen where there's a real choice; a single-option
   // battlefield/champion is auto-used (the pick is already initialised above).
-  // Mulligan always shows and is always last.
-  const steps: ('battlefield' | 'champion' | 'mulligan')[] = [
+  // Playmat then mulligan always show and are last.
+  const steps: ('battlefield' | 'champion' | 'playmat' | 'mulligan')[] = [
     ...(bfOpts.length > 1 ? (['battlefield'] as const) : []),
     ...(champOpts.length > 1 ? (['champion'] as const) : []),
+    'playmat',
     'mulligan',
   ]
   const [stepIdx, setStepIdx] = useState(0)
@@ -137,7 +157,7 @@ function PregameSelect({
   const step = steps[idx]
 
   const submit = () =>
-    onAct({ type: 'SUBMIT_PREGAME', player: seat, championId: champ, battlefieldId: bf, toBottom: aside })
+    onAct({ type: 'SUBMIT_PREGAME', player: seat, championId: champ, battlefieldId: bf, toBottom: aside, playmatId })
 
   const back =
     idx > 0 ? (
@@ -185,6 +205,65 @@ function PregameSelect({
             onClick={() => setStepIdx(idx + 1)}
             disabled={champ == null}
             className={`rounded-xl px-8 py-3 text-base font-bold transition ${champ != null ? 'bg-indigo-500 hover:bg-indigo-400' : 'cursor-not-allowed bg-white/10 text-white/40'}`}
+          >
+            Next ▶
+          </button>
+        </div>
+      </Frame>
+    )
+  }
+
+  if (step === 'playmat') {
+    const cur = skins[pmIdx]
+    const cycle = (d: number) => setPmIdx((i) => (skins.length ? (i + d + skins.length) % skins.length : 0))
+    return (
+      <Frame title="Choose your Playmat" subtitle={`${names[seat]} — ${stepLabel}. Pick the champion splash that sits behind your board.`}>
+        <ReadyRoster players={match.players} ready={ready} names={names} />
+        {skins.length === 0 || !cur ? (
+          <p className="py-8 text-white/50">No alternate splashes for this champion — the default mat will be used.</p>
+        ) : (
+          <>
+            <div className="mx-auto flex max-w-3xl items-center justify-center gap-4">
+              <button
+                onClick={() => cycle(-1)}
+                className="shrink-0 rounded-full bg-white/10 px-4 py-3 text-2xl leading-none hover:bg-white/20"
+                aria-label="Previous splash"
+              >
+                ◀
+              </button>
+              <div className="relative aspect-video w-full max-w-2xl overflow-hidden rounded-2xl border border-amber-300/40 shadow-2xl">
+                <img src={`/img/champions/${legendKey}/${cur.file}`} alt={cur.label} className="h-full w-full object-cover" />
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-left">
+                  <div className="text-lg font-bold text-amber-100">{cur.label}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => cycle(1)}
+                className="shrink-0 rounded-full bg-white/10 px-4 py-3 text-2xl leading-none hover:bg-white/20"
+                aria-label="Next splash"
+              >
+                ▶
+              </button>
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              {skins.map((s, i) => (
+                <button
+                  key={s.id}
+                  onClick={() => setPmIdx(i)}
+                  title={s.label}
+                  className={`overflow-hidden rounded-lg border-2 transition ${i === pmIdx ? 'border-amber-300' : 'border-white/10 hover:border-white/30'}`}
+                >
+                  <img src={`/img/champions/${legendKey}/${s.file}`} alt={s.label} className="h-16 w-28 object-cover" />
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="flex items-center justify-center gap-3">
+          {back}
+          <button
+            onClick={() => setStepIdx(idx + 1)}
+            className="rounded-xl bg-indigo-500 px-8 py-3 text-base font-bold transition hover:bg-indigo-400"
           >
             Next ▶
           </button>

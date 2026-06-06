@@ -1327,6 +1327,28 @@ export default function MatchBoard({
 
 // --- opponent --------------------------------------------------------------
 
+/** Resolve a player's playmat splash image from their Legend champion + chosen skin. */
+function matSplashUrl(p: PlayerState): string | null {
+  if (!p.legend) return null
+  const name = getCard(p.legend.cardId)?.name?.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim()
+  if (!name) return null
+  return `/img/champions/${toChampionKey(name)}/${p.playmatId || 'original'}.jpg`
+}
+
+/** The chosen champion's splash art behind a playmat (navy-scrimmed so cards stay
+ *  readable). Renders nothing if the player has no legend / the image is missing. */
+function MatSplash({ player, strong }: { player: PlayerState; strong?: boolean }) {
+  const url = matSplashUrl(player)
+  const [ok, setOk] = useState(true)
+  if (!url || !ok) return null
+  return (
+    <div className="pm-splash" aria-hidden>
+      <img src={url} alt="" onError={() => setOk(false)} />
+      <div className={strong ? 'pm-splash-scrim pm-splash-scrim-strong' : 'pm-splash-scrim'} />
+    </div>
+  )
+}
+
 function OpponentMat({
   opp,
   target,
@@ -1348,9 +1370,10 @@ function OpponentMat({
   const inspectGear = (cid: string) => { const c = getCard(cid); if (c) onInspectCard?.(c) }
   return (
     <div
-      className={`rounded-xl border p-2 ${active ? 'border-indigo-400/50' : 'border-white/10'}`}
+      className={`relative isolate overflow-hidden rounded-xl border p-2 ${active ? 'border-indigo-400/50' : 'border-white/10'}`}
       style={{ background: matGradient(domains) }}
     >
+      <MatSplash player={opp} strong />
       <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
         <span className="font-semibold">{opp.name}</span>
         <ScoreTrack points={opp.points} target={target} />
@@ -1790,6 +1813,7 @@ function PlayerMat({
 
       {/* The playmat — irregular grid-template-areas */}
       <div className={`playmat ${domainAnimClass(domains)}`} style={{ ['--glow' as string]: domainGlow(domains) }}>
+        <MatSplash player={me} />
         {/* Score track (8 → 0, top to bottom) */}
         <div className="pm-score flex flex-col items-center justify-between py-1">
           {Array.from({ length: target + 1 }).map((_, idx) => {

@@ -5581,6 +5581,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const p = s.players[pl]
       su.championPick[pl] = championId
       su.battlefieldPick[pl] = battlefieldId
+      if (action.playmatId) p.playmatId = action.playmatId
       // Set aside the Chosen Champion now (before the mulligan redraw, so it
       // can't be drawn back), then apply the mulligan to the opening hand.
       if (championId != null) pullChampion(p, championId, pl)

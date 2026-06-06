@@ -118,6 +118,9 @@ export interface PlayerState {
   legend: EngineCard | null
   /** The Chosen Champion, set aside and always playable from here. */
   champion: EngineCard | null
+  /** Which champion-splash skin this player picked for their playmat backdrop
+   *  (skins.json id, e.g. 'original'|'coven'); synced so opponents see it too. */
+  playmatId?: string
   /** Token cards this player can generate (e.g. Recruit) — a separate pile
    *  that is never drawn from. Tokens are created onto the board by effects. */
   tokenPile: string[]
@@ -414,6 +417,8 @@ export type Action =
       championId: string | null
       battlefieldId: string | null
       toBottom: string[]
+      /** Chosen playmat-splash skin id (from the picker); persisted on PlayerState. */
+      playmatId?: string | null
     }
   | { type: 'MULLIGAN'; player: PlayerId; toBottom: string[] }
   | { type: 'ACTIVATE_LEGEND'; player: PlayerId }
