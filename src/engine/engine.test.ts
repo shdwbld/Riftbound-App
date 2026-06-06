@@ -5737,4 +5737,19 @@ describe('A1.5 follow-up cards — first-move / first-win-combat self triggers',
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.state.players[0].zones.mainDeck.length).toBe(1) // gated — no second draw same turn
   })
+
+  it('Shard of Undoing: a friendly Beginning-Phase death makes each opponent cull a unit', () => {
+    const s = baseState()
+    s.players[0].zones.base.push(mk('unl-174-219', 0)) // Shard of Undoing gear in base
+    s.battlefields[0].units.push(mk(furyUnit.id, 0, { temporary: true, enteredTurn: 1 } as Partial<EngineCard>)) // friendly Temporary expires
+    const weak = mk(injectCard('a15-weak', 'A unit.', { might: 1 }), 1)
+    const strong = mk(injectCard('a15-strong', 'A unit.', { might: 9 }), 1)
+    s.battlefields[1].units.push(weak, strong)
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    const after = beginTurn(s)
+    const p1 = [...after.players[1].zones.base, ...after.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === 1)
+    expect(p1.some((u) => u.iid === weak.iid)).toBe(false) // weakest culled
+    expect(p1.some((u) => u.iid === strong.iid)).toBe(true)
+  })
 })

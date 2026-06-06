@@ -2995,6 +2995,9 @@ export function beginTurn(state: MatchState): MatchState {
     if (s.winner !== null) return s
   }
 
+  // Track whether a friendly (active-player) unit dies during this Beginning Phase
+  // (Shard of Undoing's trigger condition).
+  let friendlyDiedInBeginning = false
   // Temporary: kill the active player's Temporary units that have lived a round.
   for (const bf of s.battlefields) {
     const expired = bf.units.filter(
@@ -3007,12 +3010,15 @@ export function beginTurn(state: MatchState): MatchState {
       bf.units = bf.units.filter((u) => !expired.includes(u))
       for (const u of expired) sendToTrash(p, u)
       s.unitDiedThisTurn = true // beginning-phase deaths (Shadow Watcher)
+      friendlyDiedInBeginning = true
       s = log(s, ap, `${expired.length} Temporary unit(s) expired.`)
     }
   }
-  for (const u of p.zones.base.filter(
+  const baseExpired = p.zones.base.filter(
     (u) => (parseKeywords(def(u)).temporary || u.temporary) && (u.enteredTurn ?? 0) < s.turn,
-  )) {
+  )
+  if (baseExpired.length) friendlyDiedInBeginning = true
+  for (const u of baseExpired) {
     p.zones.base = p.zones.base.filter((x) => x.iid !== u.iid)
     sendToTrash(p, u)
   }
@@ -3035,9 +3041,29 @@ export function beginTurn(state: MatchState): MatchState {
     if (!dmg) continue
     for (const u of [...s.battlefields[i].units]) {
       const dead = applyTargetDamage(s, u.iid, dmg)
-      if (dead.length) s = fireDeaths(s, dead)
+      if (dead.length) { if (dead.some((d) => d.owner === ap)) friendlyDiedInBeginning = true; s = fireDeaths(s, dead) }
     }
     s = log(s, ap, `${getCard(s.battlefields[i].cardId)?.name ?? 'Battlefield'}: dealt ${dmg} to each unit here.`)
+  }
+
+  // Shard of Undoing (gear unl-174-219): "The first time a friendly unit dies during
+  // your Beginning Phase each turn, each opponent must kill one of their units." Each
+  // opponent loses their lowest-Might unit (faithful auto-pick, like Cull the Weak).
+  if (friendlyDiedInBeginning) {
+    const hasShard = [...p.zones.base, ...controlledPermanents(s, ap)].some((c) => c.cardId === 'unl-174-219')
+    if (!p.oncePerTurnUsed) p.oncePerTurnUsed = {}
+    if (hasShard && !p.oncePerTurnUsed['shard-of-undoing']) {
+      p.oncePerTurnUsed['shard-of-undoing'] = true
+      const culled: EngineCard[] = []
+      for (const pl of s.players) {
+        if (pl.id === ap) continue // each OPPONENT
+        const own = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit')
+        if (!own.length) continue
+        const victim = own.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+        culled.push(...killTarget(s, victim.iid))
+      }
+      if (culled.length) { s = log(s, ap, 'Shard of Undoing: each opponent killed a unit.'); s = fireDeaths(s, culled) }
+    }
   }
 
   // Dusk Rose Lab: "you may kill a unit you control here to draw 1 — before
