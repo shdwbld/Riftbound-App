@@ -3048,28 +3048,50 @@ export function beginTurn(state: MatchState): MatchState {
 
   // Shard of Undoing (gear unl-174-219): "The first time a friendly unit dies during
   // your Beginning Phase each turn, each opponent must kill one of their units." Each
-  // opponent loses their lowest-Might unit (faithful auto-pick, like Cull the Weak).
+  // opponent CHOOSES which of their units to kill (queued one at a time, pausing the
+  // Beginning Phase); declining auto-removes their lowest-Might unit (the kill is
+  // mandatory). The Dreaming-Tree etc. are unaffected.
   if (friendlyDiedInBeginning) {
     const hasShard = [...p.zones.base, ...controlledPermanents(s, ap)].some((c) => c.cardId === 'unl-174-219')
     if (!p.oncePerTurnUsed) p.oncePerTurnUsed = {}
     if (hasShard && !p.oncePerTurnUsed['shard-of-undoing']) {
       p.oncePerTurnUsed['shard-of-undoing'] = true
-      const culled: EngineCard[] = []
-      for (const pl of s.players) {
-        if (pl.id === ap) continue // each OPPONENT
-        const own = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit')
-        if (!own.length) continue
-        const victim = own.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
-        culled.push(...killTarget(s, victim.iid))
-      }
-      if (culled.length) { s = log(s, ap, 'Shard of Undoing: each opponent killed a unit.'); s = fireDeaths(s, culled) }
+      const opponents = s.players
+        .filter((pl) => pl.id !== ap && !pl.out && [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].some((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit'))
+        .map((pl) => pl.id)
+      s = offerShardKill(s, opponents)
+      if (s.pendingChoice) { s.phase = 'score'; return s } // paused; resumes via RESOLVE_CHOICE
     }
   }
 
-  // Dusk Rose Lab: "you may kill a unit you control here to draw 1 — before
-  // scoring." It's a sacrifice, so it prompts; pause the Beginning Phase here
-  // (phase 'score' blocks normal actions) and resume via RESOLVE_CHOICE →
-  // finishBeginning, so the kill lands before the scoring step below.
+  return resumeBeginning(s)
+}
+
+/** Offer the next opponent in `remaining` a forced "kill one of your units" choice
+ *  (Shard of Undoing). Skips opponents with no units; sets pendingChoice for the
+ *  first eligible opponent (payload carries the rest of the queue), or leaves the
+ *  state unchanged if none remain. */
+function offerShardKill(s: MatchState, remaining: PlayerId[]): MatchState {
+  let queue = remaining
+  while (queue.length) {
+    const pid = queue[0]
+    const rest = queue.slice(1)
+    const opts = [...s.players[pid].zones.base, ...s.battlefields.flatMap((b) => b.units)]
+      .filter((u) => u.owner === pid && getCard(u.cardId)?.type === 'unit')
+      .map((u) => unitOpt(u))
+    if (!opts.length) { queue = rest; continue }
+    offerChoice(s, { player: pid, kind: 'shardKill', bfIndex: -1, prompt: 'Shard of Undoing — kill one of your units.', options: opts, payload: JSON.stringify({ remaining: rest }) })
+    return s
+  }
+  return s
+}
+
+/** The Dusk Rose Lab pre-scoring sacrifice prompt, then the back half of the
+ *  Beginning Phase. Split out so Shard of Undoing's opponent-kill prompts (and Dusk
+ *  Rose itself) can pause `beginTurn` and resume here via RESOLVE_CHOICE. */
+function resumeBeginning(s: MatchState): MatchState {
+  const ap = s.activePlayer
+  // Dusk Rose Lab: "you may kill a unit you control here to draw 1 — before scoring."
   recomputeControllers(s)
   for (let i = 0; i < s.battlefields.length; i++) {
     if (bfBaseNameAt(s, i) !== 'Dusk Rose Lab' || s.battlefields[i].controller !== ap) continue
@@ -5537,6 +5559,28 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s = log(s, action.player, 'Dusk Rose Lab — declined.')
         }
         return ok(finishBeginning(s))
+      }
+
+      // Shard of Undoing: each opponent (queued) kills one of their own units. A
+      // decline removes their lowest-Might unit (the kill is mandatory). Drains the
+      // opponent queue, then resumes the Beginning Phase (Dusk Rose + finishBeginning).
+      if (pc.kind === 'shardKill') {
+        const pid = pc.player
+        let victimIid = action.iid
+        if (victimIid === null) {
+          const own = [...s.players[pid].zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pid && getCard(u.cardId)?.type === 'unit')
+          victimIid = own.length ? own.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo)).iid : null
+        }
+        if (victimIid) {
+          const nm = getCard(findUnitAnywhere(s, victimIid)?.cardId ?? '')?.name ?? 'a unit'
+          s = fireDeaths(s, killTarget(s, victimIid))
+          s = log(s, pid, `Shard of Undoing — killed ${nm}.`)
+        }
+        let rem: PlayerId[] = []
+        try { rem = JSON.parse(pc.payload ?? '{"remaining":[]}').remaining ?? [] } catch { rem = [] }
+        s = offerShardKill(s, rem)
+        if (s.pendingChoice) return ok(s)
+        return ok(resumeBeginning(s))
       }
 
       // Move a chosen unit to a chosen battlefield (Charm). action.iid is "bf:N"

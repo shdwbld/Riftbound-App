@@ -5738,7 +5738,7 @@ describe('A1.5 follow-up cards — first-move / first-win-combat self triggers',
     expect(r.state.players[0].zones.mainDeck.length).toBe(1) // gated — no second draw same turn
   })
 
-  it('Shard of Undoing: a friendly Beginning-Phase death makes each opponent cull a unit', () => {
+  it('Shard of Undoing: a friendly Beginning-Phase death prompts each opponent to MANUALLY kill a unit', () => {
     const s = baseState()
     s.players[0].zones.base.push(mk('unl-174-219', 0)) // Shard of Undoing gear in base
     s.battlefields[0].units.push(mk(furyUnit.id, 0, { temporary: true, enteredTurn: 1 } as Partial<EngineCard>)) // friendly Temporary expires
@@ -5748,8 +5748,15 @@ describe('A1.5 follow-up cards — first-move / first-win-combat self triggers',
     s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
     s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
     const after = beginTurn(s)
-    const p1 = [...after.players[1].zones.base, ...after.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === 1)
-    expect(p1.some((u) => u.iid === weak.iid)).toBe(false) // weakest culled
-    expect(p1.some((u) => u.iid === strong.iid)).toBe(true)
+    // The opponent (player 1) is prompted to choose which of their units to kill.
+    expect(after.pendingChoice?.kind).toBe('shardKill')
+    expect(after.pendingChoice?.player).toBe(1)
+    expect(after.pendingChoice?.options.map((o) => o.iid).sort()).toEqual([weak.iid, strong.iid].sort())
+    // Player 1 chooses the STRONG unit (proves it's manual, not auto-weakest).
+    const r = reduce(after, { type: 'RESOLVE_CHOICE', player: 1, iid: strong.iid })
+    const p1 = [...r.state.players[1].zones.base, ...r.state.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === 1)
+    expect(p1.some((u) => u.iid === strong.iid)).toBe(false) // the chosen unit died
+    expect(p1.some((u) => u.iid === weak.iid)).toBe(true) // the weak unit survived
+    expect(r.state.pendingChoice).toBeUndefined() // queue drained, Beginning Phase resumed
   })
 })

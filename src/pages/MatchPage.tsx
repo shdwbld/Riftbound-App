@@ -298,7 +298,9 @@ export default function MatchPage() {
       ? match.priority
       : match.phase === 'showdown' && match.showdown
         ? match.showdown.priority
-        : match.activePlayer
+        : match.pendingChoice // a forced choice (e.g. Shard of Undoing) may target a non-active player
+          ? match.pendingChoice.player
+          : match.activePlayer
 
   const counterWith = (targetChainId: string) => {
     const me = match.players[controlling]
