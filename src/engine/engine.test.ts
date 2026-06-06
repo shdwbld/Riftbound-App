@@ -6568,4 +6568,50 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     expect(r2.state.players[0].xp).toBe(3) // unchanged — declined
     expect(r2.state.players[1].zones.hand.length).toBe(1) // not stripped
   })
+
+  it('Arise!: plays one Sand Soldier per Equipment you control and readies up to two', async () => {
+    const { spellEffect } = await import('./effects')
+    expect(spellEffect(CARD_INDEX['sfd-198-221']).namedToken?.name).toBe('sand soldier')
+    // Injected 0-cost clone to drive the bespoke per-Equipment count + ready clause.
+    const aid = injectCard('a5-arise', 'Play a 2 :rb_might: Sand Soldier unit token for each Equipment you control. Then do this: Ready up to two of them.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    for (let i = 0; i < 3; i++) s.players[0].zones.base.push(mk(injectCard(`a5-arise-g${i}`, '[Equip]', { type: 'gear', energy: 1 }), 0)) // 3 Equipment
+    const spell = mk(aid, 0)
+    s.players[0].zones.hand.push(spell)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    const soldiers = r.state.players[0].zones.base.filter((u) => u.cardId === TOKEN_BY_NAME['sand soldier'])
+    expect(soldiers.length).toBe(3) // one per Equipment
+    expect(soldiers.filter((u) => !u.exhausted).length).toBe(2) // up to two readied
+  })
+
+  it('The List: names a tag on play, then −2 Might only to units with that tag', () => {
+    const lid = injectCard('a5-list', 'As you play this, name a tag. (For example, Miss Fortune, Demacia, and Poro are tags.):rb_exhaust:: Give a unit with the named tag -2 :rb_might: this turn.', { type: 'gear', energy: 0 })
+    const s = baseState()
+    const list = mk(lid, 0)
+    s.players[0].zones.hand.push(list)
+    const poro = mk(injectCard('a5-list-poro', 'x', { type: 'unit', energy: 3, might: 5, tags: ['Poro'] }), 1)
+    const other = mk(injectCard('a5-list-other', 'x', { type: 'unit', energy: 3, might: 5, tags: ['Noxus'] }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [poro, other], controller: 1 }
+    // Play The List → prompts for a tag name.
+    let r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: list.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('nameTag')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'Poro' }) // free-form tag string
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].namedTag).toBe('Poro')
+    const listIid = r.state.players[0].zones.base.find((g) => g.cardId === lid)!.iid
+    // Activate on the tagged unit → −2 Might.
+    const r2 = reduce(r.state, { type: 'ACTIVATE_UNIT', player: 0, iid: listIid, targets: [poro.iid] })
+    expect(r2.error).toBeFalsy()
+    expect(r2.state.battlefields[0].units.find((u) => u.iid === poro.iid)?.tempMight).toBe(-2)
+    // Re-ready The List and activate on the UNtagged unit → no effect (the gate fizzles).
+    const ready = r2.state
+    ready.players[0].zones.base.find((g) => g.iid === listIid)!.exhausted = false
+    const r3 = reduce(ready, { type: 'ACTIVATE_UNIT', player: 0, iid: listIid, targets: [other.iid] })
+    expect(r3.error).toBeFalsy()
+    expect(r3.state.battlefields[0].units.find((u) => u.iid === other.iid)?.tempMight ?? 0).toBe(0)
+  })
 })

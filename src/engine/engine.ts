@@ -4600,6 +4600,21 @@ function resolveSpellEffects(
     return log(s, controller, `${card.name} fizzled — no unit to copy.`)
   }
 
+  // Arise!: "Play a 2 Might Sand Soldier unit token for each Equipment you control.
+  // Then do this: Ready up to two of them." The parser reads count=1 and drops the
+  // "ready up to two" clause, so resolve the per-Equipment count + ready bespoke.
+  if (e.namedToken && /for each equipment you control/i.test(card.text ?? '')) {
+    const tokName = e.namedToken.name
+    const equip = allGearInPlay(s).filter((g) => g.owner === controller && parseKeywords(getCard(g.cardId)).equip).length
+    const made = spawnNamedToken(p, tokName, equip, s.turn, true) // enter exhausted
+    let readied = 0
+    if (made > 0 && /ready up to two/i.test(card.text ?? '')) {
+      const fresh = p.zones.base.filter((u) => (getCard(u.cardId)?.name ?? '').toLowerCase().includes(tokName.toLowerCase())).slice(-made)
+      for (const tok of fresh.slice(-2)) if (tok.exhausted) { tok.exhausted = false; readied++ }
+    }
+    return log(s, controller, `${card.name}: played ${made} ${tokName} token(s)${readied ? `, readied ${readied}` : ''} (Equipment: ${equip}).`)
+  }
+
   // Strike Down: a chosen equipped friendly unit deals its Might to an enemy, then
   // detaches an Equipment. Auto-picks the strongest equipped friendly + strongest enemy.
   if (e.strikeDown) {
@@ -5819,7 +5834,18 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         p.zones.base.push({ ...ci })
         emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
         let s1 = applyGearOnPlay(log(s, action.player, `Played gear ${card.name} (unattached).`))
-        return ok(firePlayTriggers(s1, action.player, ci.iid, card, effTotal))
+        s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
+        // The List: "As you play this, name a tag." Prompt for a free-form tag name,
+        // resolved via RESOLVE_CHOICE kind 'nameTag' (the UI renders a text input).
+        if (/as you play (?:this|me), name a tag/i.test(card.text ?? '')) {
+          offerChoice(s1, {
+            player: action.player, kind: 'nameTag', bfIndex: -1,
+            prompt: `${card.name} — name a tag (e.g. "Poro", "Demacia", "Miss Fortune"):`,
+            options: [{ iid: '__nameTag__', label: 'Name a tag' }], // placeholder; the UI sends the typed tag as action.iid
+            payload: '',
+          })
+        }
+        return ok(s1)
       }
 
       // Spell. In a showdown we resolve immediately (legacy path). In the
@@ -6138,6 +6164,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (!pc || pc.player !== action.player) return fail(state, 'No choice to resolve right now.')
       let s = clone(state)
       s.pendingChoice = undefined
+      // The List: free-form tag naming — action.iid carries the typed tag string, so
+      // handle it BEFORE the option-membership validation below (it has no preset option).
+      if (pc.kind === 'nameTag') {
+        const tag = (action.iid ?? '').trim()
+        if (tag && tag !== '__nameTag__') { s.players[action.player].namedTag = tag; s = log(s, action.player, `The List: named the tag "${tag}".`) }
+        else s = log(s, action.player, 'The List: no tag named.')
+        return ok(s)
+      }
       if (action.iid !== null && !pc.options.some((o) => o.iid === action.iid))
         return fail(state, 'That is not a valid choice.')
 
@@ -6573,6 +6607,16 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (!isValidTarget(s1, t) && !championTarget) continue
           const immuneTo = findUnitAnywhere(s1, t) // enemy can't choose a targeting-immune unit
           if (immuneTo && immuneTo.owner !== action.player && untargetableByEnemy(s1, immuneTo)) continue
+          // The List: "Give a unit with the named tag −N Might." Only a unit carrying
+          // the player's named tag is affected.
+          if (/with the named tag/i.test(ab.effectText)) {
+            const lt = findUnitAnywhere(s1, t)
+            const tag = (s1.players[action.player].namedTag ?? '').toLowerCase()
+            if (!lt || !(getCard(lt.cardId)?.tags ?? []).some((tg) => tg.toLowerCase() === tag)) {
+              s1 = log(s1, action.player, `${name}: target lacks the named tag "${tag || '(none)'}" — no effect.`)
+              continue
+            }
+          }
           if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true, action.player))
           if (ab.effect.tempMight) s1 = fireDeaths(s1, applyTempMight(s1, t, ab.effect.tempMight, ab.effect.tempMightFloor))
           // "Buff a friendly unit" (Lee Sin) — a permanent +1 Might counter, capped

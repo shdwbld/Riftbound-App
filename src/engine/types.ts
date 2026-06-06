@@ -135,6 +135,9 @@ export interface PlayerState {
   /** Whether Azir - Ascendant's location-swap ability has been used this turn.
    *  Cleared at turn start. */
   azirSwappedThisTurn?: boolean
+  /** The tag named when The List was played ("As you play this, name a tag"); gates
+   *  The List's activated −2 Might to units with that tag. Persists for its lifetime. */
+  namedTag?: string
   /** Extra Energy non-token units cost to play this turn (Vaults of Helia). */
   unitCostBump?: number
   /** Points scored from HOLDING battlefields this turn (Needlessly Large Yordle's
