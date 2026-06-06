@@ -43,14 +43,19 @@ export default function PaymentModal({
 }) {
   const pool = player.pool ?? { energy: 0, power: {} }
   const reservedSet = useMemo(() => new Set(reserved ?? []), [reserved])
-  const ready = useMemo(
-    () => player.zones.runePool.filter((r) => !r.exhausted && !reservedSet.has(r.iid)),
+  const available = useMemo(
+    () => player.zones.runePool.filter((r) => !reservedSet.has(r.iid)),
     [player, reservedSet],
   )
+  // Ready runes can be exhausted (Energy) and/or recycled (Power). Already-exhausted
+  // runes can STILL be recycled for Power (recycling doesn't require a ready rune) — but
+  // never exhausted again for Energy.
+  const ready = useMemo(() => available.filter((r) => !r.exhausted), [available])
+  const spent = useMemo(() => available.filter((r) => r.exhausted), [available])
   // A player view limited to the still-available runes, for seeding auto-pay.
   const seedPlayer = useMemo(
-    () => (reservedSet.size ? { ...player, zones: { ...player.zones, runePool: ready } } : player),
-    [player, ready, reservedSet],
+    () => ({ ...player, zones: { ...player.zones, runePool: available } }),
+    [player, available],
   )
 
   // Pool resources auto-applied before runes.
@@ -82,12 +87,16 @@ export default function PaymentModal({
   // Seed the selection from auto-pay so the overlay opens pre-filled.
   const [roles, setRoles] = useState<Record<string, Role>>(seedFrom)
 
-  // Tap to cycle: unused → ⚡ energy → ♺ power → ⚡♺ both → unused.
-  const cycle = (iid: string) =>
+  // Tap to cycle. Ready runes: unused → ⚡ energy → ♺ power → ⚡♺ both → unused.
+  // Exhausted runes can ONLY be recycled, so they toggle unused ↔ ♺ power.
+  const cycle = (iid: string, isSpent = false) =>
     setRoles((r) => {
       const cur = r[iid]
       const next: Record<string, Role> = { ...r }
-      if (cur === undefined) next[iid] = 'energy'
+      if (isSpent) {
+        if (cur === 'power') delete next[iid]
+        else next[iid] = 'power'
+      } else if (cur === undefined) next[iid] = 'energy'
       else if (cur === 'energy') next[iid] = 'power'
       else if (cur === 'power') next[iid] = 'both'
       else delete next[iid]
@@ -106,7 +115,9 @@ export default function PaymentModal({
   let powerUnmatched = 0
   for (const [iid, role] of Object.entries(roles)) {
     if (!hasPower(role)) continue
-    const doms = runeDomains(ready.find((r) => r.iid === iid)!)
+    const found = available.find((r) => r.iid === iid)
+    if (!found) continue
+    const doms = runeDomains(found)
     const d = (Object.keys(powerLeft) as Domain[]).find((dd) => (powerLeft[dd] ?? 0) > 0 && doms.includes(dd))
     if (d) {
       powerLeft[d] = (powerLeft[d] ?? 0) - 1
@@ -128,6 +139,50 @@ export default function PaymentModal({
     if (poolEnergy > 0) payment.poolEnergy = poolEnergy
     if (Object.keys(poolPower).length > 0) payment.poolPower = poolPower
     onConfirm(payment)
+  }
+
+  const renderRune = (r: { iid: string; cardId: string }, isSpent: boolean) => {
+    const def = getCard(r.cardId)
+    const doms = runeDomains(r)
+    const dom = doms[0]
+    const color = dom ? DOMAIN_META[dom].color : '#888'
+    const role = roles[r.iid]
+    return (
+      <button
+        key={r.iid}
+        onClick={() => cycle(r.iid, isSpent)}
+        title={isSpent ? `${def?.name ?? 'Rune'} (exhausted — recycle only)` : def?.name}
+        className={`relative w-[68px] shrink-0 overflow-hidden rounded-lg border-2 transition ${
+          role === 'energy'
+            ? 'border-amber-300 shadow-[0_0_16px_-2px_rgba(251,191,36,0.8)]'
+            : role === 'power'
+              ? 'border-fuchsia-300 shadow-[0_0_16px_-2px_rgba(232,121,249,0.8)]'
+              : role === 'both'
+                ? 'border-emerald-300 shadow-[0_0_16px_-2px_rgba(52,211,153,0.85)]'
+                : 'border-white/15 hover:border-white/45'
+        } ${isSpent ? 'rotate-3' : ''}`}
+        style={{ aspectRatio: '744/1039' }}
+      >
+        {def?.imageUrl ? (
+          <img src={def.imageUrl} alt={def.name} loading="lazy" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center" style={{ color }}>
+            {dom ? <DomainIcon domain={dom} size={34} /> : '◆'}
+          </span>
+        )}
+        {/* dim runes not assigned a role (exhausted ones stay extra-dimmed) */}
+        {!role && <span className={`absolute inset-0 ${isSpent ? 'bg-black/60' : 'bg-black/40'}`} />}
+        {role && (
+          <span
+            className={`absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] font-bold text-white ${
+              role === 'energy' ? 'bg-amber-500/90' : role === 'power' ? 'bg-fuchsia-500/90' : 'bg-emerald-500/90'
+            }`}
+          >
+            {role === 'energy' ? '⚡ Exhaust' : role === 'power' ? '♺ Recycle' : '⚡♺ Both'}
+          </span>
+        )}
+      </button>
+    )
   }
 
   return (
@@ -224,57 +279,23 @@ export default function PaymentModal({
           )}
         </div>
 
-        {/* Ready runes (large, scrollable) */}
+        {/* Runes (large, scrollable) */}
         <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-white/10 bg-black/20 p-4">
           <div className="mb-2 text-xs uppercase tracking-wide text-white/40">
             Your ready runes ({ready.length})
           </div>
           <div className="flex flex-wrap gap-3">
-            {ready.map((r) => {
-              const def = getCard(r.cardId)
-              const doms = runeDomains(r)
-              const dom = doms[0]
-              const color = dom ? DOMAIN_META[dom].color : '#888'
-              const role = roles[r.iid]
-              return (
-                <button
-                  key={r.iid}
-                  onClick={() => cycle(r.iid)}
-                  title={def?.name}
-                  className={`relative w-[68px] shrink-0 overflow-hidden rounded-lg border-2 transition ${
-                    role === 'energy'
-                      ? 'border-amber-300 shadow-[0_0_16px_-2px_rgba(251,191,36,0.8)]'
-                      : role === 'power'
-                        ? 'border-fuchsia-300 shadow-[0_0_16px_-2px_rgba(232,121,249,0.8)]'
-                        : role === 'both'
-                          ? 'border-emerald-300 shadow-[0_0_16px_-2px_rgba(52,211,153,0.85)]'
-                          : 'border-white/15 hover:border-white/45'
-                  }`}
-                  style={{ aspectRatio: '744/1039' }}
-                >
-                  {def?.imageUrl ? (
-                    <img src={def.imageUrl} alt={def.name} loading="lazy" className="h-full w-full object-cover" />
-                  ) : (
-                    <span className="flex h-full w-full items-center justify-center" style={{ color }}>
-                      {dom ? <DomainIcon domain={dom} size={34} /> : '◆'}
-                    </span>
-                  )}
-                  {/* dim runes not assigned a role */}
-                  {!role && <span className="absolute inset-0 bg-black/40" />}
-                  {role && (
-                    <span
-                      className={`absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] font-bold text-white ${
-                        role === 'energy' ? 'bg-amber-500/90' : role === 'power' ? 'bg-fuchsia-500/90' : 'bg-emerald-500/90'
-                      }`}
-                    >
-                      {role === 'energy' ? '⚡ Exhaust' : role === 'power' ? '♺ Recycle' : '⚡♺ Both'}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
+            {ready.map((r) => renderRune(r, false))}
             {ready.length === 0 && <span className="text-sm text-white/40">No ready runes.</span>}
           </div>
+          {spent.length > 0 && (
+            <>
+              <div className="mb-2 mt-4 text-xs uppercase tracking-wide text-white/40">
+                Exhausted — recyclable for Power ({spent.length})
+              </div>
+              <div className="flex flex-wrap gap-3">{spent.map((r) => renderRune(r, true))}</div>
+            </>
+          )}
         </div>
 
         {/* Footer */}

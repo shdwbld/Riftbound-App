@@ -271,11 +271,16 @@ export function autoPay(player: PlayerState, cost: ResolvedCost): Payment | null
       poolPower[domain] = fromPool
       need -= fromPool
     }
-    // Cover the rest with runes (prefer a mono-domain rune before a wild rune).
+    // Cover the rest by recycling a rune that produces the domain. Recycling doesn't
+    // require a ready rune (Rule 159/403), so already-exhausted runes are eligible — but
+    // prefer READY runes (they can ALSO be exhausted for Energy), then mono-domain over
+    // wild, and only fall back to exhausted runes when no ready one matches.
     for (let i = 0; i < need; i++) {
-      const candidates = ready
+      const candidates = player.zones.runePool
         .filter((r) => !used.has(r.iid) && produces(r).includes(domain))
-        .sort((a, b) => produces(a).length - produces(b).length)
+        .sort((a, b) =>
+          (a.exhausted ? 1 : 0) - (b.exhausted ? 1 : 0) || produces(a).length - produces(b).length,
+        )
       const pick = candidates[0]
       if (!pick) return null
       used.add(pick.iid)
@@ -287,13 +292,12 @@ export function autoPay(player: PlayerState, cost: ResolvedCost): Payment | null
   const poolEnergy = Math.min(cost.energy, pool.energy ?? 0)
   const energyFromRunes = cost.energy - poolEnergy
   const exhaust: string[] = []
-  // A single rune can be exhausted for Energy AND recycled for Power (an
-  // already-exhausted rune is still recyclable) — e.g. one Calm rune pays
-  // Defy's 1 Energy + 1 Calm. So reuse recycled runes for the exhaust first,
-  // then cover any remaining energy from other ready runes.
+  // A single READY rune can be exhausted for Energy AND recycled for Power — e.g. one
+  // Calm rune pays Defy's 1 Energy + 1 Calm. So reuse ready recycled runes for the
+  // exhaust first; an already-exhausted recycled rune can't be exhausted again.
   for (const iid of recycle) {
     if (exhaust.length >= energyFromRunes) break
-    exhaust.push(iid)
+    if (!player.zones.runePool.find((r) => r.iid === iid)?.exhausted) exhaust.push(iid)
   }
   const remaining = ready.filter((r) => !used.has(r.iid))
   if (exhaust.length + remaining.length < energyFromRunes) return null

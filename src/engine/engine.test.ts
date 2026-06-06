@@ -79,6 +79,30 @@ function baseState(): MatchState {
 }
 
 describe('resource payment', () => {
+  it('lets you recycle an already-exhausted rune to pay Power', () => {
+    const s = baseState()
+    const unitId = injectCard('pay-recycle-exhausted', 'x', { type: 'unit', energy: 0, power: { fury: 1 }, might: 2 })
+    const u = mk(unitId, 0)
+    s.players[0].zones.hand.push(u)
+    const rune = mk(furyRune.id, 0, { exhausted: true }) // tapped earlier this turn
+    s.players[0].zones.runePool.push(rune)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [rune.iid] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((c) => c.iid === u.iid)).toBe(true) // recycling an exhausted rune paid the Power
+    expect(r.state.players[0].zones.runePool.some((c) => c.iid === rune.iid)).toBe(false) // it left the pool
+    expect(r.state.players[0].zones.runeDeck.some((c) => c.iid === rune.iid)).toBe(true) // recycled to the rune deck
+  })
+
+  it('autoPay/canAfford recognises an exhausted rune as recyclable for Power', () => {
+    const unitId = injectCard('pay-auto-exhausted', 'x', { type: 'unit', energy: 0, power: { fury: 1 } })
+    const p = player(0)
+    p.zones.runePool.push(mk(furyRune.id, 0, { exhausted: true })) // only an exhausted matching rune
+    const pay = autoPayForCard(p, CARD_INDEX[unitId])
+    expect(pay).not.toBeNull()
+    expect(pay!.recycle.length).toBe(1) // recycles the exhausted rune for Power
+    expect(pay!.exhaust.length).toBe(0) // cannot exhaust an already-tapped rune
+  })
+
   it('plays a unit when energy+power is paid correctly', () => {
     const s = baseState()
     const unitCard = furyUnit as Extract<typeof furyUnit, { type: 'unit' }>

@@ -187,18 +187,15 @@ function applyPayment(
     if (rune.exhausted) return 'Energy rune is already exhausted.'
     exhaustSet.add(iid)
   }
-  // Power: runes recycled from the pool (ready, or already exhausted for energy
-  // this payment). Match each to a colored requirement.
+  // Power: any rune in the pool may be recycled for Power. Recycling returns the rune
+  // to the Rune Deck (Rule 159 / 403) — it does NOT require the rune to be ready, so an
+  // already-exhausted rune (tapped earlier for Energy this turn) is still recyclable.
   const recycleSet = new Set<string>()
   const recycled: EngineCard[] = []
   for (const iid of payment.recycle) {
     if (recycleSet.has(iid)) return 'A rune was listed twice for power.'
     const rune = p.zones.runePool.find((c) => c.iid === iid)
     if (!rune) return 'Power rune not in your pool.'
-    // A still-ready rune not being exhausted this payment is fine; a rune
-    // exhausted earlier (not in this payment) can't also be recycled.
-    if (rune.exhausted && !exhaustSet.has(iid))
-      return 'Power rune is already exhausted.'
     recycleSet.add(iid)
     recycled.push(rune)
   }
