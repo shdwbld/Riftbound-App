@@ -2049,6 +2049,18 @@ function bfSpellPlayed(s: MatchState, player: PlayerId, spentEnergy = 0): MatchS
   return s
 }
 
+/** Minotaur Reckoner: "Units can't move to base." — a global aura (affects both
+ *  players) while any such unit is in play. */
+function globalNoMoveToBaseActive(s: MatchState): boolean {
+  const has = (u: EngineCard) => /units? can'?t move to base/i.test(getCard(u.cardId)?.text ?? '')
+  return s.battlefields.some((b) => b.units.some(has)) || s.players.some((p) => p.zones.base.some(has))
+}
+
+/** Determined Sentry: "I can't move to base." — a per-unit self restriction. */
+function unitCantMoveToBase(u: EngineCard): boolean {
+  return /\bi can'?t move to base/i.test(getCard(u.cardId)?.text ?? '')
+}
+
 /** Record a conquered battlefield for the turn (Perched Grimwyrm's placement
  *  predicate). Deduped; cleared at turn start. */
 function markConquered(s: MatchState, player: PlayerId, bfIndex: number): void {
@@ -4451,7 +4463,9 @@ function resolveSpellEffects(
       if (e.moveToBase) {
         const mu = findUnitAnywhere(s, t)
         const nm = getCard(mu?.cardId ?? '')?.name ?? 'a unit'
-        if (mu && sendUnitToBase(s, t)) s = log(s, controller, `${card.name}: moved ${nm} to its base.`)
+        if (mu && (unitCantMoveToBase(mu) || globalNoMoveToBaseActive(s)))
+          s = log(s, controller, `${card.name}: ${nm} can't be moved to base.`)
+        else if (mu && sendUnitToBase(s, t)) s = log(s, controller, `${card.name}: moved ${nm} to its base.`)
       }
       if (e.moveUnit) {
         // "Move an enemy unit" (Charm) — the caster picks the destination
@@ -5574,6 +5588,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           (u) => u.iid === action.iid && u.owner === action.player,
         )
         if (idx >= 0) {
+          // Minotaur Reckoner (global) / Determined Sentry (self): can't move to base.
+          if (globalNoMoveToBaseActive(s))
+            return fail(state, "Units can't move to base right now (Minotaur Reckoner).")
+          if (unitCantMoveToBase(bf.units[idx]))
+            return fail(state, `${def(bf.units[idx])?.name} can't move to base.`)
           if (bfScriptAt(s, i)?.noMoveToBase)
             return fail(state, `Units can't move from ${getCard(bf.cardId)?.name ?? 'here'} to base.`)
           if (bf.units[idx].cantMoveTurn === s.turn)

@@ -5888,3 +5888,26 @@ describe('Baron Nashor / Baron Pit', () => {
     expect(r.state.battlefields[1].units.some((x) => x.iid === u.iid)).toBe(true)
   })
 })
+
+describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)', () => {
+  it('Minotaur Reckoner: no unit can retreat to base while it is in play', () => {
+    const s = baseState()
+    s.players[0].zones.base.push(mk(injectCard('a3-mino', "Units can't move to base.", { might: 5 }), 0))
+    const u = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    const r = reduce(s, { type: 'RETREAT', player: 0, iid: u.iid })
+    expect(r.error).toBeTruthy()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid)).toBe(true) // stayed on the battlefield
+  })
+
+  it('Determined Sentry: cannot retreat, but a normal unit can', () => {
+    const s = baseState()
+    const sentry = mk(injectCard('a3-sentry', "I can't move to base.", { might: 4 }), 0)
+    const normal = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [sentry, normal], controller: 0 }
+    expect(reduce(s, { type: 'RETREAT', player: 0, iid: sentry.iid }).error).toBeTruthy()
+    const r2 = reduce(s, { type: 'RETREAT', player: 0, iid: normal.iid })
+    expect(r2.error).toBeUndefined()
+    expect(r2.state.players[0].zones.base.some((x) => x.iid === normal.iid)).toBe(true)
+  })
+})
