@@ -5923,4 +5923,18 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(bf.units.find((u) => u.iid === maduli.iid)?.exhausted).toBe(true) // skipped by Awaken
     expect(bf.units.find((u) => u.iid === normal.iid)?.exhausted).toBe(false) // readied normally
   })
+
+  it('Mageseeker Warden: an opponent can only play units to their base (no spells, no play-to-bf)', () => {
+    const s = baseState()
+    const warden = mk(injectCard('a3-warden', "While I'm at a battlefield, opponents can only play units to their base.", { name: 'Mageseeker Warden', might: 4 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [warden], controller: 1 }
+    const spell = mk(injectCard('a3-w-spell', 'Deal 1 to a unit.', { type: 'spell', energy: 0, power: {} }), 0)
+    s.players[0].zones.hand.push(spell)
+    expect(reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [warden.iid], payment: emptyPayment() }).error).toBeTruthy() // spell blocked
+    const unit = mk(injectCard('a3-w-unit', 'A unit.'), 0) // free unit (energy 0)
+    s.players[0].zones.hand.push(unit)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: unit.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined() // unit to base allowed
+    expect(r.state.players[0].zones.base.some((u) => u.iid === unit.iid)).toBe(true)
+  })
 })
