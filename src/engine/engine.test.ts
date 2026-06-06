@@ -5861,6 +5861,22 @@ describe('Baron Nashor / Baron Pit', () => {
     expect(pitBf!.units.some((u) => u.iid === baron.iid)).toBe(true) // Baron entered Baron Pit
   })
 
+  it('Elder Dragon: combat damage is lethal even to a higher-Might enemy', () => {
+    const dragonId = injectCard('a2-ed-combat', 'Any amount of your damage is enough to kill enemy units.', { name: 'Elder Dragon', might: 10 })
+    const s = baseState()
+    const bigDef = mk(injectCard('a2-bigdef', 'A unit.', { might: 12 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [bigDef], controller: 1 }
+    const dragon = mk(dragonId, 0)
+    s.players[0].zones.base.push(dragon)
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: dragon.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    // 10 Might would not normally kill a 12-Might defender; Elder Dragon makes it lethal.
+    expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === bigDef.iid)).toBe(false)
+  })
+
   it('Baron Pit: a non-Ganking unit can move there from another battlefield', () => {
     const pitId = injectCard('a2-pit', 'Units can move here from anywhere.', { type: 'battlefield', name: 'Baron Pit' })
     const s = baseState()

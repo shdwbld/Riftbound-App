@@ -3649,13 +3649,15 @@ function assignDamage(
   role: CombatRole,
   xpOf: (u: EngineCard) => number = () => 0,
   bonusOf: (u: EngineCard, role: CombatRole) => number = () => 0,
+  elderLethal = false, // Elder Dragon: any nonzero damage is lethal to each enemy
 ): Set<string> {
   const defeated = new Set<string>()
   let remaining = damage
   for (const u of units) {
-    if (remaining <= 0) break
+    if (remaining <= 0 && !elderLethal) break
     const hp = mightOf(u, role, xpOf(u)) + bonusOf(u, role)
     if (hp <= 0) continue
+    if (elderLethal && damage > 0) { defeated.add(u.iid); continue }
     if (remaining >= hp) {
       defeated.add(u.iid)
       remaining -= hp
@@ -3689,6 +3691,7 @@ function buildAssignStep(
   xpOf: (u: EngineCard) => number,
   bonusOf: (u: EngineCard, role: CombatRole) => number = () => 0,
   isTank: (u: EngineCard) => boolean = (u) => parseKeywords(def(u)).tank,
+  elderLethal = false,
 ): DamageAssignStep {
   const role: CombatRole = side === 'defenders' ? 'defender' : 'attacker'
   const ordered = damageOrder(receiving, isTank)
@@ -3697,8 +3700,8 @@ function buildAssignStep(
   const totalHp = Object.values(hp).reduce((a, b) => a + b, 0)
   // A choice only exists with 2+ live targets and damage that won't kill them all.
   const liveTargets = receiving.filter((u) => hp[u.iid] > 0)
-  const manual = manualAllowed && amount > 0 && liveTargets.length >= 2 && amount < totalHp
-  const defeated = manual ? [] : [...assignDamage(amount, ordered, role, xpOf, bonusOf)]
+  const manual = !elderLethal && manualAllowed && amount > 0 && liveTargets.length >= 2 && amount < totalHp
+  const defeated = manual ? [] : [...assignDamage(amount, ordered, role, xpOf, bonusOf, elderLethal)]
   return { dealer, side, targets: ordered.map((u) => u.iid), amount, manual, defeated, hp, tanks }
 }
 
@@ -4023,8 +4026,8 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   const atkDealer = pickDefenseAssigner(s, bfIndex, defenders, defOwners, moverOwner)
   const isTank = (u: EngineCard) => hasTank(s, u)
   const steps = [
-    buildAssignStep(moverOwner, 'defenders', defenders, attackMight, true, xpOf, bonusOf, isTank),
-    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, true, xpOf, bonusOf, isTank),
+    buildAssignStep(moverOwner, 'defenders', defenders, attackMight, true, xpOf, bonusOf, isTank, controlsUnitNamed(s, moverOwner, 'Elder Dragon') && attackMight > 0),
+    buildAssignStep(atkDealer, 'attackers', attackers, defendMight, true, xpOf, bonusOf, isTank, controlsUnitNamed(s, atkDealer, 'Elder Dragon') && defendMight > 0),
   ]
   return { moverOwner, steps }
 }
