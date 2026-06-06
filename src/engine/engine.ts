@@ -5546,6 +5546,30 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           for (const line of applyParsed(s1, p, pb, ambushBf ?? undefined, ci.iid)) s1 = log(s1, action.player, line)
           s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(pb))
         }
+        // On-play "deal damage equal to my Might" (dealer='self'): applyParsed has no
+        // dealMight branch and resolveCard only handles spell self-dealers, so a played
+        // unit's self-dealer clash is resolved here. Carnivorous Snapvine ('mutual':
+        // "We deal damage equal to our Mights to each other"); auto-picks the strongest
+        // enemy at a battlefield (per the auto-resolve preference) when none is chosen.
+        if (e.dealMight?.dealer === 'self' && !legionGated) {
+          const self = findUnitAnywhere(s1, ci.iid)
+          const statOf = (u: EngineCard) => e.dealMight!.useStat === 'assault'
+            ? parseKeywords(getCard(u.cardId)).assault + (u.grantAssault ?? 0)
+            : mightOf(u, null, s1.players[u.owner]?.xp ?? 0)
+          const foe = s1.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => statOf(b) - statOf(a))[0]
+          if (self && foe) {
+            const selfAmt = statOf(self)
+            const foeAmt = statOf(foe)
+            const dead = [...applyTargetDamage(s1, foe.iid, selfAmt, true, action.player)]
+            if (e.dealMight.target === 'mutual') dead.push(...applyTargetDamage(s1, self.iid, foeAmt, true, action.player))
+            s1 = log(s1, action.player, e.dealMight.target === 'mutual'
+              ? `${card.name}: clashed with ${getCard(foe.cardId)?.name} (${selfAmt} vs ${foeAmt}).`
+              : `${card.name}: dealt ${selfAmt} to ${getCard(foe.cardId)?.name}.`)
+            s1 = fireDeaths(s1, dead, action.player)
+          } else {
+            s1 = log(s1, action.player, `${card.name}: no enemy unit to clash with.`)
+          }
+        }
         // Keeper of Masks: when played, play two Reflection copies of itself here.
         if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Keeper of Masks' && !legionGated) {
           const dest = ambushBf != null ? s1.battlefields[ambushBf].units : s1.players[action.player].zones.base

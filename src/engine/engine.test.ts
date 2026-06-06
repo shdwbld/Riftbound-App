@@ -6478,4 +6478,21 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     expect(step!.assignedLast).toContain(cait.iid)
     expect(step!.targets[step!.targets.length - 1]).toBe(cait.iid) // Caitlyn ordered last
   })
+
+  it('Carnivorous Snapvine: on play, mutually clashes Might with the strongest enemy', async () => {
+    const { onPlayEffect } = await import('./effects')
+    expect(onPlayEffect(CARD_INDEX['ogn-149-298']).dealMight).toEqual({ dealer: 'self', target: 'mutual', useStat: 'might', side: null })
+    // Functional via an injected clone (avoids paying the real card's cost).
+    const sid = injectCard('a5-snapvine', 'When you play me, choose an enemy unit at a battlefield. We deal damage equal to our Mights to each other.', { type: 'unit', energy: 0, might: 6 })
+    const s = baseState()
+    const snap = mk(sid, 0)
+    s.players[0].zones.hand.push(snap)
+    const enemy = mk(injectCard('a5-snap-e', 'enemy', { might: 5 }), 1)
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: snap.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.some((x) => x.iid === enemy.iid)).toBe(false) // enemy (5) killed by Snapvine (6)
+    const snapNow = r.state.players[0].zones.base.find((x) => x.iid === snap.iid)
+    expect(snapNow?.damage).toBe(5) // Snapvine took the enemy's 5 Might back, survives (6)
+  })
 })
