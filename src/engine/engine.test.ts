@@ -6791,4 +6791,33 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.battlefields[1].units.some((u) => u.iid === pursuer.iid)).toBe(true) // followed to bf1
     expect(r.state.battlefields[0].units.some((u) => u.iid === pursuer.iid)).toBe(false)
   })
+
+  it('Albus Ferros: spends all your buffs to channel that many runes exhausted', () => {
+    const aid = injectCard('b-albus', 'When you play me, spend any number of buffs. For each buff spent, channel 1 rune exhausted.', { type: 'unit', energy: 0, might: 2 })
+    const s = baseState()
+    const u1 = mk(furyUnit.id, 0, { buffs: 1 })
+    const u2 = mk(furyUnit.id, 0, { buffs: 1 })
+    s.players[0].zones.base.push(u1, u2)
+    for (let i = 0; i < 3; i++) s.players[0].zones.runeDeck.push(mk(furyRune.id, 0))
+    const albus = mk(aid, 0)
+    s.players[0].zones.hand.push(albus)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: albus.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === u1.iid)?.buffs ?? 0).toBe(0) // buff spent
+    expect(r.state.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(2) // channeled 2 exhausted
+  })
+
+  it('Draven - Vanquisher: pays 1 Power on attack for +2 Might this turn', () => {
+    const s = baseState()
+    const dr = mk('sfd-020-221', 0)
+    s.players[0].zones.base.push(dr)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 ready Power to auto-pay
+    const enemy = mk(injectCard('b-dr-enemy', 'x', { type: 'unit', might: 1 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [dr.iid], toBattlefield: 0 }) // attack
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.find((u) => u.iid === dr.iid)?.tempMight).toBe(2)
+  })
 })

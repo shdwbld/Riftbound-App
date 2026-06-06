@@ -758,7 +758,9 @@ function parse(text: string): ParsedEffect {
     hit = true
   }
   // "its owner channels N rune(s) exhausted" — tied to the bounced unit's owner.
-  const chExM = t.match(new RegExp(`channels? ${NUM} runes? exhausted`))
+  // NOT the per-buff rate "for each buff spent, channel 1 rune exhausted" (Albus Ferros),
+  // which a bespoke handler scales by buffs spent.
+  const chExM = !/for each buff spent, channel/.test(t) ? t.match(new RegExp(`channels? ${NUM} runes? exhausted`)) : null
   if (chExM) { eff.channelExhausted += num(chExM[1]); hit = true }
 
   // Signed Might-this-turn to a CHOSEN target: "give a/an/target/another unit … +N

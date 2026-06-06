@@ -1229,6 +1229,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       || (srcName === 'Ivern - Green Father' && (ability.event === 'conquer' || ability.event === 'hold'))
       || srcName === 'Volibear - Furious' || srcName === 'Sivir - Ambitious'
       || srcName === 'Adaptatron' // its bespoke conquer handler owns the gear-kill + buff
+      || (srcName === 'Draven - Vanquisher' && (ability.event === 'attack' || ability.event === 'defend')) // pay-gated +2, handled bespoke
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1336,6 +1337,16 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       if (target) {
         applyTempMight(s, target.iid, -2, 1)
         s = log(s, player, `${label}: ${srcName} gave ${getCard(target.cardId)?.name} −2 Might this turn (min 1).`)
+      }
+      handled = true
+    }
+    if ((ability.event === 'attack' || ability.event === 'defend') && sourceIid && srcName === 'Draven - Vanquisher') {
+      // "When I attack or defend, you may pay :rb_rune_fury:. If you do, give me +2
+      // Might this turn." Auto-pay 1 Power if affordable (per the auto-resolve preference).
+      if (makeBfApi(s).payPowerAny(player, 1)) {
+        const self = findUnitAnywhere(s, sourceIid)
+        if (self) { self.tempMight = (self.tempMight ?? 0) + 2; emit({ kind: 'buff', iid: self.iid, player }) }
+        s = log(s, player, `${label}: ${srcName} paid 1 Power for +2 Might this turn.`)
       }
       handled = true
     }
@@ -5771,6 +5782,18 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             if (allGearInPlay(s1).filter((g) => g.owner === action.player).length >= need) {
               const self = findUnitAnywhere(s1, ci.iid)
               if (self) { self.exhausted = false; emit({ kind: 'buff', iid: self.iid, player: action.player }) }
+            }
+          }
+          // Albus Ferros: "When you play me, spend any number of buffs. For each buff
+          // spent, channel 1 rune exhausted." Auto-spend all friendly buffs.
+          if (/spend any number of buffs/.test(txt) && /channel 1 rune exhausted/.test(txt)) {
+            let spent = 0
+            for (const u of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)])
+              if (u.owner === action.player && (u.buffs ?? 0) > 0) { spent += u.buffs ?? 0; u.buffs = 0 }
+            if (spent > 0) {
+              channelN(p, spent, true)
+              for (const l of fireSpendBuffInline(s1, action.player)) s1 = log(s1, action.player, l)
+              s1 = log(s1, action.player, `Albus Ferros: spent ${spent} buff(s) → channeled ${spent} exhausted.`)
             }
           }
         }
