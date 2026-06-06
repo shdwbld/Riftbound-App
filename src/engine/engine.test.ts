@@ -7079,6 +7079,37 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.players[0].zones.runePool.length).toBe(0) // 1 Mind Power paid
   })
 
+  it('Last Rites: the [Equip] cost requires recycling 2 cards from your trash', () => {
+    const s = baseState()
+    const lr = mk('sfd-150-221', 0) // real Last Rites (TEXT_PATCH restores the full text)
+    s.players[0].zones.base.push(lr)
+    const host = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [host], controller: 0 }
+    const chaosRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('chaos'))!
+    s.players[0].zones.runePool.push(mk(chaosRune.id, 0))
+    // No trash → ATTACH fails on the recycle-2 cost.
+    expect(reduce(s, { type: 'ATTACH', player: 0, unitIid: host.iid, gearIid: lr.iid }).error).toBeTruthy()
+    // With 2 trash cards → succeeds; both are recycled to the deck.
+    s.players[0].zones.trash.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'ATTACH', player: 0, unitIid: host.iid, gearIid: lr.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.trash.length).toBe(0) // 2 recycled
+    expect(r.state.players[0].zones.mainDeck.length).toBe(2)
+  })
+
+  it('Last Rites: an attached gear fires its own conquer trigger (play a unit from trash)', () => {
+    const trashUnitId = injectCard('b-lr-trash', 'A revenant.', { type: 'unit', energy: 0, might: 2 })
+    const s = baseState()
+    const host = mk(furyUnit.id, 0, { attached: ['sfd-150-221|lr-host'] })
+    s.players[0].zones.base.push(host)
+    const trashUnit = mk(trashUnitId, 0)
+    s.players[0].zones.trash.push(trashUnit)
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [host.iid], toBattlefield: 0 }) // conquers open bf0
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.trash.some((c) => c.iid === trashUnit.iid)).toBe(false) // played from trash by the gear
+    expect([...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[0].zones.base].some((u) => u.iid === trashUnit.iid)).toBe(true)
+  })
+
   it('Zaun Punk: declining the additional cost kills no gear', () => {
     const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
     const s = baseState()

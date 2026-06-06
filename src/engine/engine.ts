@@ -6389,6 +6389,18 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             return fail(state, 'Not enough resources to pay the Equip cost.')
           }
         }
+        // Additional non-resource [Equip] cost: "Recycle N cards from your trash" (Last
+        // Rites). Not captured by equipCost — enforce it here. Requires N trash cards;
+        // auto-recycles the oldest N to the bottom of the Main Deck. A failure reverts the
+        // rune payment above (we return the untouched original state).
+        const gearText = getCard(s.players[gearPlayer].zones.base[gIdx!].cardId)?.text ?? ''
+        const recM = gearText.match(/recycle (\d+) cards? from your trash/i)
+        if (recM) {
+          const need = parseInt(recM[1], 10)
+          const trash = s.players[action.player].zones.trash
+          if (trash.length < need) return fail(state, `Need ${need} card(s) in your trash to pay the Equip cost.`)
+          for (const c of trash.splice(trash.length - need, need)) s.players[action.player].zones.mainDeck.push({ ...c, exhausted: false, damage: 0, attached: [] })
+        }
       }
       const [gear] = s.players[gearPlayer].zones.base.splice(gIdx!, 1)
       unit.attached = [...unit.attached, `${gear.cardId}|${gear.iid}`]
