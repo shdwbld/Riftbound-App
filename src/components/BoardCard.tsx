@@ -179,6 +179,21 @@ export default function BoardCard({
               {x.stunned && (
                 <span className="rounded-br bg-sky-400/80 px-0.5 text-black" title="Stunned — deals no combat damage this turn">✸</span>
               )}
+              {(ci as { grantShield?: number }).grantShield ? (
+                <span className="rounded-br bg-cyan-400/90 px-0.5 font-bold text-black" title="Granted [Shield] this turn">S</span>
+              ) : null}
+              {(ci as { grantTank?: boolean }).grantTank && (
+                <span className="rounded-br bg-amber-500/90 px-0.5 font-bold text-black" title="Granted [Tank] this turn">T</span>
+              )}
+              {((ci as { deathShield?: boolean }).deathShield || (ci as { banishShield?: boolean }).banishShield) && (
+                <span className="rounded-br bg-lime-400/90 px-0.5 font-bold text-black" title="Protected from its next death this turn">P</span>
+              )}
+              {(ci as { targetingImmune?: boolean }).targetingImmune && (
+                <span className="rounded-br bg-indigo-400/90 px-0.5 font-bold text-white" title="Can't be chosen by enemy spells/abilities">⦸</span>
+              )}
+              {/\bi can'?t be readied\b/i.test(def.text ?? '') && (
+                <span className="rounded-br bg-slate-400/90 px-0.5 font-bold text-black" title="Can't be readied">∅</span>
+              )}
               {lvlThreshold > 0 && (
                 <span
                   className={`rounded-br px-0.5 font-bold ${lvl.active ? 'bg-fuchsia-500/90 text-white' : 'bg-white/15 text-white/50'}`}
