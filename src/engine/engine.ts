@@ -702,9 +702,9 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.opponentHandStrip) {
     // Opponent reveals hand; you strip the highest-cost (non-unit, for Sabotage)
     // card to trash / deck (recycle) / banish (Mindsplitter, Sabotage, Ashe). Auto-
-    // picks the opponent holding the most cards. NOTE: a forced discard here does NOT
-    // cascade the victim's own "when you discard" reactions (applyParsed can't fire
-    // the log-cloning trigger pass) — only discardedThisTurn is set.
+    // picks the opponent holding the most cards. A forced discard cascades the victim's
+    // own "when you discard" reactions via fireDiscard — mutations land on shared state,
+    // exactly like the e.discard path above (line ~583).
     const { to, nonUnit } = e.opponentHandStrip
     const foe = s.players
       .filter((pl) => pl.id !== p.id && !pl.out && pl.zones.hand.length > 0)
@@ -719,7 +719,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
         const nm = getCard(card.cardId)?.name ?? 'a card'
         if (to === 'deck') { foe.zones.mainDeck.push({ ...card, exhausted: false, damage: 0, attached: [] }); lines.push(`Opponent revealed hand — recycled ${nm}.`) }
         else if (to === 'banish') { foe.banished.push(card); lines.push(`Opponent revealed hand — banished ${nm}.`) }
-        else { sendToTrash(foe, card); foe.discardedThisTurn = true; lines.push(`Opponent revealed hand — discarded ${nm}.`) }
+        else { sendToTrash(foe, card); foe.discardedThisTurn = true; lines.push(`Opponent revealed hand — discarded ${nm}.`); fireDiscard(s, foe.id, [card]) }
       } else {
         lines.push('Opponent revealed hand — nothing to take.')
       }
@@ -732,11 +732,14 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       .sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
     if (foe) {
       const n = Math.min(e.opponentDiscards, foe.zones.hand.length)
+      const discardedCards: EngineCard[] = []
       for (let k = 0; k < n; k++) {
         const lowest = [...foe.zones.hand].sort((a, b) => cardCost(a) - cardCost(b))[0]
-        sendToTrash(foe, foe.zones.hand.splice(foe.zones.hand.findIndex((x) => x.iid === lowest.iid), 1)[0])
+        const [d] = foe.zones.hand.splice(foe.zones.hand.findIndex((x) => x.iid === lowest.iid), 1)
+        sendToTrash(foe, d)
+        discardedCards.push(d)
       }
-      if (n > 0) { foe.discardedThisTurn = true; lines.push(`Opponent discarded ${n}.`) }
+      if (n > 0) { foe.discardedThisTurn = true; lines.push(`Opponent discarded ${n}.`); fireDiscard(s, foe.id, discardedCards) }
     }
   }
   if (e.playUnitFromTrash) {

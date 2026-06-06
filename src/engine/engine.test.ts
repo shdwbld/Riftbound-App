@@ -1172,6 +1172,44 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[1].zones.hand.some((x) => x.cardId === pricey)).toBe(true) // pricey kept
   })
 
+  it('forced-discard cascade (Mindsplitter → Flame Chompers): victim gets the discard-replay offer', () => {
+    // A5-1: a forced discard must fire the VICTIM's own "when you discard me" reaction.
+    const stripper = injectCard('mindsplit-casc-t', 'When you play me, choose an opponent. They reveal their hand. Choose a card from it, and they discard that card.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const cheap = injectCard('casc-cheap-t', 'x', { type: 'unit', energy: 1, power: {}, might: 1 })
+    const s = baseState()
+    const fc = mk('ogn-006-298', 1) // Flame Chompers (e3) — the victim's highest-cost card, so hand-strip picks it
+    s.players[1].zones.hand.push(mk(cheap, 1), fc)
+    s.players[1].zones.runePool.push(mk(furyRune.id, 1)) // victim can afford the alt-cost replay
+    const u = mk(stripper, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // Flame Chompers force-discarded
+    // The cascade fired the victim's own "when you discard me" reaction — offered to the VICTIM (player 1):
+    expect(r.state.pendingChoice?.kind).toBe('discardReplay')
+    expect(r.state.pendingChoice?.player).toBe(1)
+    // Victim accepts → replays Flame Chompers from their trash to their base.
+    const r2 = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: fc.iid })
+    expect(r2.error).toBeFalsy()
+    expect(r2.state.players[1].zones.base.some((x) => x.iid === fc.iid)).toBe(true)
+  })
+
+  it('forced-discard cascade (Bewitching Spirit → Flame Chompers): opponentDiscards path also cascades', () => {
+    const bew = injectCard('bewitch-casc-t', 'When you play me, choose a player. They discard 1.', { type: 'unit', energy: 0, power: {}, might: 1 })
+    const pricey = injectCard('casc-pricey-t', 'x', { type: 'unit', energy: 9, power: {}, might: 9 })
+    const s = baseState()
+    const fc = mk('ogn-006-298', 1) // Flame Chompers (e3) — the victim's lowest-cost card, so opponentDiscards picks it
+    s.players[1].zones.hand.push(mk(pricey, 1), fc)
+    s.players[1].zones.runePool.push(mk(furyRune.id, 1))
+    const u = mk(bew, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // lowest-cost (Flame Chompers) discarded
+    expect(r.state.pendingChoice?.kind).toBe('discardReplay') // cascade fired on the opponentDiscards path too
+    expect(r.state.pendingChoice?.player).toBe(1)
+  })
+
   it('opponent-strip: real cards parse correctly (Mindsplitter / Sabotage / Bewitching Spirit)', async () => {
     const { onPlayEffect, spellEffect } = await import('./effects')
     expect(onPlayEffect(CARD_INDEX['ogn-192-298']).opponentHandStrip).toEqual({ to: 'trash', nonUnit: false }) // Mindsplitter
