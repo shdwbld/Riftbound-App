@@ -2757,6 +2757,9 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
   // Annie - Fiery: "Your spells and abilities deal 1 Bonus Damage." +1 per instance
   // of spell/ability damage dealt by a controller of Annie - Fiery.
   if (spellLike && caster != null && controlsUnitNamed(s, caster, 'Annie - Fiery')) amount += 1
+  // Elder Dragon (unl-118-219): "Any amount of your damage is enough to kill enemy
+  // units." Its controller's nonzero damage is lethal to enemy units.
+  const elderLethal = amount > 0 && caster != null && controlsUnitNamed(s, caster, 'Elder Dragon')
   for (let i = 0; i < s.battlefields.length; i++) {
     const bf = s.battlefields[i]
     const u = bf.units.find((x) => x.iid === targetIid)
@@ -2768,7 +2771,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       let dead: EngineCard[] = []
       // mightOf already subtracts accrued damage, so a unit is defeated when its
       // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
-      if (mightOf(u) <= 0) {
+      if (mightOf(u) <= 0 || (elderLethal && u.owner !== caster)) {
         u.diedAtBf = i // for location-scoped death triggers (Kog'Maw)
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u, i)) {
@@ -2790,7 +2793,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
     if (u) {
       u.damage += amount
       emit({ kind: 'damage', iid: targetIid, amount, cardId: u.cardId })
-      if (mightOf(u) <= 0) {
+      if (mightOf(u) <= 0 || (elderLethal && u.owner !== caster)) {
         p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
         if (trashOrBanish(s, u)) return []
@@ -5184,6 +5187,19 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
         }
         s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
+        // Elder Dragon: "When you play me, choose up to one enemy unit at each location.
+        // Deal 1 to them." Auto-picks the strongest enemy at each battlefield + each
+        // opponent's base; the passive above makes that 1 damage lethal.
+        if (card.name === 'Elder Dragon') {
+          const strongestEnemy = (units: EngineCard[]) => {
+            const en = units.filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit')
+            return en.length ? en.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : null
+          }
+          const edDead: EngineCard[] = []
+          for (const bf of s1.battlefields) { const v = strongestEnemy(bf.units); if (v) edDead.push(...applyTargetDamage(s1, v.iid, 1, true, action.player)) }
+          for (const pl of s1.players) { if (pl.id === action.player) continue; const v = strongestEnemy(pl.zones.base); if (v) edDead.push(...applyTargetDamage(s1, v.iid, 1, true, action.player)) }
+          if (edDead.length) s1 = fireDeaths(s1, edDead, action.player)
+        }
         s1 = fireOpponentUnitPlay(s1, action.player, ci.iid) // Vex - Apathetic
         // A non-Ambush unit played straight to a battlefield "becomes present" there
         // → contested ⇒ a showdown opens (or a control flip awards the conquer).

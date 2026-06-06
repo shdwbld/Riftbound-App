@@ -5782,4 +5782,35 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(legal.includes(immune.iid)).toBe(false) // enemy immune unit excluded
     expect(legal.includes(normal.iid)).toBe(true) // enemy normal unit targetable
   })
+
+  it('Elder Dragon: any of your damage is lethal to enemy units', () => {
+    const dragon = injectCard('a2-dragon', 'Any amount of your damage is enough to kill enemy units.', { name: 'Elder Dragon', might: 10 })
+    const spellId = injectCard('a2-ping1', 'Deal 1 to a unit.', { type: 'spell', energy: 0, power: {} })
+    const dies = (withDragon: boolean): boolean => {
+      const s = baseState()
+      if (withDragon) s.players[0].zones.base.push(mk(dragon, 0))
+      const enemy = mk(injectCard('a2-tough', 'A unit.', { might: 9 }), 1)
+      s.battlefields[0].units.push(enemy)
+      const sp = mk(spellId, 0)
+      s.players[0].zones.hand.push(sp)
+      let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemy.iid], payment: emptyPayment() })
+      r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+      r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+      return !r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)
+    }
+    expect(dies(true)).toBe(true) // with Elder Dragon, 1 damage kills a 9-Might unit
+    expect(dies(false)).toBe(false) // without, it survives
+  })
+
+  it('Elder Dragon on-play: deals 1 (lethal) to the strongest enemy at each location', () => {
+    const dragonId = injectCard('a2-dragon2', 'Any amount of your damage is enough to kill enemy units. When you play me, choose up to one enemy unit at each location. Deal 1 to them.', { name: 'Elder Dragon', might: 10, energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(injectCard('a2-eb', 'A unit.', { might: 7 }), 1)
+    s.battlefields[0].units.push(enemy)
+    const dragon = mk(dragonId, 0)
+    s.players[0].zones.hand.push(dragon)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: dragon.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)).toBe(false)
+  })
 })
