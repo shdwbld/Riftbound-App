@@ -185,17 +185,20 @@ export function DeckPicker({
   decks,
   value,
   onChange,
+  gridClassName = 'max-h-72 grid-cols-2 sm:grid-cols-3',
 }: {
   label?: string
   decks: Deck[]
   value: string
   onChange: (id: string) => void
+  /** Override the tile grid's columns + max-height (e.g. wider on a full-width page). */
+  gridClassName?: string
 }) {
   const selected = decks.find((d) => d.id === value)
   return (
     <div className="space-y-3 rounded-xl border border-white/10 bg-[#0a1428] p-3">
       {label && <div className="text-xs uppercase tracking-wide text-white/40">{label}</div>}
-      <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto p-1 sm:grid-cols-3">
+      <div className={`grid gap-2 overflow-y-auto p-1 ${gridClassName}`}>
         {decks.map((d) => (
           <DeckTile key={d.id} deck={d} selected={d.id === value} dimmed={!!value} onSelect={() => onChange(d.id)} />
         ))}

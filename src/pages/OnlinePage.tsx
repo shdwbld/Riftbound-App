@@ -1041,57 +1041,67 @@ function Lobby({
       </div>
     )
   return (
-    <div className="mx-auto max-w-lg space-y-5">
+    <div className="space-y-5">
       <div>
         <h2 className="text-2xl font-bold">Play Online</h2>
         <p className="mt-1 text-sm text-white/50">
           {onlineAvailable
             ? 'Connected to Supabase — share a room code with anyone, anywhere.'
-            : 'Same-device mode: open this page in multiple browser tabs and use the same room code. (Add Supabase keys for true cross-device play.)'}
+            : 'Same-device mode: open this page in multiple browser tabs and use the same room code. (Add Supabase keys for true cross-device play.)'}{' '}
+          This screen is just your seat — pick your deck, then create or join a room; everyone else joins from their own device with the room code.
         </p>
       </div>
 
-      <DeckPicker label="Your deck" decks={decks} value={deckId} onChange={setDeckId} />
+      {/* Full-width selector: your decks on the left, create/join on the right. */}
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <DeckPicker
+          label="Your deck"
+          decks={decks}
+          value={deckId}
+          onChange={setDeckId}
+          gridClassName="max-h-[62vh] grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+        />
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-sky-400/40 bg-sky-500/10 p-5">
-          <div className="text-lg font-semibold">Create room</div>
-          <div className="mt-2 flex items-center gap-2 text-sm">
-            <span className="text-white/60">Players:</span>
-            {[2, 3, 4].map((n) => (
-              <button
-                key={n}
-                onClick={() => setCount(n)}
-                className={`rounded px-2.5 py-1 text-sm font-semibold ${
-                  count === n ? 'bg-sky-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
-                }`}
-              >
-                {n}
-              </button>
-            ))}
+        <div className="space-y-3">
+          <div className="rounded-xl border border-sky-400/40 bg-sky-500/10 p-5">
+            <div className="text-lg font-semibold">Create room</div>
+            <div className="mt-2 flex items-center gap-2 text-sm">
+              <span className="text-white/60">Players:</span>
+              {[2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setCount(n)}
+                  className={`rounded px-2.5 py-1 text-sm font-semibold ${
+                    count === n ? 'bg-sky-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => onCreate(count)}
+              className="mt-3 w-full rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
+            >
+              Create {count}-player room
+            </button>
           </div>
-          <button
-            onClick={() => onCreate(count)}
-            className="mt-3 w-full rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
-          >
-            Create {count}-player room
-          </button>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-[#0a1428] p-5">
-          <div className="text-lg font-semibold">Join room</div>
-          <input
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            maxLength={4}
-            placeholder="CODE"
-            className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-center font-mono text-lg tracking-widest outline-none focus:border-sky-400"
-          />
-          <button
-            onClick={() => onJoin(code)}
-            className="mt-2 w-full rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
-          >
-            Join
-          </button>
+          <div className="rounded-xl border border-white/10 bg-[#0a1428] p-5">
+            <div className="text-lg font-semibold">Join room</div>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              maxLength={4}
+              placeholder="CODE"
+              className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-center font-mono text-lg tracking-widest outline-none focus:border-sky-400"
+            />
+            <button
+              onClick={() => onJoin(code)}
+              className="mt-2 w-full rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
+            >
+              Join
+            </button>
+          </div>
         </div>
       </div>
       {toast && <Toast text={toast} />}
