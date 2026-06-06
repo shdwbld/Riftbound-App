@@ -26,17 +26,20 @@ function artLabel(name: string): string | null {
 function BigCard({ cardId, onClick, onInspect, selected }: { cardId: string; onClick: () => void; onInspect: () => void; selected?: boolean }) {
   const card = getCard(cardId)
   const art = card ? artLabel(card.name) : null
+  // Battlefield cards are landscape — show them wide and uncropped (others portrait).
+  const land = card?.type === 'battlefield'
+  const wCls = land ? 'w-64' : 'w-40'
   return (
-    <div className="group flex w-40 flex-col items-center gap-2">
+    <div className={`group flex ${wCls} flex-col items-center gap-2`}>
       <button
         onClick={onClick}
-        className={`relative w-40 overflow-hidden rounded-xl border-2 transition hover:-translate-y-1 hover:border-amber-300 hover:shadow-[0_0_24px_-4px_rgba(252,211,77,0.7)] ${
+        className={`relative ${wCls} overflow-hidden rounded-xl border-2 transition hover:-translate-y-1 hover:border-amber-300 hover:shadow-[0_0_24px_-4px_rgba(252,211,77,0.7)] ${
           selected ? 'border-amber-300 shadow-[0_0_24px_-4px_rgba(252,211,77,0.8)]' : 'border-white/15'
         }`}
-        style={{ aspectRatio: '744/1039' }}
+        style={{ aspectRatio: land ? '1039/744' : '744/1039' }}
       >
         {card?.imageUrl ? (
-          <img src={card.imageUrl} alt={card.name} className="h-full w-full object-cover" />
+          <img src={card.imageUrl} alt={card.name} className={`h-full w-full ${land ? 'object-contain' : 'object-cover'}`} />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[#1c1c28] p-2 text-center text-sm">{card?.name ?? cardId}</div>
         )}

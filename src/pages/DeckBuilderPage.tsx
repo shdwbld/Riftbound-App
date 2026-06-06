@@ -652,10 +652,10 @@ function CardPool({
                   src={c.imageUrl}
                   alt={c.name}
                   loading="lazy"
-                  className="aspect-[744/1039] w-full object-cover"
+                  className={`w-full ${c.type === 'battlefield' ? 'aspect-[1039/744] object-contain' : 'aspect-[744/1039] object-cover'}`}
                 />
               ) : (
-                <div className="flex aspect-[744/1039] items-center justify-center p-2 text-center text-[11px] text-white/60">
+                <div className={`flex items-center justify-center p-2 text-center text-[11px] text-white/60 ${c.type === 'battlefield' ? 'aspect-[1039/744]' : 'aspect-[744/1039]'}`}>
                   {c.name}
                 </div>
               )}

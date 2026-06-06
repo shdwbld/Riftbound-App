@@ -97,13 +97,13 @@ export default function BoardCard({
           ? 'border-emerald-400/60 ring-1 ring-emerald-400/40'
           : 'border-white/15 hover:border-white/40'
   return (
-    <span className={sig ? 'sig-glow' : undefined} style={sigStyle}>
+    <span className={sig ? `sig-glow ${ci.exhausted ? 'rotate-90' : ''}` : undefined} style={sigStyle}>
     <button
       onClick={onClick}
       title={def?.name}
       data-iid={(ci as { iid?: string }).iid}
       className={`relative shrink-0 overflow-hidden rounded-md border transition ${borderClass} ${
-        ci.exhausted ? 'rotate-90' : ''
+        ci.exhausted && !sig ? 'rotate-90' : ''
       } ${dim ? 'opacity-40 saturate-0' : ''} ${glow === 'ready' ? 'fx-ready' : ''} ${
         flash ? `fx-${flash}` : ''
       }`}

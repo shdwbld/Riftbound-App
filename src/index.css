@@ -616,18 +616,21 @@ body {
 }
 
 /* Champion / signature cards: a soft, slow domain-colored outer glow (color via
-   the inline --sig-glow var; period + delay randomized per card inline). */
+   the inline --sig-glow var; period + delay randomized per card inline). A
+   semi-transparent color (alpha + blur both animate) keeps the breathing smooth
+   rather than a hard ring that appears to step. */
 @keyframes sigPulse {
   0%,
   100% {
-    box-shadow: 0 0 5px 1px var(--sig-glow, transparent);
+    box-shadow: 0 0 9px 2px color-mix(in srgb, var(--sig-glow) 26%, transparent);
   }
   50% {
-    box-shadow: 0 0 18px 6px var(--sig-glow, transparent);
+    box-shadow: 0 0 24px 9px color-mix(in srgb, var(--sig-glow) 62%, transparent);
   }
 }
 .sig-glow {
   animation: sigPulse 4.5s ease-in-out infinite;
+  will-change: box-shadow;
 }
 
 /* Alt+click ping marker: quick pop, then fade to 0% opacity over 2s. */
