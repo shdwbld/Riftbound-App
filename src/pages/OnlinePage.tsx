@@ -56,6 +56,7 @@ import CardDetailModal from '../components/CardDetailModal'
 import { MulliganView } from './MatchPage'
 import SetupScreen from '../components/SetupScreen'
 import { saveSession, loadSession, clearSession, saveHostState, loadHostState } from '../lib/onlineSession'
+import MatchEndScreen from '../components/MatchEndScreen'
 
 type Role = 'host' | 'guest'
 type Status = 'lobby' | 'waiting' | 'connected'
@@ -488,18 +489,14 @@ export default function OnlinePage() {
       />
     )
 
-  if (match.phase === 'gameover') {
-    const w = match.winner!
+  if (match.phase === 'gameover')
     return (
-      <div className="space-y-4 py-16 text-center">
-        <div className="text-5xl">🏆</div>
-        <h2 className="text-3xl font-bold">{match.players[w].name} wins!</h2>
-        <button onClick={leave} className="rounded-lg bg-sky-500 px-4 py-2 font-semibold">
-          Back to lobby
-        </button>
-      </div>
+      <MatchEndScreen
+        match={match}
+        perspective={seat}
+        actions={[{ label: '↩ Back to lobby', onClick: leave, variant: 'primary' }]}
+      />
     )
-  }
 
   const controlling: PlayerId =
     match.chain.length > 0 && match.priority != null

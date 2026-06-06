@@ -30,6 +30,7 @@ import BattleSummary, { worthSummarizing } from '../components/BattleSummary'
 import BaronEntranceVfx from '../components/BaronEntranceVfx'
 import TurnRecapBanner, { type TurnRecapData } from '../components/TurnRecapBanner'
 import HotkeyHelp from '../components/HotkeyHelp'
+import MatchEndScreen from '../components/MatchEndScreen'
 
 /** Accumulate this-turn events into a buffer; when the turn flips, build a
  *  recap from the just-ended turn's buffer and reset to the new turn. Shared by
@@ -281,21 +282,13 @@ export default function MatchPage() {
 
   const act = dispatch
 
-  if (match.phase === 'gameover') {
-    const w = match.winner!
+  if (match.phase === 'gameover')
     return (
-      <div className="space-y-4 py-16 text-center">
-        <div className="text-5xl">🏆</div>
-        <h2 className="text-3xl font-bold">{match.players[w].name} wins!</h2>
-        <p className="text-white/50">
-          {match.players.map((p) => `${p.name} ${p.points}`).join(' · ')}
-        </p>
-        <button onClick={() => setMatch(null)} className="rounded-lg bg-sky-500 px-4 py-2 font-semibold">
-          New match
-        </button>
-      </div>
+      <MatchEndScreen
+        match={match}
+        actions={[{ label: '⚔ New match', onClick: () => setMatch(null), variant: 'primary' }]}
+      />
     )
-  }
 
   if (match.phase === 'setup')
     return (

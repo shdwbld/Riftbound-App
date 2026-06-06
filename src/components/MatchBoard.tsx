@@ -30,6 +30,8 @@ import ControlHUD from './ControlHUD'
 import PingLayer, { type PingData } from './PingLayer'
 import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
 import { useFitToViewport } from '../lib/useFitToViewport'
+import { champBase, matSplashUrl } from '../lib/championArt'
+import ConnectorArcLayer from './ConnectorArcLayer'
 
 /** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
 type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; moveGearIid?: { gearIid: string; fromUnitIid: string; owner: PlayerId }; stepper?: { title: string; make: (n: number) => Action }; openSearch?: { source: SearchSource; owner: PlayerId } }
@@ -394,8 +396,6 @@ export default function MatchBoard({
   useEffect(() => {
     if (!events?.length) return
     const kinds = new Set(events.map((e) => e.kind))
-    // Champion display name → audio key (strip " - subtitle" and trailing "(set)").
-    const champBase = (name: string) => name.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim()
     const playEvt = events.find((e) => e.kind === 'play')
     if (playEvt?.cardId) {
       const c = getCard(playEvt.cardId)
@@ -1223,6 +1223,10 @@ export default function MatchBoard({
 
       {/* Alt+click ping markers (local + peers). */}
       <PingLayer pings={pings ?? []} />
+
+      {/* Cause→effect arcs (acting card → units it hits). Sibling of the other
+          overlays: OUTSIDE the board's scale transform so node rects map 1:1. */}
+      <ConnectorArcLayer events={events} seq={match.seq} />
     </div>{/* /rootRef center column */}
 
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
@@ -1382,14 +1386,6 @@ export default function MatchBoard({
 }
 
 // --- opponent --------------------------------------------------------------
-
-/** Resolve a player's playmat splash image from their Legend champion + chosen skin. */
-function matSplashUrl(p: PlayerState): string | null {
-  if (!p.legend) return null
-  const name = getCard(p.legend.cardId)?.name?.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim()
-  if (!name) return null
-  return `/img/champions/${toChampionKey(name)}/${p.playmatId || 'original'}.jpg`
-}
 
 /** The chosen champion's splash art behind a playmat (navy-scrimmed so cards stay
  *  readable). Renders nothing if the player has no legend / the image is missing. */
