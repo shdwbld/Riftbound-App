@@ -421,16 +421,23 @@ export default function MatchBoard({
     if (kinds.has('defeat')) {
       audio.play('unitKilled')
       // Each dying champion speaks its death line (staggered + capped by the queue).
+      let champKills = 0
       for (const e of events) {
         if (e.kind !== 'defeat' || !e.cardId) continue
         const dc = getCard(e.cardId)
-        if (dc?.supertype === 'champion') audio.queueChampionLine(toChampionKey(champBase(dc.name)), 'death')
+        if (dc?.supertype === 'champion') {
+          audio.queueChampionLine(toChampionKey(champBase(dc.name)), 'death')
+          champKills++
+        }
       }
-      // Announcer: first blood once per match; multi-kill when several fall at once.
-      const n = events.filter((e) => e.kind === 'defeat').length
-      if (n >= 2) void audio.playGeneric(n >= 5 ? 'penta-kill' : n === 4 ? 'quadra-kill' : n === 3 ? 'triple-kill' : 'double-kill', { delay: 0.5 })
-      else if (!firstBloodRef.current) void audio.playGeneric('first-blood', { delay: 0.5 })
-      firstBloodRef.current = true
+      // Announcer is champion-driven (routine unit trades stay quiet): multi-kill
+      // when several champions fall at once, else first-blood on the first one.
+      if (champKills > 0) {
+        if (champKills >= 2)
+          void audio.playGeneric(champKills >= 5 ? 'penta-kill' : champKills === 4 ? 'quadra-kill' : champKills === 3 ? 'triple-kill' : 'double-kill', { delay: 0.5 })
+        else if (!firstBloodRef.current) void audio.playGeneric('first-blood', { delay: 0.5 })
+        firstBloodRef.current = true
+      }
     }
     if (kinds.has('counter')) audio.play('spell')
     if (kinds.has('conquer')) {
