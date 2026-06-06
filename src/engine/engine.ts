@@ -939,6 +939,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
         if (u.owner === p.id && u.iid !== sourceIid) { u.grantAssault = (u.grantAssault ?? 0) + e.grantAssaultHere; n++ }
     if (n) lines.push(`Gave [Assault ${e.grantAssaultHere}] to ${n} other unit(s) here this turn.`)
   }
+  if (e.grantShieldHere && sourceIid != null) {
+    // "give your other units here [Shield] this turn" (Chakram Dancer).
+    const bi = battlefieldOf(s, sourceIid)
+    let n = 0
+    if (bi >= 0)
+      for (const u of s.battlefields[bi].units)
+        if (u.owner === p.id && u.iid !== sourceIid) { u.grantShield = (u.grantShield ?? 0) + e.grantShieldHere; n++ }
+    if (n) lines.push(`Gave [Shield ${e.grantShieldHere}] to ${n} other unit(s) here this turn.`)
+  }
   // "spend a buff to buff me and ready me" (Wildclaw Shaman): pay the cost by
   // removing a buff from one of your OTHER buffed units. If none is available,
   // the optional self-buff/ready doesn't happen.
@@ -1473,6 +1482,19 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
           if (sendUnitToBase(s, victim.iid))
             s = log(s, player, `${label}: Sinister Poro paid 1 to send ${getCard(victim.cardId)?.name} to its base.`)
         }
+      }
+      handled = true
+    }
+    // Yuumi - Magical Cat: "When I attack or defend, give one of your other units here
+    // +3 Might and [Tank] this turn." Auto-picks a friendly other unit at the bf.
+    if ((ability.event === 'attack' || ability.event === 'defend') && srcName === 'Yuumi - Magical Cat' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      const ally = bi >= 0 ? s.battlefields[bi].units.find((u) => u.owner === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit') : undefined
+      if (ally) {
+        ally.tempMight = (ally.tempMight ?? 0) + 3
+        ally.grantTank = true
+        emit({ kind: 'buff', iid: ally.iid, player })
+        s = log(s, player, `${label}: Yuumi gave ${getCard(ally.cardId)?.name} +3 Might and [Tank] this turn.`)
       }
       handled = true
     }
@@ -2372,6 +2394,7 @@ function pickEnemyToDamage(units: EngineCard[], player: PlayerId, amount: number
  *  has Lillia - Protector of Dreams in play ("Your token units have [Tank]"). */
 function hasTank(s: MatchState, u: EngineCard): boolean {
   if (parseKeywords(def(u)).tank) return true
+  if (u.grantTank) return true // [Tank] granted this turn (Yuumi - Magical Cat, Block)
   return getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Lillia - Protector of Dreams')
 }
 
@@ -3581,7 +3604,7 @@ function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
   if (k.backline) return 0
   let m = d.might - ci.damage + gearMight(ci, xp) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
   if (role === 'attacker') m += k.assault + (ci.grantAssault ?? 0) // [Assault] granted this turn
-  if (role === 'defender') m += k.shield
+  if (role === 'defender') m += k.shield + (ci.grantShield ?? 0) // [Shield] granted this turn
   // Attached gear grants its [Assault]/[Shield] to the equipped unit's combat role
   // (Serrated Dirk [Assault 2] → +2 while attacking; Cloth Armor [Shield 2] → +2 defending).
   if (role === 'attacker' || role === 'defender') {
@@ -4616,6 +4639,15 @@ function resolveSpellEffects(
           if (e.grantGanking) u.grantGanking = true
           emit({ kind: 'buff', iid: t, player: controller })
           s = log(s, controller, `${card.name}: ${getCard(u.cardId)?.name} gains ${e.grantAssault ? `[Assault ${e.grantAssault}]` : ''}${e.grantAssault && e.grantGanking ? ' and ' : ''}${e.grantGanking ? '[Ganking]' : ''} this turn.`)
+        }
+      }
+      if (e.grantShield || e.grantTank) {
+        const u = findUnitAnywhere(s, t)
+        if (u) {
+          if (e.grantShield) u.grantShield = (u.grantShield ?? 0) + e.grantShield
+          if (e.grantTank) u.grantTank = true
+          emit({ kind: 'buff', iid: t, player: controller })
+          s = log(s, controller, `${card.name}: ${getCard(u.cardId)?.name} gains ${e.grantShield ? `[Shield ${e.grantShield}]` : ''}${e.grantShield && e.grantTank ? ' and ' : ''}${e.grantTank ? '[Tank]' : ''} this turn.`)
         }
       }
       if (e.tempMight) {
@@ -6275,6 +6307,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (ab.effect.kill) s1 = fireDeaths(s1, killTarget(s1, t))
           if (ab.effect.grantAssault) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantAssault = (tu.grantAssault ?? 0) + ab.effect.grantAssault }
           if (ab.effect.grantGanking) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantGanking = true }
+          if (ab.effect.grantShield) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantShield = (tu.grantShield ?? 0) + ab.effect.grantShield }
+          if (ab.effect.grantTank) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantTank = true }
           if (ab.effect.readyUnits) { const tu = findUnitAnywhere(s1, t); if (tu && !unitCantBeReadied(tu) && !enemyWardenAtBf(s1, action.player)) tu.exhausted = false }
         }
       }
@@ -6287,6 +6321,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (ab.effect.readySelf && !unitCantBeReadied(u) && !enemyWardenAtBf(s1, action.player)) u.exhausted = false
       if (ab.effect.readyRunes) { let n = ab.effect.readyRunes; for (const r of p.zones.runePool) { if (n <= 0) break; if (r.exhausted) { r.exhausted = false; n-- } } }
       if (ab.effect.grantAssaultHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (unit.owner === action.player && unit.iid !== u.iid) unit.grantAssault = (unit.grantAssault ?? 0) + ab.effect.grantAssaultHere }
+      if (ab.effect.grantShieldHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (unit.owner === action.player && unit.iid !== u.iid) unit.grantShield = (unit.grantShield ?? 0) + ab.effect.grantShieldHere }
       // "[Add] <resource>" — rune-ramp gear (Seals, Energy Conduit) add Power/Energy
       // directly to the pool.
       if (ab.effect.addEnergy || Object.keys(ab.effect.addPower).length) {
@@ -6673,10 +6708,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // one-shot "would die this turn" death/banish replacements (Highlander, Smite).
       for (const pl of s.players) {
         for (const z of Object.keys(pl.zones) as ZoneId[])
-          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, deathShield: false, banishShield: false }))
+          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, deathShield: false, banishShield: false }))
       }
       for (const bf of s.battlefields)
-        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, deathShield: false, banishShield: false }))
+        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, deathShield: false, banishShield: false }))
       // "At the end of your turn, …" effects for the ending player's permanents
       // (Dazzling Aurora's free-unit engine; Annie - Dark Child's ready-runes —
       // hence the legend is included). Base gear + units + battlefield units + legend.

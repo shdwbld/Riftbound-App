@@ -6190,3 +6190,58 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.state.battlefields[1].units.some((u) => u.iid === E2.iid)).toBe(false) // moved off bf1
   })
 })
+
+describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
+  it('Block: gives a friendly unit [Shield 3] and [Tank] this turn', () => {
+    const sid = injectCard('a4-block', 'Give a unit [Shield 3] and [Tank] this turn.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const target = mk(furyUnit.id, 0) // a friendly unit
+    s.battlefields[0] = { cardId: battlefield.id, units: [target], controller: 0 }
+    const spell = mk(sid, 0)
+    s.players[0].zones.hand.push(spell)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [target.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    const u = r.state.battlefields[0].units.find((x) => x.iid === target.iid)!
+    expect(u.grantShield).toBe(3)
+    expect(u.grantTank).toBe(true)
+  })
+
+  it('Chakram Dancer: gives other units here [Shield] this turn on play', () => {
+    const cid = injectCard('a4-chakram', '[Ambush] When you play me, give your other units here [Shield] this turn.', { type: 'unit', energy: 0 })
+    const s = baseState()
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [ally], controller: 0 }
+    const chakram = mk(cid, 0)
+    s.players[0].zones.hand.push(chakram)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: chakram.iid, payment: emptyPayment(), toBattlefield: 0 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.find((x) => x.iid === ally.iid)?.grantShield).toBe(1)
+  })
+
+  it('[Shield] granted this turn raises defender Might; END_TURN clears grants', () => {
+    const s = baseState()
+    const u = mk(furyUnit.id, 0, { grantShield: 3, grantTank: true })
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'END_TURN', player: 0 })
+    const c = r.state.players[0].zones.base.find((x) => x.iid === u.iid)!
+    expect(c.grantShield).toBe(0)
+    expect(c.grantTank).toBe(false)
+  })
+
+  it('Yuumi - Magical Cat: attacking gives another friendly unit here +3 Might and [Tank]', () => {
+    const yid = injectCard('a4-yuumi', 'When I attack or defend, give one of your other units here +3 :rb_might: and [Tank] this turn.', { name: 'Yuumi - Magical Cat', might: 2 })
+    const s = baseState()
+    const yuumi = mk(yid, 0)
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(yuumi, ally)
+    const E = mk(injectCard('a4-yuumi-e', 'weak enemy', { might: 1 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [E], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [yuumi.iid, ally.iid], toBattlefield: 0 }) // attack together
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    const a = r.state.battlefields[0].units.find((x) => x.iid === ally.iid)
+    expect(a?.tempMight).toBe(3) // +3 Might from Yuumi
+    expect(a?.grantTank).toBe(true) // and [Tank] this turn
+  })
+})

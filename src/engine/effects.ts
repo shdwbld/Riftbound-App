@@ -59,6 +59,13 @@ export interface ParsedEffect {
   /** [Assault N] granted to your OTHER units at the source's battlefield this
    *  turn ("give your other units here [Assault]" — Lord Broadmane). */
   grantAssaultHere: number
+  /** [Shield N] granted to the chosen unit this turn (Block, Yuumi). 0 = none. */
+  grantShield: number
+  /** [Tank] granted to the chosen unit this turn (Yuumi - Magical Cat, Block). */
+  grantTank: boolean
+  /** [Shield N] granted to your OTHER units at the source's battlefield this turn
+   *  (Chakram Dancer). 0 = none. */
+  grantShieldHere: number
   /** Damage to each chosen target unit, if the text calls for it. */
   damage: number
   /** Number of Recruit unit tokens to create. */
@@ -246,6 +253,9 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   grantAssault: 0,
   grantGanking: false,
   grantAssaultHere: 0,
+  grantShield: 0,
+  grantTank: false,
+  grantShieldHere: 0,
   damage: 0,
   recruits: 0,
   recruitsHere: false,
@@ -298,11 +308,11 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.moveToBase || e.moveUnit || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.deathShield
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.moveToBase || e.moveUnit || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.grantShield > 0 || e.grantTank || e.deathShield
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0 || e.moveSourceToBf
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || e.grantShieldHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0 || e.moveSourceToBf
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -540,18 +550,28 @@ function parse(text: string): ParsedEffect {
   const xpGainM = t.match(/gain (\d+)\s*(?::rb_xp:|xp)/)
   if (xpGainM) { eff.gainXp += parseInt(xpGainM[1], 10); hit = true }
 
-  // Temporary keyword grants "this turn". Targeted: "give a unit [Assault N] (and
-  // [Ganking]) this turn" (Square Up, Vault Breaker). Area: "give your other
-  // units here [Assault] this turn" (Lord Broadmane).
+  // Temporary keyword grants "this turn". Targeted: "give a unit [Assault/Shield N]
+  // (and [Ganking]/[Tank]) this turn" (Square Up, Vault Breaker, Block, Yuumi). Area:
+  // "give your other units here [Assault/Shield] this turn" (Lord Broadmane, Chakram
+  // Dancer).
   if (/this turn/.test(t)) {
-    const areaM = t.match(/give your (?:other )?units here \[assault(?:\s*(\d+))?\]/)
-    if (areaM) { eff.grantAssaultHere = areaM[1] ? parseInt(areaM[1], 10) : 1; hit = true }
-    else {
-      const gaM = t.match(/give (?:a|an|target|another) (?:friendly |enemy )?unit[^.]*?\[assault(?:\s*(\d+))?\]/)
+    const areaAssaultM = t.match(/give your (?:other )?units here \[assault(?:\s*(\d+))?\]/)
+    if (areaAssaultM) { eff.grantAssaultHere = areaAssaultM[1] ? parseInt(areaAssaultM[1], 10) : 1; hit = true }
+    const areaShieldM = t.match(/give your (?:other )?units here \[shield(?:\s*(\d+))?\]/)
+    if (areaShieldM) { eff.grantShieldHere = areaShieldM[1] ? parseInt(areaShieldM[1], 10) : 1; hit = true }
+    const giveTarget = /give (?:a|an|target|another|one of (?:your )?other) (?:friendly |enemy )?units?[^.]*?/
+    if (!areaAssaultM) {
+      const gaM = t.match(new RegExp(giveTarget.source + /\[assault(?:\s*(\d+))?\]/.source))
       if (gaM) { eff.grantAssault = gaM[1] ? parseInt(gaM[1], 10) : 1; hit = true }
-      const ggM = t.match(/give (?:a|an|target|another) (?:friendly |enemy )?unit[^.]*?\[ganking\]/)
-      if (ggM) { eff.grantGanking = true; hit = true }
     }
+    const ggM = t.match(new RegExp(giveTarget.source + /\[ganking\]/.source))
+    if (ggM) { eff.grantGanking = true; hit = true }
+    if (!areaShieldM) {
+      const gsM = t.match(new RegExp(giveTarget.source + /\[shield(?:\s*(\d+))?\]/.source))
+      if (gsM) { eff.grantShield = gsM[1] ? parseInt(gsM[1], 10) : 1; hit = true }
+    }
+    const gtM = t.match(new RegExp(giveTarget.source + /\[tank\]/.source))
+    if (gtM) { eff.grantTank = true; hit = true }
   }
 
   // Bounce: "return a friendly unit to its owner's hand" (Retreat). Scope from
@@ -835,7 +855,7 @@ function parse(text: string): ParsedEffect {
           ? 'friendly'
           : /enemy|opposing/.test(t)
             ? 'enemy'
-            : eff.tempMight > 0 || eff.buff > 0 || eff.grantAssault > 0 || eff.grantGanking
+            : eff.tempMight > 0 || eff.buff > 0 || eff.grantAssault > 0 || eff.grantGanking || eff.grantShield > 0 || eff.grantTank
               ? 'friendly' // buffs / keyword grants help your own units
               : eff.bounce || eff.moveToBase || eff.moveUnit
                 ? 'any' // a generic "return / move a unit" can hit either side

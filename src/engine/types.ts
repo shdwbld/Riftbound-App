@@ -87,6 +87,12 @@ export interface EngineCard {
   /** [Ganking] granted to this unit THIS TURN (Vault Breaker). Lets it move
    *  battlefield-to-battlefield. Cleared at end of turn. */
   grantGanking?: boolean
+  /** [Shield N] granted to this unit THIS TURN (Chakram Dancer, Block). Cleared at
+   *  end of turn. Adds +N to combat Might while defending. */
+  grantShield?: number
+  /** [Tank] granted to this unit THIS TURN (Yuumi - Magical Cat, Block). Cleared at
+   *  end of turn. Makes this unit take combat damage first. */
+  grantTank?: boolean
   /** A manual sandbox status marker (1–4 = colored dot) the players add as a
    *  visual reminder; 0/undefined = none. Cosmetic only — no engine behavior. */
   marker?: number
