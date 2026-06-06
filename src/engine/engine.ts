@@ -5709,6 +5709,28 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s1 = fireDeaths(s1, killTarget(s1, killCostVictim))
           s1 = log(s1, action.player, `${card.name}: killed ${vName} as an additional cost.`)
         }
+        // Zaun Punk: "You may kill a friendly gear as an additional cost to play me.
+        // When you play me, if you paid the additional cost, kill a gear." The generic
+        // parser reads "kill a friendly gear" as an unconditional killGear, so suppress
+        // it (below) and resolve both kills bespoke. Opting in with no friendly gear is
+        // illegal (mirrors the killCostVictim path). The bonus "kill a gear" auto-picks
+        // an enemy gear first (one-sided removal), falling back to any remaining gear.
+        // The first-sentence "kill a friendly gear" mis-parses to an unconditional
+        // killGear, so suppress the generic apply for this card (isZaunPunk) whether or
+        // not the cost was paid; the paid branch (zaunPunk) resolves both kills bespoke.
+        const isZaunPunk = /you may kill a friendly gear as an additional cost to play (?:me|this)/i.test(ctext)
+        const zaunPunk = !!action.payAdditionalCost && isZaunPunk
+        if (zaunPunk) {
+          const friendlyGear = allGearInPlay(s1).filter((g) => g.owner === action.player)
+          if (!friendlyGear.length) return fail(state, `Can't play ${card.name}: no friendly gear to kill for its additional cost.`)
+          const costPick = friendlyGear.reduce((lo, g) => (gearEnergyOf(g) <= gearEnergyOf(lo) ? g : lo))
+          const costName = getCard(costPick.cardId)?.name ?? 'a gear'
+          killGearByIid(s1, costPick.iid)
+          s1 = log(s1, action.player, `${card.name}: killed your ${costName} as an additional cost.`)
+          let bonus = applyKillGear(s1, action.player, { scope: 'enemy', maxEnergy: null })
+          if (!bonus.killed) bonus = applyKillGear(s1, action.player, { scope: 'any', maxEnergy: null })
+          for (const ln of bonus.lines) s1 = log(s1, action.player, ln)
+        }
         const e = onPlayEffect(card)
         const legionGated = kw.legion && !legionActive
         // Insightful Investigator: the parser reads "You may pay 2 XP to choose a card
@@ -5717,7 +5739,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // generic effect and gate it behind an optional N-XP prompt instead (below).
         const xpStripM = (card.text ?? '').toLowerCase().match(/you may pay (\d+) xp/)
         const insightfulXp = !!xpStripM && (!!e.opponentHandStrip || !!e.opponentDiscards)
-        if (!legionGated && !insightfulXp) {
+        if (!legionGated && !insightfulXp && !isZaunPunk) {
           for (const line of applyParsed(s1, p, e, undefined, ci.iid)) s1 = log(s1, action.player, line)
           s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(e)) // Lillia: token-unit play synergy
           // Fizz - Trickster: "When you play me, you may play a spell from your trash…"

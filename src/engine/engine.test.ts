@@ -6881,4 +6881,36 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(alt.energy).toBe(0)
     expect(alt.power.mind).toBe(1) // alt cost = 1 Mind
   })
+
+  it('Zaun Punk: pays a friendly gear as additional cost, then kills an enemy gear', () => {
+    const zid = injectCard('b-zaunpunk', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
+    const s = baseState()
+    const myGear = mk(injectCard('b-zp-mygear', '[Equip]', { type: 'gear', energy: 1 }), 0)
+    const foeGear = mk(injectCard('b-zp-foegear', '[Equip]', { type: 'gear', energy: 2 }), 1)
+    s.players[0].zones.base.push(myGear)
+    s.players[1].zones.base.push(foeGear)
+    const z = mk(zid, 0)
+    s.players[0].zones.hand.push(z)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: z.iid, payment: emptyPayment(), payAdditionalCost: true })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((g) => g.iid === myGear.iid)).toBe(false) // friendly gear paid as cost
+    expect(r.state.players[0].zones.trash.some((g) => g.iid === myGear.iid)).toBe(true)
+    expect(r.state.players[1].zones.base.some((g) => g.iid === foeGear.iid)).toBe(false) // enemy gear killed (bonus)
+    expect(r.state.players[1].zones.trash.some((g) => g.iid === foeGear.iid)).toBe(true)
+  })
+
+  it('Zaun Punk: declining the additional cost kills no gear', () => {
+    const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
+    const s = baseState()
+    const myGear = mk(injectCard('b-zp2-mygear', '[Equip]', { type: 'gear', energy: 1 }), 0)
+    const foeGear = mk(injectCard('b-zp2-foegear', '[Equip]', { type: 'gear', energy: 2 }), 1)
+    s.players[0].zones.base.push(myGear)
+    s.players[1].zones.base.push(foeGear)
+    const z = mk(zid, 0)
+    s.players[0].zones.hand.push(z)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: z.iid, payment: emptyPayment() }) // declined
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((g) => g.iid === myGear.iid)).toBe(true) // friendly gear kept
+    expect(r.state.players[1].zones.base.some((g) => g.iid === foeGear.iid)).toBe(true) // enemy gear kept
+  })
 })
