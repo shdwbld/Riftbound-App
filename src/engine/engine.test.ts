@@ -6972,6 +6972,43 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r2.state.players[1].zones.base.some((u) => u.iid === foe2.iid)).toBe(false) // opponent still culls
   })
 
+  it('Atakhan: killing a friendly unit reduces its cost (Energy per Energy)', () => {
+    const aid = injectCard('b-atakhan', 'You may kill a friendly unit as an additional cost to play me. If you do, I cost :rb_energy_1: less for each Energy it costs and :rb_rune_order: less for each Power it costs. [Ganking]. When I attack, the defender must kill one of their units here.', { name: 'Atakhan', type: 'unit', energy: 4, might: 7 })
+    const victimId = injectCard('b-atakhan-victim', 'x', { type: 'unit', energy: 4, might: 2 })
+    // Without the kill: 4 Energy is unpayable (no runes) → rejected.
+    const s0 = baseState()
+    s0.players[0].zones.base.push(mk(victimId, 0))
+    const a0 = mk(aid, 0)
+    s0.players[0].zones.hand.push(a0)
+    expect(reduce(s0, { type: 'PLAY_UNIT', player: 0, iid: a0.iid, payment: emptyPayment() }).error).toBeTruthy()
+    // With the kill: a 4-Energy victim → −4 Energy → cost 0; victim dies.
+    const s = baseState()
+    const v = mk(victimId, 0)
+    s.players[0].zones.base.push(v)
+    const a = mk(aid, 0)
+    s.players[0].zones.hand.push(a)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: a.iid, payment: emptyPayment(), payAdditionalCost: true })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((u) => u.iid === a.iid)).toBe(true) // cost reduced to 0 → played
+    expect(r.state.players[0].zones.base.some((u) => u.iid === v.iid)).toBe(false) // victim killed as the cost
+  })
+
+  it('Atakhan: when it attacks, the defender is forced to kill a unit there', () => {
+    const aid = injectCard('b-atakhan2', 'You may kill a friendly unit as an additional cost to play me. If you do, I cost :rb_energy_1: less for each Energy it costs and :rb_rune_order: less for each Power it costs. [Ganking]. When I attack, the defender must kill one of their units here.', { name: 'Atakhan', type: 'unit', energy: 0, might: 7 })
+    const s = baseState()
+    const atk = mk(aid, 0)
+    s.players[0].zones.base.push(atk)
+    // A single defender stronger than Atakhan (10 > 7): combat can't kill it, so its
+    // death can only come from Atakhan's forced-cull attack trigger.
+    const d = mk(injectCard('b-atak-def', 'x', { type: 'unit', might: 10 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [d], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [atk.iid], toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect([...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[1].zones.base].some((u) => u.iid === d.iid)).toBe(false) // forced kill
+  })
+
   it('Zaun Punk: declining the additional cost kills no gear', () => {
     const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
     const s = baseState()

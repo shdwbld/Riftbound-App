@@ -1230,6 +1230,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       || srcName === 'Volibear - Furious' || srcName === 'Sivir - Ambitious'
       || srcName === 'Adaptatron' // its bespoke conquer handler owns the gear-kill + buff
       || (srcName === 'Draven - Vanquisher' && (ability.event === 'attack' || ability.event === 'defend')) // pay-gated +2, handled bespoke
+      || (srcName === 'Atakhan' && ability.event === 'attack') // defender-must-kill, handled bespoke
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1575,6 +1576,25 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
           if (sendUnitToBase(s, victim.iid))
             s = log(s, player, `${label}: Sinister Poro paid 1 to send ${getCard(victim.cardId)?.name} to its base.`)
         }
+      }
+      handled = true
+    }
+    // Atakhan: "When I attack, the defender must kill one of their units here." Each
+    // opposing player with units at Atakhan's battlefield culls their weakest one there
+    // (auto-resolve; the forced choice is the defender's, lowest-Might per the policy).
+    if (ability.event === 'attack' && srcName === 'Atakhan' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      if (bi >= 0) {
+        const dead: EngineCard[] = []
+        const defenders = new Set(s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit').map((u) => u.owner))
+        for (const owner of defenders) {
+          const theirs = s.battlefields[bi].units.filter((u) => u.owner === owner && getCard(u.cardId)?.type === 'unit')
+          if (!theirs.length) continue
+          const victim = theirs.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+          s = log(s, player, `${label}: Atakhan forces ${s.players[owner].name} to kill ${getCard(victim.cardId)?.name ?? 'a unit'}.`)
+          dead.push(...killTarget(s, victim.iid))
+        }
+        if (dead.length) s = fireDeaths(s, dead, player)
       }
       handled = true
     }
@@ -5609,6 +5629,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         brazenDiscardIid = pick.iid
         effCost = { ...effCost, energy: Math.max(0, effCost.energy - parseInt(brazenM[1], 10)) }
       }
+      // Atakhan: "you may kill a friendly unit as an additional cost … If you do, I cost
+      // 1 Energy less for each Energy it costs and 1 Order less for each Power it costs."
+      // Discount uses the victim's PRINTED base cost; the kill is deferred to after
+      // placement. Auto-picks the lowest-Might friendly unit; opting in with none = fail.
+      const atakhanM = action.type === 'PLAY_UNIT' && /you may kill a friendly unit as an additional cost to play me\.?\s*if you do, i cost/i.test(card.text ?? '')
+      let atakhanVictimIid: string | null = null
+      if (atakhanM && action.type === 'PLAY_UNIT' && action.payAdditionalCost) {
+        const cands = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === action.player && getCard(u.cardId)?.type === 'unit')
+        if (!cands.length) return fail(state, `Can't play ${card.name}: no friendly unit to kill for its additional cost.`)
+        const victim = cands.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+        atakhanVictimIid = victim.iid
+        const vcard = getCard(victim.cardId)
+        const vc = vcard ? costOf(vcard) : { energy: 0, power: {} }
+        const pDisc = Object.values(vc.power).reduce((a, b) => a + (b ?? 0), 0)
+        effCost = { ...effCost, energy: Math.max(0, effCost.energy - vc.energy), power: { ...effCost.power, order: Math.max(0, (effCost.power.order ?? 0) - pDisc) } }
+      }
       const err = applyPayment(p, effCost, action.payment)
       if (err) return fail(state, err)
       // Recap signal: how this play was paid (runes exhausted / recycled). Emitted
@@ -5795,6 +5831,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             dead.push(...killTarget(s1, victim.iid))
           }
           if (dead.length) s1 = fireDeaths(s1, dead, action.player)
+        }
+        // Atakhan: pay the deferred kill cost now (the cost reduction was applied above).
+        if (atakhanVictimIid) {
+          const vName = getCard(findUnitAnywhere(s1, atakhanVictimIid)?.cardId ?? '')?.name ?? 'a unit'
+          s1 = fireDeaths(s1, killTarget(s1, atakhanVictimIid))
+          s1 = log(s1, action.player, `${card.name}: killed ${vName} as an additional cost (cost reduced).`)
         }
         const e = onPlayEffect(card)
         const legionGated = kw.legion && !legionActive
