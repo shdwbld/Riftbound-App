@@ -1387,11 +1387,53 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       s = log(s, player, `${label}: Blitzcrank returned to hand (held).`)
       handled = true
     }
+    // Iascylla: "When I hold, at the start of your next Main Phase, you may move an
+    // enemy unit to this battlefield." Queue the pull (drained in beginTurn).
+    if (ability.event === 'hold' && srcName === 'Iascylla' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      if (bi >= 0) {
+        const pp = s.players[player]
+        if (!pp.pendingPullsNextTurn) pp.pendingPullsNextTurn = []
+        pp.pendingPullsNextTurn.push({ bfIndex: bi, queuedTurn: s.turn })
+        s = log(s, player, `${label}: Iascylla will pull an enemy here at the start of your next Main Phase.`)
+      }
+      handled = true
+    }
     // Irresistible Faefolk: "When I move to a battlefield, you may move an enemy unit
     // to here." Auto-pulls the strongest enemy from elsewhere to Faefolk's new home.
     if (ability.event === 'move' && srcName === 'Irresistible Faefolk' && sourceIid) {
       const destBf = battlefieldOf(s, sourceIid)
       if (destBf >= 0) s = pullEnemyToBf(s, player, destBf, 'Irresistible Faefolk')
+      handled = true
+    }
+    // Imposing Challenger: "When I move, you may move an enemy unit here with less Might
+    // than me to a different battlefield." Auto-pushes the weakest qualifying enemy at
+    // its battlefield to another (preferring an empty/uncontested) battlefield.
+    if (ability.event === 'move' && srcName === 'Imposing Challenger' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      const self = findUnitAnywhere(s, sourceIid)
+      if (bi >= 0 && self) {
+        const myMight = mightOf(self)
+        const targets = s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit' && mightOf(u) < myMight)
+        if (targets.length) {
+          const victim = targets.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+          const destIdx = (() => {
+            const empty = s.battlefields.findIndex((b, i) => i !== bi && b.units.length === 0)
+            if (empty >= 0) return empty
+            return s.battlefields.findIndex((_, i) => i !== bi)
+          })()
+          if (destIdx >= 0) {
+            const pulled = pluckCardAnywhere(s, victim.iid)
+            if (pulled) {
+              const priorCtrl = s.battlefields[destIdx].controller
+              s.battlefields[destIdx].units.push(pulled)
+              recomputeControllers(s)
+              s = log(s, player, `${label}: Imposing Challenger pushed ${getCard(pulled.cardId)?.name} to battlefield ${destIdx + 1}.`)
+              s = showdownOrConquerAfterEffectMove(s, destIdx, pulled.iid, priorCtrl)
+            }
+          }
+        }
+      }
       handled = true
     }
     // Sivir - Battle Mistress: "When you recycle a rune, you may exhaust me to play
@@ -1416,6 +1458,21 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         emit({ kind: 'buff', iid: self.iid, player, cardId: gearCi.cardId })
         s = fireAttachEquip(s, player, self)
         s = log(s, player, `${label}: Rell played & attached ${getCard(gearCi.cardId)?.name} (free).`)
+      }
+      handled = true
+    }
+    // Sinister Poro: "When I attack, you may pay 1 to move an enemy unit here to its
+    // base." Auto-paid + auto-targets the weakest enemy at Poro's battlefield. Fires in
+    // the attack step (before damage), so the removed defender drops out of combat.
+    if (ability.event === 'attack' && srcName === 'Sinister Poro' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      if (bi >= 0) {
+        const enemies = s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit')
+        if (enemies.length && makeBfApi(s).payEnergy(player, 1)) {
+          const victim = enemies.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+          if (sendUnitToBase(s, victim.iid))
+            s = log(s, player, `${label}: Sinister Poro paid 1 to send ${getCard(victim.cardId)?.name} to its base.`)
+        }
       }
       handled = true
     }
@@ -3370,6 +3427,17 @@ function finishBeginning(s: MatchState): MatchState {
   }
 
   s.phase = 'action'
+
+  // Iascylla: "When I hold, at the start of your next Main Phase, you may move an
+  // enemy unit to this battlefield." Drain pulls queued on a PRIOR turn (the
+  // requeue from this turn's hold above stamps the current turn, so it waits). A
+  // pull onto a held battlefield may open a showdown — fine, we're now in the
+  // Main Phase, so the contest resolves through normal priority.
+  const due = s.players[ap].pendingPullsNextTurn
+  if (due?.length) {
+    s.players[ap].pendingPullsNextTurn = due.filter((q) => q.queuedTurn >= s.turn)
+    for (const q of due.filter((q) => q.queuedTurn < s.turn)) s = pullEnemyToBf(s, ap, q.bfIndex, 'Iascylla')
+  }
   return s
 }
 

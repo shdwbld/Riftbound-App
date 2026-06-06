@@ -143,6 +143,10 @@ export interface PlayerState {
   /** Generic once-per-turn trigger gate, keyed by the source card id (Wraith of
    *  Echoes, Lucian - Merciless). Cleared at turn start. */
   oncePerTurnUsed?: Record<string, boolean>
+  /** Deferred "pull an enemy here at the start of your next Main Phase" entries
+   *  (Iascylla's hold trigger). Each records the destination battlefield and the
+   *  turn it was queued; drained at the next Main-Phase start whose turn is later. */
+  pendingPullsNextTurn?: { bfIndex: number; queuedTurn: number }[]
   /** Energy discount on the NEXT spell played this turn (Raging Firebrand). Read by
    *  effectiveCostOf; reset to 0 after the next spell is played. */
   nextSpellCostDiscount?: number

@@ -6032,6 +6032,58 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(true) // pulled to Faefolk's new battlefield
   })
 
+  it('Imposing Challenger: when it moves, pushes a weaker enemy at its battlefield to a different one', () => {
+    const id = injectCard('a3-challenger', 'When I move, you may move an enemy unit here with less Might than me to a different battlefield.', { name: 'Imposing Challenger', might: 5 })
+    const s = baseState()
+    const weak = mk(injectCard('a3-ch-weak', 'small', { might: 2 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [weak], controller: 1 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [], controller: null } // empty destination
+    const ch = mk(id, 0) // ready at base
+    s.players[0].zones.base.push(ch)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: ch.iid, toBattlefield: 0 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === weak.iid)).toBe(false) // pushed off Challenger's battlefield
+    expect(r.state.battlefields[1].units.some((u) => u.iid === weak.iid)).toBe(true) // moved to the empty one
+  })
+
+  it('Sinister Poro: when it attacks, pays 1 to send the weakest enemy here to base', () => {
+    const id = injectCard('a3-poro', 'When I attack, you may pay :rb_energy_1: to move an enemy unit here to its base.', { name: 'Sinister Poro', might: 1 })
+    const s = baseState()
+    s.players[0].pool = { energy: 1, power: {} }
+    const poro = mk(id, 0) // ready at base
+    s.players[0].zones.base.push(poro)
+    const weak = mk(injectCard('a3-poro-weak', 'small', { might: 2 }), 1, { exhausted: true })
+    const strong = mk(injectCard('a3-poro-strong', 'big', { might: 8 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [weak, strong], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: poro.iid, toBattlefield: 0 }) // attack into the showdown
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.players[1].zones.base.some((u) => u.iid === weak.iid)).toBe(true) // weakest enemy pushed to base
+    expect(r.state.players[0].pool?.energy ?? 0).toBe(0) // paid 1
+  })
+
+  it('Iascylla: holding queues a pull that resolves at the start of the next Main Phase', () => {
+    const id = injectCard('a3-iascylla', 'When I hold, at the start of your next Main Phase, you may move an enemy unit to this battlefield.', { name: 'Iascylla', might: 6 })
+    const s = baseState()
+    s.activePlayer = 0
+    s.turn = 3
+    const iascylla = mk(id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [iascylla], controller: 0 }
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    s.players[0].zones.runeDeck.push(mk(furyRune.id, 0), mk(furyRune.id, 0), mk(furyRune.id, 0))
+    // Turn 3: Iascylla holds bf0 → queues the pull (does NOT fire this turn).
+    const t1 = beginTurn(s)
+    expect((t1.players[0].pendingPullsNextTurn ?? []).some((q) => q.bfIndex === 0)).toBe(true)
+    expect(t1.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(false)
+    // P0's next turn: the queued pull resolves at the Main-Phase start.
+    t1.activePlayer = 0
+    t1.turn = 5
+    const t2 = beginTurn(t1)
+    expect(t2.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(true) // pulled to Iascylla's battlefield
+  })
+
   it('Evelynn - Entrancing: revealing from face down pulls an enemy from elsewhere to its battlefield', () => {
     const id = injectCard('a3-evelynn', '[Hidden][Backline]When you play me from face down on your turn, you may move an enemy unit at a different location to my battlefield.', { name: 'Evelynn - Entrancing', type: 'unit', might: 2, energy: 0, power: {} })
     const s = baseState()
