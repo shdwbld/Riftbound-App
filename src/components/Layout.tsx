@@ -51,7 +51,7 @@ export default function Layout() {
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-3 py-3 sm:gap-6 sm:px-4">
           <NavLink to="/" className="flex shrink-0 items-center gap-2 text-lg font-bold">
             <span className="text-xl">⚔️</span>
-            <span className="hidden bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text uppercase tracking-[0.18em] text-transparent [font-family:var(--font-display)] sm:inline">
+            <span className="hidden bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text text-transparent sm:inline">
               Riftbound
             </span>
           </NavLink>

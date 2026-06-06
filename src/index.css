@@ -24,9 +24,6 @@
   --text-gold: #c8aa6e;
   --text-body: #a09b8c;
   --text-dim: #5b5a56;
-  /* LoL-flavoured free font substitutes (Beaufort/Spiegel → Cinzel/Barlow) */
-  --font-display: 'Cinzel', Georgia, serif;
-  --font-body: 'Barlow Semi Condensed', system-ui, sans-serif;
   /* Card-size system — ONE knob. Every board card derives from --card-h; zones
      are sized to the card (not the window), so the board scales uniformly. */
   --card-h: clamp(116px, 14vh, 176px); /* primary play cards (hand/base/legend/champion) */
@@ -138,17 +135,9 @@ body,
 }
 
 body {
-  font-family: var(--font-body);
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
-}
-
-/* Hextech display type: page/section titles in Cinzel, uppercase gold tracking. */
-h1,
-h2,
-h3 {
-  font-family: var(--font-display);
-  letter-spacing: 0.04em;
 }
 
 /* ---- Domain ambient animations (battlefield / mats) ---------------------- */
