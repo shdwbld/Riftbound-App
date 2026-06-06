@@ -50,6 +50,7 @@ import {
   onlineAvailable,
 } from '../net/transport'
 import MatchBoard from '../components/MatchBoard'
+import type { PingData } from '../components/PingLayer'
 import CardDetailModal from '../components/CardDetailModal'
 import { MulliganView } from './MatchPage'
 import SetupScreen from '../components/SetupScreen'
@@ -107,6 +108,16 @@ export default function OnlinePage() {
     joined: 1,
     needed: 2,
   })
+
+  // Ephemeral Alt+click pings, broadcast peer-to-peer (cosmetic, not via the
+  // host-authoritative state path).
+  const [pings, setPings] = useState<PingData[]>([])
+  const pingId = useRef(0)
+  const addPing = (x: number, y: number, name?: string) => {
+    const id = ++pingId.current
+    setPings((ps) => [...ps, { id, x, y, name }])
+    setTimeout(() => setPings((ps) => ps.filter((p) => p.id !== id)), 2000)
+  }
 
   const transportRef = useRef<Transport | null>(null)
   const matchRef = useRef<MatchState | null>(null)
@@ -249,6 +260,11 @@ export default function OnlinePage() {
 
   function wire(t: Transport) {
     t.onMessage((msg: NetMessage) => {
+      // Pings are cosmetic and peer-to-peer — render them regardless of role.
+      if (msg.kind === 'ping') {
+        addPing(msg.x, msg.y, msg.name)
+        return
+      }
       if (roleRef.current === 'host') {
         if (msg.kind === 'join') {
           if (startedRef.current) return
@@ -799,6 +815,12 @@ export default function OnlinePage() {
         onCancelTarget={() => setTargeting(null)}
         onInspect={setInspect}
         events={lastEvents}
+        onPing={(x, y) => {
+          const name = match.players[seat]?.name?.replace(/\s*\([^)]*\)\s*$/, '')
+          addPing(x, y, name)
+          transportRef.current?.send({ kind: 'ping', x, y, name })
+        }}
+        pings={pings}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
       {accelPrompt && (

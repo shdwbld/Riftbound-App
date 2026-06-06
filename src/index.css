@@ -566,6 +566,29 @@ body {
   animation: dimIn 1s ease forwards;
 }
 
+/* Alt+click ping marker: quick pop, then fade to 0% opacity over 2s. */
+@keyframes pingPop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.3);
+    opacity: 0;
+  }
+  12% {
+    transform: translate(-50%, -50%) scale(1.18);
+    opacity: 1;
+  }
+  25% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+.ping-pop {
+  animation: pingPop 2s ease-out forwards;
+}
+
 /* Move: slide up into the battlefield slot. */
 @keyframes moveIn {
   0% {
@@ -724,6 +747,7 @@ body {
   .announcement-drain,
   .chain-countdown-bar,
   .dim-in,
+  .ping-pop,
   .fx-ready {
     animation: none;
   }

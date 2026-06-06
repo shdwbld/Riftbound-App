@@ -26,6 +26,7 @@ import PlayedCardSpotlight from './PlayedCardSpotlight'
 import PlayedCardAnnouncement from './PlayedCardAnnouncement'
 import ChainResponsePopup from './ChainResponsePopup'
 import ControlHUD from './ControlHUD'
+import PingLayer, { type PingData } from './PingLayer'
 import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
 
 /** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
@@ -82,6 +83,10 @@ export interface MatchBoardProps {
   onInspect?: (card: Card) => void
   /** Feedback signals from the latest action (for animations). */
   events?: GameEvent[]
+  /** Alt+left-click ping at a viewport-relative point (x/y fractions [0,1]). */
+  onPing?: (x: number, y: number) => void
+  /** Active ping markers to render (local + received from peers). */
+  pings?: PingData[]
 }
 
 /** Per-card flash kind that survives on a card still in play. */
@@ -197,6 +202,8 @@ export default function MatchBoard({
   onCancelTarget,
   onInspect,
   events,
+  onPing,
+  pings,
 }: MatchBoardProps) {
   // Multi-select for group moves.
   const [selectedUnits, setSelectedUnits] = useState<string[]>([])
@@ -673,6 +680,19 @@ export default function MatchBoard({
     onCardAction(act)
   }
 
+  // Board-wide capture: Alt+left-click drops a mouse-aware ping (broadcast to all
+  // players), suppressing the underlying click. Anything else falls through to the
+  // sandbox hotkey layer and then normal handling.
+  const onBoardClickCapture = (e: React.MouseEvent) => {
+    if (e.altKey && onPing) {
+      e.preventDefault()
+      e.stopPropagation()
+      onPing(e.clientX / window.innerWidth, e.clientY / window.innerHeight)
+      return
+    }
+    onManualClickCapture(e)
+  }
+
   // Opponents in seating order, starting just after the local player.
   const opponents: PlayerState[] = []
   for (let i = 1; i < match.players.length; i++)
@@ -757,7 +777,7 @@ export default function MatchBoard({
     <div
       className="flex flex-col gap-3 xl:flex-row xl:items-start"
       onContextMenu={(e) => e.preventDefault()}
-      onClickCapture={onManualClickCapture}
+      onClickCapture={onBoardClickCapture}
     >
     {/* LEFT RAIL — consolidated manual-override HUD (sandbox only). */}
     {match.sandbox && onCardAction && (
@@ -1074,6 +1094,9 @@ export default function MatchBoard({
         cardId={respondChainTop?.cardId ?? null}
         playerName={respondChainTop ? (match.players[respondChainTop.controller]?.name ?? '') : ''}
       />
+
+      {/* Alt+click ping markers (local + peers). */}
+      <PingLayer pings={pings ?? []} />
     </div>
 
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action

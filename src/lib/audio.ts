@@ -20,6 +20,7 @@ export const SFX_URLS = {
   undo: '/sfx/undo.mp3',
   confirm: '/sfx/confirm.mp3',
   uiClick: '/sfx/ui-click.mp3',
+  ping: '/sfx/ping.ogg',
 } as const
 export type SfxName = keyof typeof SFX_URLS
 

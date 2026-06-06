@@ -19,6 +19,9 @@ export type NetMessage =
   | { kind: 'resync'; clientId: string }
   /** A guest asks the host to undo the last action (manual fail-safe). */
   | { kind: 'undo' }
+  /** An ephemeral "ping" marker (Alt+click). x/y are viewport fractions [0,1].
+   *  Broadcast peer-to-peer (not host-authoritative) — purely cosmetic. */
+  | { kind: 'ping'; x: number; y: number; name?: string }
   | { kind: 'leave' }
 
 export interface Transport {

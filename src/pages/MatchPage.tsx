@@ -14,6 +14,7 @@ import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } fro
 import { DOMAIN_META, type Domain } from '../types/cards'
 import MulliganHand from '../components/MulliganHand'
 import MatchBoard from '../components/MatchBoard'
+import type { PingData } from '../components/PingLayer'
 import CardDetailModal from '../components/CardDetailModal'
 import PaymentModal from '../components/PaymentModal'
 import PromptModal from '../components/PromptModal'
@@ -123,6 +124,14 @@ export default function MatchPage() {
   const [showHelp, setShowHelp] = useState(false)
   const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear' | 'activateUnit'; count: number; picked: string[]; repeat?: boolean; targetScope?: 'enemy' | 'friendly' | 'any' } | null>(null)
   const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
+  // Ephemeral Alt+click pings (hotseat shares one screen, so just render locally).
+  const [pings, setPings] = useState<PingData[]>([])
+  const pingId = useRef(0)
+  const addPing = useCallback((x: number, y: number, name?: string) => {
+    const id = ++pingId.current
+    setPings((ps) => [...ps, { id, x, y, name }])
+    setTimeout(() => setPings((ps) => ps.filter((p) => p.id !== id)), 2000)
+  }, [])
   // Rune picker is ON by default — every rune-spending play opens the overlay.
   // Toggle off to auto-pay silently.
   const [manualPay, setManualPay] = useState(true)
@@ -576,6 +585,8 @@ export default function MatchPage() {
         onCancelTarget={() => setTargeting(null)}
         onInspect={setInspect}
         events={lastEvents}
+        onPing={(x, y) => addPing(x, y, match.players[controlling]?.name?.replace(/\s*\([^)]*\)\s*$/, ''))}
+        pings={pings}
       />
       <div className="flex justify-end gap-2">
         <button
