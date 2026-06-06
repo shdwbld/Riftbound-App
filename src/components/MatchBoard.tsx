@@ -348,6 +348,9 @@ export default function MatchBoard({
   // music bus keeps it low; the per-track volumes are scaled by the settings.
   useEffect(() => {
     audio.init()
+    // Always enable sound at match start so every player hears SFX (music +
+    // ambience default to 0% via the music bus, so they stay silent unless raised).
+    audio.setSettings({ muted: false })
     audio.playMusic(Math.random() < 0.5 ? 'battle' : 'battle2', { volume: 0.9 })
     audio.playMusic('ambience', { volume: 0.5 })
     return () => audio.stopMusic()
@@ -1944,7 +1947,7 @@ function PlayerMat({
           const cf = cardFx(fx, c)
           return (
             <div key={cf.key} className="flex flex-col items-center gap-0.5">
-              <CardPreview cardId={c.cardId}>
+              <CardPreview cardId={c.cardId} center>
                 <button className="card-lift" onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')} {...dragSrc(dndOn, c.iid)}>
                   <BoardCard
                     ci={c}

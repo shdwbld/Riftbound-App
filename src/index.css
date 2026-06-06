@@ -553,6 +553,19 @@ body {
   animation: announceDrain 5s linear forwards;
 }
 
+/* Slow background dim behind a centered hand-card preview (0 → 50% over 1s). */
+@keyframes dimIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.5;
+  }
+}
+.dim-in {
+  animation: dimIn 1s ease forwards;
+}
+
 /* Move: slide up into the battlefield slot. */
 @keyframes moveIn {
   0% {
@@ -710,6 +723,7 @@ body {
   .light-overlay-foil,
   .announcement-drain,
   .chain-countdown-bar,
+  .dim-in,
   .fx-ready {
     animation: none;
   }

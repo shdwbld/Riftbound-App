@@ -41,6 +41,11 @@ export default function TurnRecapBanner({ data }: { data: TurnRecapData | null }
     { label: 'Points', value: data.points },
   ].filter((s) => s.value > 0)
 
+  // Played-card thumbnails: centered and scaled ~200–250% (vs the old 96px),
+  // stepping down as the count grows so the row(s) still fit the 80% modal.
+  const n = data.played.length
+  const cardW = n <= 2 ? 240 : n <= 4 ? 200 : n <= 6 ? 172 : n <= 9 ? 144 : n <= 12 ? 124 : 104
+
   return (
     <div
       className="fixed inset-0 z-[59] flex items-center justify-center bg-black/80 p-4"
@@ -80,25 +85,25 @@ export default function TurnRecapBanner({ data }: { data: TurnRecapData | null }
           <div className="text-sm opacity-70">Nothing happened this turn.</div>
         )}
 
-        {/* Cards played — hover any to expand. */}
+        {/* Cards played — centered, big, hover any to expand. */}
         {data.played.length > 0 && (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mb-2 text-xs uppercase tracking-wide opacity-50">
+            <div className="mb-2 text-center text-xs uppercase tracking-wide opacity-50">
               Cards played ({data.played.length}) — hover to expand
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex min-h-full flex-wrap content-center justify-center gap-3">
               {data.played.map((cid, i) => {
                 const def = getCard(cid)
                 return (
                   <CardPreview key={`${cid}-${i}`} cardId={cid} delay={80}>
                     <div
-                      className="w-24 overflow-hidden rounded-lg border border-white/20 bg-[#1c1c28]"
-                      style={{ aspectRatio: '744/1039' }}
+                      className="overflow-hidden rounded-lg border border-white/20 bg-[#1c1c28] shadow-lg"
+                      style={{ width: cardW, aspectRatio: '744/1039' }}
                     >
                       {def?.imageUrl ? (
                         <img src={def.imageUrl} alt={def.name} loading="lazy" className="h-full w-full object-cover" />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center p-1 text-center text-[9px] leading-tight text-white/70">
+                        <div className="flex h-full w-full items-center justify-center p-2 text-center text-sm leading-tight text-white/70">
                           {def?.name ?? cid}
                         </div>
                       )}
