@@ -178,10 +178,16 @@ export function deckChampions(deck: Deck, player: PlayerState): string[] {
   // The declared champion is always a legal option (even if it's set aside, not
   // literally in the shuffled main list). Prefer it as the base-name rep.
   const candidates = deck.championId ? [deck.championId, ...inMain] : inMain
+  // Only champions of the SAME character as the chosen Legend may go to the
+  // Champion Zone (Teemo legend → Teemo champions only). The character is the
+  // name before " - " / "," / "(" — same split as championName().
+  const legendChar = championName(deck.legendId)
+  const charOf = (name: string) => name.split(/\s+[-–,(]/)[0].trim()
   const byBase = new Map<string, string>()
   for (const id of candidates) {
     const c = getCard(id)
     if (!c) continue
+    if (legendChar && charOf(c.name) !== legendChar) continue
     const key = baseChampionName(c.name)
     if (!byBase.has(key)) byBase.set(key, id)
   }

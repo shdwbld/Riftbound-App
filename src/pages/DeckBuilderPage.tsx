@@ -17,6 +17,7 @@ import { exportDeck } from '../lib/deckStorage'
 import { validateDeck, isOnIdentity } from '../lib/deckValidation'
 import { computeStats, sampleHand, CURVE_MAX } from '../lib/deckStats'
 import { DomainIcon } from '../components/CardText'
+import CardPreview from '../components/CardPreview'
 
 const POOL_TYPES: (CardType | 'all')[] = [
   'all',
@@ -41,6 +42,8 @@ export default function DeckBuilderPage() {
   const [pickingLegend, setPickingLegend] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [sample, setSample] = useState<Card[] | null>(null)
+  // Deck panel display: compact list vs a card-image grid grouped by type.
+  const [deckView, setDeckView] = useState<'list' | 'grid'>('list')
   // Pool clicks add units/spells/gear to this pile.
   const [addTarget, setAddTarget] = useState<'main' | 'sideboard'>('main')
 
@@ -260,6 +263,21 @@ export default function DeckBuilderPage() {
 
         {/* Deck panel */}
         <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+          {/* List / grid view toggle for the deck contents */}
+          <div className="flex items-center justify-end gap-1 text-xs">
+            <span className="mr-auto text-white/40">View</span>
+            {(['list', 'grid'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setDeckView(m)}
+                className={`rounded px-2 py-1 font-medium capitalize transition ${
+                  deckView === m ? 'bg-indigo-500/30 text-white' : 'text-white/50 hover:bg-white/5'
+                }`}
+              >
+                {m === 'list' ? '☰ List' : '▦ Grid'}
+              </button>
+            ))}
+          </div>
           {/* Legend */}
           <Section title="Champion Legend">
             {legend ? (
@@ -362,10 +380,27 @@ export default function DeckBuilderPage() {
             </Section>
           )}
 
-          {/* Main deck — grouped by type */}
+          {/* Main deck — grouped by type (list or card-image grid) */}
           <Section title={`Main Deck · ${pileSize(deck.main)}/40`}>
             {pileSize(deck.main) === 0 ? (
               <p className="text-xs text-white/40">Empty.</p>
+            ) : deckView === 'grid' ? (
+              (['unit', 'spell', 'gear'] as const).map((t) => {
+                const sub = Object.fromEntries(
+                  Object.entries(deck.main).filter(([id]) => getCard(id)?.type === t),
+                )
+                if (Object.keys(sub).length === 0) return null
+                return (
+                  <DeckGridGroup
+                    key={t}
+                    label={`${t}s`}
+                    pile={sub}
+                    cap={DECK_RULES.maxCopiesPerCard}
+                    onInc={(id) => setCount('main', id, (deck.main[id] ?? 0) + 1)}
+                    onDec={(id) => setCount('main', id, (deck.main[id] ?? 0) - 1)}
+                  />
+                )
+              })
             ) : (
               (['unit', 'spell', 'gear'] as const).map((t) => {
                 const sub = Object.fromEntries(
@@ -399,12 +434,22 @@ export default function DeckBuilderPage() {
                 ⚡ Auto-fill 12 runes ({v.identity.map((d) => DOMAIN_META[d].label).join(' / ')})
               </button>
             )}
-            <PileList
-              pile={deck.runes}
-              cap={DECK_RULES.runeDeckSize}
-              onInc={(id) => setCount('runes', id, (deck.runes[id] ?? 0) + 1)}
-              onDec={(id) => setCount('runes', id, (deck.runes[id] ?? 0) - 1)}
-            />
+            {deckView === 'grid' && pileSize(deck.runes) > 0 ? (
+              <DeckGridGroup
+                label="runes"
+                pile={deck.runes}
+                cap={DECK_RULES.runeDeckSize}
+                onInc={(id) => setCount('runes', id, (deck.runes[id] ?? 0) + 1)}
+                onDec={(id) => setCount('runes', id, (deck.runes[id] ?? 0) - 1)}
+              />
+            ) : (
+              <PileList
+                pile={deck.runes}
+                cap={DECK_RULES.runeDeckSize}
+                onInc={(id) => setCount('runes', id, (deck.runes[id] ?? 0) + 1)}
+                onDec={(id) => setCount('runes', id, (deck.runes[id] ?? 0) - 1)}
+              />
+            )}
           </Section>
 
           {/* Battlefields */}
@@ -587,6 +632,66 @@ function PileList({
   )
 }
 
+/** A type-group of the deck shown as card-image thumbnails (hover to expand,
+ *  click a card to add one, − to remove one). */
+function DeckGridGroup({
+  label,
+  pile,
+  cap,
+  onInc,
+  onDec,
+}: {
+  label: string
+  pile: Record<string, number>
+  cap?: number
+  onInc: (id: string) => void
+  onDec: (id: string) => void
+}) {
+  const entries = Object.entries(pile)
+    .map(([id, n]) => ({ card: getCard(id), id, n }))
+    .filter((e) => e.card)
+    .sort(
+      (a, b) =>
+        totalCost(a.card!) - totalCost(b.card!) || a.card!.name.localeCompare(b.card!.name),
+    )
+  if (entries.length === 0) return null
+  return (
+    <div className="mb-3 last:mb-0">
+      <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-white/35">
+        {label} · {entries.reduce((s, e) => s + e.n, 0)}
+      </div>
+      <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+        {entries.map(({ card, id, n }) => (
+          <CardPreview key={id} cardId={id} delay={260}>
+            <div className="group relative overflow-hidden rounded-md border border-white/10 bg-[#15151f]">
+              <button
+                onClick={() => onInc(id)}
+                disabled={cap != null && n >= cap}
+                title={cap != null && n >= cap ? `Max ${cap}` : 'Add one'}
+                className="block w-full disabled:cursor-not-allowed"
+              >
+                {card!.imageUrl ? (
+                  <img src={card!.imageUrl} alt={card!.name} loading="lazy" className="aspect-[744/1039] w-full object-cover" />
+                ) : (
+                  <div className="flex aspect-[744/1039] items-center justify-center p-1 text-center text-[9px] text-white/60">{card!.name}</div>
+                )}
+              </button>
+              <span className="pointer-events-none absolute right-1 top-1 rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-bold">×{n}</span>
+              <button
+                onClick={() => onDec(id)}
+                title="Remove one"
+                className="absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-black/70 text-xs font-bold text-white/80 opacity-0 transition hover:bg-rose-600 group-hover:opacity-100"
+              >
+                −
+              </button>
+            </div>
+          </CardPreview>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function CardPool({
   query,
   poolType,
@@ -642,32 +747,33 @@ function CardPool({
                   : 0
                 : (deck.main[c.id] ?? 0) + (deck.sideboard[c.id] ?? 0) // main + sideboard total
           return (
-            <button
-              key={c.id}
-              onClick={() => onAdd(c)}
-              className="group relative overflow-hidden rounded-lg border border-white/10 bg-[#15151f] text-left transition hover:border-indigo-400/50"
-            >
-              {c.imageUrl ? (
-                <img
-                  src={c.imageUrl}
-                  alt={c.name}
-                  loading="lazy"
-                  className={`w-full ${c.type === 'battlefield' ? 'aspect-[1039/744] object-contain' : 'aspect-[744/1039] object-cover'}`}
-                />
-              ) : (
-                <div className={`flex items-center justify-center p-2 text-center text-[11px] text-white/60 ${c.type === 'battlefield' ? 'aspect-[1039/744]' : 'aspect-[744/1039]'}`}>
-                  {c.name}
-                </div>
-              )}
-              {count ? (
-                <span className="absolute right-1 top-1 rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-bold">
-                  {count}
+            <CardPreview key={c.id} cardId={c.id} delay={260}>
+              <button
+                onClick={() => onAdd(c)}
+                className="group relative block w-full overflow-hidden rounded-lg border border-white/10 bg-[#15151f] text-left transition hover:border-indigo-400/50"
+              >
+                {c.imageUrl ? (
+                  <img
+                    src={c.imageUrl}
+                    alt={c.name}
+                    loading="lazy"
+                    className={`w-full ${c.type === 'battlefield' ? 'aspect-[1039/744] object-contain' : 'aspect-[744/1039] object-cover'}`}
+                  />
+                ) : (
+                  <div className={`flex items-center justify-center p-2 text-center text-[11px] text-white/60 ${c.type === 'battlefield' ? 'aspect-[1039/744]' : 'aspect-[744/1039]'}`}>
+                    {c.name}
+                  </div>
+                )}
+                {count ? (
+                  <span className="absolute right-1 top-1 rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-bold">
+                    {count}
+                  </span>
+                ) : null}
+                <span className="absolute inset-x-0 bottom-0 truncate bg-black/70 px-1.5 py-0.5 text-[10px] opacity-0 transition group-hover:opacity-100">
+                  + {c.name}
                 </span>
-              ) : null}
-              <span className="absolute inset-x-0 bottom-0 truncate bg-black/70 px-1.5 py-0.5 text-[10px] opacity-0 transition group-hover:opacity-100">
-                + {c.name}
-              </span>
-            </button>
+              </button>
+            </CardPreview>
           )
         })}
       </div>

@@ -27,18 +27,18 @@ export default function CardDetailModal({
         className="flex max-h-[88vh] w-full max-w-2xl flex-col gap-4 overflow-y-auto rounded-2xl border border-white/10 bg-[#12121a] p-4 sm:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mx-auto w-48 shrink-0 sm:w-56">
+        <div className={`mx-auto shrink-0 ${card.type === 'battlefield' ? 'w-full sm:w-80' : 'w-48 sm:w-56'}`}>
           {card.imageUrl ? (
             <img
               src={card.imageUrl}
               alt={card.name}
               className="w-full rounded-xl"
-              style={{ aspectRatio: '744/1039', objectFit: 'cover' }}
+              style={{ aspectRatio: card.type === 'battlefield' ? '1039/744' : '744/1039', objectFit: 'cover' }}
             />
           ) : (
             <div
               className="flex w-full items-center justify-center rounded-xl bg-[#1c1c28] p-4 text-center text-sm"
-              style={{ aspectRatio: '744/1039' }}
+              style={{ aspectRatio: card.type === 'battlefield' ? '1039/744' : '744/1039' }}
             >
               {card.name}
             </div>

@@ -14,12 +14,14 @@ import CardText from './CardText'
 
 function CardFace({ card }: { card: Card }) {
   const labels = keywordLabels(card)
+  // Battlefield cards are landscape; everything else is the portrait 744/1039.
+  const ratio = card.type === 'battlefield' ? '1039/744' : '744/1039'
   return (
     <>
       {card.imageUrl ? (
-        <img src={card.imageUrl} alt={card.name} className="w-full" style={{ aspectRatio: '744/1039', objectFit: 'cover' }} />
+        <img src={card.imageUrl} alt={card.name} className="w-full" style={{ aspectRatio: ratio, objectFit: 'cover' }} />
       ) : (
-        <div className="flex w-full items-center justify-center bg-[#1c1c28] p-4 text-center text-sm" style={{ aspectRatio: '744/1039' }}>
+        <div className="flex w-full items-center justify-center bg-[#1c1c28] p-4 text-center text-sm" style={{ aspectRatio: ratio }}>
           {card.name}
         </div>
       )}
@@ -87,8 +89,8 @@ function PreviewPanel({ card, anchor, center }: { card: Card; anchor: DOMRect; c
   // Final clamp so it never overflows the right edge either.
   const left = Math.min(rawLeft, window.innerWidth - W - margin)
   // Vertically clamp so the panel stays on screen. Height is derived from the
-  // card aspect ratio plus the text block below it.
-  const imgH = Math.round(W * (1039 / 744))
+  // card aspect ratio (battlefields are landscape) plus the text block below it.
+  const imgH = Math.round(W * (card.type === 'battlefield' ? 744 / 1039 : 1039 / 744))
   const approxH = imgH + 110
   const top = Math.min(
     Math.max(margin, anchor.top - 40),
