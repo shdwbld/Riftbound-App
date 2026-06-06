@@ -7009,6 +7009,33 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect([...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[1].zones.base].some((u) => u.iid === d.iid)).toBe(false) // forced kill
   })
 
+  it('Kato the Arm: on moving to a battlefield, copies his keywords + Might to another friendly', () => {
+    const kid = injectCard('b-kato', '[Deflect]. When I move to a battlefield, give another friendly unit my keywords and +:rb_might: equal to my Might this turn.', { name: 'Kato the Arm', type: 'unit', might: 3 })
+    const s = baseState()
+    const kato = mk(kid, 0)
+    const ally = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(kato, ally)
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [kato.iid], toBattlefield: 0 })
+    expect(r.error).toBeFalsy()
+    const a = [...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[0].zones.base].find((u) => u.iid === ally.iid)
+    expect(a?.grantDeflect).toBe(1) // copied [Deflect]
+    expect(a?.tempMight).toBe(3) // +Might equal to Kato's Might, this turn
+  })
+
+  it('Tideturner: on play, swaps locations with a friendly unit at another location', () => {
+    const tid = injectCard('b-tideturner', '[Hidden] When you play me, you may choose a unit you control at another location. Move me to its location and it to my original location.', { name: 'Tideturner', type: 'unit', energy: 0, might: 2 })
+    const s = baseState()
+    const tide = mk(tid, 0)
+    s.players[0].zones.hand.push(tide)
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [ally], controller: 0 }
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: tide.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === tide.iid)).toBe(true) // Tideturner swapped to bf0
+    expect(r.state.battlefields[0].units.some((u) => u.iid === ally.iid)).toBe(false)
+    expect(r.state.players[0].zones.base.some((u) => u.iid === ally.iid)).toBe(true) // ally swapped to base
+  })
+
   it('Zaun Punk: declining the additional cost kills no gear', () => {
     const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
     const s = baseState()

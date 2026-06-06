@@ -93,6 +93,9 @@ export interface EngineCard {
   /** [Tank] granted to this unit THIS TURN (Yuumi - Magical Cat, Block). Cleared at
    *  end of turn. Makes this unit take combat damage first. */
   grantTank?: boolean
+  /** [Deflect N] granted to this unit THIS TURN (Kato the Arm copies his keywords).
+   *  Cleared at end of turn. Adds N to the cost enemies pay to target it. */
+  grantDeflect?: number
   /** A manual sandbox status marker (1–4 = colored dot) the players add as a
    *  visual reminder; 0/undefined = none. Cosmetic only — no engine behavior. */
   marker?: number

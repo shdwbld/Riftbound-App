@@ -1509,6 +1509,31 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       if (destBf >= 0) s = pullEnemyToBf(s, player, destBf, 'Irresistible Faefolk')
       handled = true
     }
+    // Kato the Arm: "When I move to a battlefield, give another friendly unit my keywords
+    // and +Might equal to my Might this turn." Auto-picks the strongest OTHER friendly
+    // unit anywhere and copies Kato's mechanical keywords + a this-turn Might bump.
+    if (ability.event === 'move' && srcName === 'Kato the Arm' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      const kato = findUnitAnywhere(s, sourceIid)
+      if (bi >= 0 && kato) {
+        const kw = parseKeywords(getCard(kato.cardId))
+        const katoMight = mightOf(kato)
+        const allies = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
+          .filter((u) => u.owner === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit')
+        const target = allies.length ? allies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : undefined
+        if (target) {
+          if (kw.deflect > 0) target.grantDeflect = (target.grantDeflect ?? 0) + kw.deflect
+          if (kw.ganking) target.grantGanking = true
+          if (kw.assault > 0) target.grantAssault = (target.grantAssault ?? 0) + kw.assault
+          if (kw.shield > 0) target.grantShield = (target.grantShield ?? 0) + kw.shield
+          if (kw.tank) target.grantTank = true
+          if (katoMight > 0) target.tempMight = (target.tempMight ?? 0) + katoMight
+          emit({ kind: 'buff', iid: target.iid, player })
+          s = log(s, player, `${label}: Kato gave ${getCard(target.cardId)?.name} his keywords and +${katoMight} Might this turn.`)
+        }
+      }
+      handled = true
+    }
     // Imposing Challenger: "When I move, you may move an enemy unit here with less Might
     // than me to a different battlefield." Auto-pushes the weakest qualifying enemy at
     // its battlefield to another (preferring an empty/uncontested) battlefield.
@@ -2396,6 +2421,37 @@ function killGearByIid(s: MatchState, gearIid: string): PlayerId | null {
     }
   }
   return null
+}
+
+/** Tideturner: "you may choose a unit you control at ANOTHER location. Move me to its
+ *  location and it to my original location." Auto-picks the strongest friendly unit at a
+ *  different location (per the auto-resolve preference) and swaps the two — preserving
+ *  ready/exhausted/damage (the swap is not a standard move) — then recomputes control and
+ *  opens any showdown the relocation creates. No-op if no friendly unit is elsewhere. */
+function tideturnerSwap(s: MatchState, player: PlayerId, tideIid: string): MatchState {
+  const tideBf = battlefieldOf(s, tideIid)
+  const allies = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
+    .filter((u) => u.owner === player && u.iid !== tideIid && getCard(u.cardId)?.type === 'unit' && battlefieldOf(s, u.iid) !== tideBf)
+  if (!allies.length) return s
+  const partner = allies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
+  const tide = findUnitAnywhere(s, tideIid)
+  if (!tide) return s
+  const partnerBf = battlefieldOf(s, partner.iid)
+  const tidePriorCtrl = tideBf >= 0 ? s.battlefields[tideBf].controller : null
+  const partnerPriorCtrl = partnerBf >= 0 ? s.battlefields[partnerBf].controller : null
+  const pull = (inst: EngineCard, bi: number) => {
+    if (bi >= 0) s.battlefields[bi].units.splice(s.battlefields[bi].units.findIndex((x) => x.iid === inst.iid), 1)
+    else s.players[player].zones.base.splice(s.players[player].zones.base.findIndex((x) => x.iid === inst.iid), 1)
+  }
+  pull(tide, tideBf)
+  pull(partner, partnerBf)
+  ;(partnerBf >= 0 ? s.battlefields[partnerBf].units : s.players[player].zones.base).push(tide)
+  ;(tideBf >= 0 ? s.battlefields[tideBf].units : s.players[player].zones.base).push(partner)
+  recomputeControllers(s)
+  s = log(s, player, `Tideturner: swapped locations with ${getCard(partner.cardId)?.name}.`)
+  if (partnerBf >= 0) s = showdownOrConquerAfterEffectMove(s, partnerBf, tide.iid, partnerPriorCtrl)
+  if (tideBf >= 0) s = showdownOrConquerAfterEffectMove(s, tideBf, partner.iid, tidePriorCtrl)
+  return s
 }
 
 /** Return a gear by iid to its owner's hand (Legion Quartermaster). Mirrors
@@ -4409,6 +4465,7 @@ export function deflectSurcharge(
     if (u && u.owner !== caster) {
       let d = keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect + (unitGrantedKeyword(state, u, 'deflect') ? 1 : 0) // Breakneck Mech
       d += u.attached.reduce((a, ref) => a + parseKeywords(getCard(ref.split('|')[0])).deflect, 0) // attached gear [Deflect] (Hexdrinker)
+      d += u.grantDeflect ?? 0 // [Deflect] granted this turn (Kato the Arm)
       // Fiora - Victorious: conditional [Deflect] while [Mighty].
       if (/while (?:i'm|i am) \[?mighty\]?,?[^.]*\[deflect/.test((def(u)?.text ?? '').toLowerCase()) && stateActive(state, u, 'mighty')) d += 1
       // Spirit's Refuge: "Friendly buffed units have [Deflect] if they didn't already."
@@ -5958,6 +6015,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             }
           }
         }
+        // Tideturner: "When you play me, you may choose a unit you control at another
+        // location. Move me to its location and it to my original location." Auto-picks
+        // the strongest friendly unit elsewhere and swaps (per the auto-resolve policy).
+        if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Tideturner' && !legionGated) {
+          s1 = tideturnerSwap(s1, action.player, ci.iid)
+        }
         // Keeper of Masks: when played, play two Reflection copies of itself here.
         if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Keeper of Masks' && !legionGated) {
           const dest = ambushBf != null ? s1.battlefields[ambushBf].units : s1.players[action.player].zones.base
@@ -6388,6 +6451,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Evelynn - Entrancing: "When you play me from face down on your turn, you may
         // move an enemy unit at a different location to my battlefield." (Reveal-only.)
         if (card.name === 'Evelynn - Entrancing') s = pullEnemyToBf(s, action.player, bfi, 'Evelynn - Entrancing')
+        // Tideturner: the on-play swap also fires when revealed from Hidden (its
+        // "original location" is the battlefield it was hidden at).
+        if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Tideturner') s = tideturnerSwap(s, action.player, ci.iid)
       } else if (card.type === 'gear') {
         // Edge of Night: "When you play this from face down, attach it to a unit
         // you control (here)." Auto-attach to a friendly unit at this battlefield.
@@ -7361,10 +7427,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // one-shot "would die this turn" death/banish replacements (Highlander, Smite).
       for (const pl of s.players) {
         for (const z of Object.keys(pl.zones) as ZoneId[])
-          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, deathShield: false, banishShield: false }))
+          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false }))
       }
       for (const bf of s.battlefields)
-        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, deathShield: false, banishShield: false }))
+        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false }))
       // "At the end of your turn, …" effects for the ending player's permanents
       // (Dazzling Aurora's free-unit engine; Annie - Dark Child's ready-runes —
       // hence the legend is included). Base gear + units + battlefield units + legend.
