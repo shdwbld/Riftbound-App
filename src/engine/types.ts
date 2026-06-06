@@ -540,6 +540,8 @@ export interface GameEvent {
   exhaust?: number
   /** Runes recycled to pay (for 'payment' events). */
   recycle?: number
+  /** A 'move' event that is a retreat off a battlefield (→ recall SFX). */
+  retreat?: 'base' | 'hand'
 }
 
 export interface EngineResult {

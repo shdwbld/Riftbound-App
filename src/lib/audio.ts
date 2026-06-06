@@ -269,6 +269,45 @@ class AudioManager {
     if (voiceLoaded) this.playBufferAt(voiceLoaded, VOICE_DELAY, VOICE_VOL)
   }
 
+  /** Play one bundled champion audio file by category (death / win / ability-r …)
+   *  from /sfx/champions/<key>/<category>.mp3. Optional start delay + dedupe. */
+  async playChampionAudio(key: string, category: string, opts: { delay?: number; volume?: number; dedupe?: boolean } = {}): Promise<void> {
+    if (!this.ctx || this.settings.muted) return
+    if (opts.dedupe !== false) {
+      const dk = `${key}:${category}`
+      const now = Date.now()
+      if (now - (this.champLastPlayed.get(dk) ?? 0) < 1500) return
+      this.champLastPlayed.set(dk, now)
+    }
+    const url = `/sfx/champions/${key}/${category}.mp3`
+    await this.ensureLoadedUrl(url)
+    const loaded = this.champSfx.get(url)
+    if (loaded) this.playBufferAt(loaded, opts.delay ?? 0, opts.volume ?? 1)
+  }
+
+  /** Play a bundled generic SFX from /sfx/generic/<name>.mp3 (announcer etc.). */
+  async playGeneric(name: string, opts: { delay?: number; volume?: number } = {}): Promise<void> {
+    if (!this.ctx || this.settings.muted) return
+    const url = `/sfx/generic/${name}.mp3`
+    await this.ensureLoadedUrl(url)
+    const loaded = this.champSfx.get(url)
+    if (loaded) this.playBufferAt(loaded, opts.delay ?? 0, opts.volume ?? 1)
+  }
+
+  // Stagger window so several champion lines (e.g. multiple deaths in one combat)
+  // don't overlap: first plays now, extras +0.7s each, capped at 2 per window.
+  private lineWin = { until: 0, count: 0 }
+  queueChampionLine(key: string, category: string): void {
+    if (!this.ctx || this.settings.muted) return
+    const now = this.ctx.currentTime
+    if (now >= this.lineWin.until) this.lineWin = { until: now, count: 0 }
+    if (this.lineWin.count >= 2) return
+    const delay = Math.max(0, this.lineWin.until - now)
+    void this.playChampionAudio(key, category, { delay })
+    this.lineWin.until = (this.lineWin.until <= now ? now : this.lineWin.until) + 0.7
+    this.lineWin.count++
+  }
+
   /** Loop a music/ambience track on the music bus (low volume). */
   playMusic(name: MusicName, opts: { volume?: number } = {}): void {
     if (!this.ctx || !this.musicBus) return

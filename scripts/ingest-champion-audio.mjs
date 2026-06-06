@@ -1,16 +1,14 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// Dev-time ingest: download each champion's League "Select" SFX + voiceline from
-// the LoL Fandom wiki (resolved via the MediaWiki API), convert OGG → MP3 with
-// ffmpeg, and bundle them under public/sfx/champions/<key>/{select-sfx,
-// select-voice}.mp3. Played in-app by audio.playChampionSelect() when a champion
-// card is played. NOT run in the browser. Requires network + ffmpeg-static.
-//
-//   node scripts/ingest-champion-audio.mjs                 # all, skip existing
-//   node scripts/ingest-champion-audio.mjs --champion Ahri # one champion
-//   node scripts/ingest-champion-audio.mjs --force         # re-download
-//
-// Note: Riot's copyrighted audio — for the unofficial non-commercial fan sim.
+// Dev-time ingest: pull League audio from the LoL Fandom wiki (resolved via the
+// MediaWiki API), convert OGG → MP3 with ffmpeg-static, and bundle it for the app.
+//   public/sfx/champions/<key>/{select-sfx,select-voice,death,win,ability-<slot>}.mp3
+//   public/sfx/generic/<name>.mp3   (announcer + summoner SFX)
+// NOT run in the browser. Requires network + ffmpeg-static (devDependency).
+//   node scripts/ingest-champion-audio.mjs            # all, skip existing
+//   node scripts/ingest-champion-audio.mjs --champion Ahri
+//   node scripts/ingest-champion-audio.mjs --force
+// Riot copyrighted audio — for the unofficial non-commercial fan sim.
 // ---------------------------------------------------------------------------
 
 import { readFileSync, mkdirSync, existsSync, writeFileSync, rmSync } from 'node:fs'
@@ -22,17 +20,13 @@ import ffmpegPath from 'ffmpeg-static'
 
 const execFileP = promisify(execFile)
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT_ROOT = join(ROOT, 'public', 'sfx', 'champions')
+const CH_ROOT = join(ROOT, 'public', 'sfx', 'champions')
+const GEN_ROOT = join(ROOT, 'public', 'sfx', 'generic')
 const TMP = join(ROOT, '.tmp-champ-audio')
 const API = 'https://leagueoflegends.fandom.com/api.php'
-const UA = 'RiftboundFanSim/1.0 (champion-select audio ingest; non-commercial)'
+const UA = 'RiftboundFanSim/1.0 (champion audio ingest; non-commercial)'
 
-// Must match toChampionKey() in src/lib/audio.ts.
 const toKey = (name) => name.replace(/['.]/g, '').trim().replace(/\s+/g, '-').toLowerCase()
-
-// Wiki "File:" slug — spaces→_, apostrophes/periods kept. The default handles the
-// oddballs (Dr. Mundo→Dr._Mundo, Lee Sin→Lee_Sin, Kai'Sa→Kai'Sa). Add overrides
-// here only if a champion's wiki page uses a different name than the card pool.
 const WIKI_SLUG_OVERRIDES = {}
 const wikiSlug = (name) => WIKI_SLUG_OVERRIDES[name] ?? name.replace(/ /g, '_')
 
@@ -41,11 +35,13 @@ const force = args.includes('--force')
 const onlyIdx = args.indexOf('--champion')
 const only = onlyIdx >= 0 ? args[onlyIdx + 1] : null
 
-function championNames() {
+function loadCards() {
   const data = JSON.parse(readFileSync(join(ROOT, 'src', 'data', 'cards.generated.json'), 'utf8'))
-  const arr = Array.isArray(data) ? data : (data.cards ?? Object.values(data))
+  return Array.isArray(data) ? data : (data.cards ?? Object.values(data))
+}
+function championNames(cards) {
   const names = new Set()
-  for (const c of arr) {
+  for (const c of cards) {
     if (c?.supertype !== 'champion') continue
     names.add(c.name.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim())
   }
@@ -61,71 +57,124 @@ async function resolveUrl(fileName) {
   if (!page || 'missing' in page) return null
   return page.imageinfo?.[0]?.url ?? null
 }
-
 async function download(url, dest) {
   const res = await fetch(url, { headers: { 'User-Agent': UA } })
   if (!res.ok) throw new Error(`download ${res.status}`)
   writeFileSync(dest, Buffer.from(await res.arrayBuffer()))
 }
-
 const toMp3 = (ogg, mp3) =>
   execFileP(ffmpegPath, ['-y', '-i', ogg, '-codec:a', 'libmp3lame', '-q:a', '4', mp3])
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-async function ingestOne(name) {
-  const key = toKey(name)
-  const dir = join(OUT_ROOT, key)
-  const sfxOut = join(dir, 'select-sfx.mp3')
-  const voiceOut = join(dir, 'select-voice.mp3')
-  if (!force && existsSync(sfxOut) && existsSync(voiceOut)) return { name, status: 'skip' }
-  mkdirSync(dir, { recursive: true })
+/** Try each candidate wiki filename; first that resolves is downloaded+converted to `out`. */
+async function fetchFirst(candidates, out, tmpName) {
+  if (!force && existsSync(out)) return 'have'
   mkdirSync(TMP, { recursive: true })
+  const tmp = join(TMP, tmpName)
+  for (const file of candidates) {
+    const url = await resolveUrl(file)
+    if (!url) continue
+    await download(url, tmp)
+    await toMp3(tmp, out)
+    rmSync(tmp, { force: true })
+    return 'ok'
+  }
+  return 'miss'
+}
+
+async function ingestChampion(name) {
+  const key = toKey(name)
+  const dir = join(CH_ROOT, key)
+  mkdirSync(dir, { recursive: true })
   const slug = wikiSlug(name)
+  const o = `${slug}_Original`
   const targets = [
-    { file: `${slug}_Select_SFX.ogg`, out: sfxOut, tmp: join(TMP, `${key}-sfx.ogg`), kind: 'sfx' },
-    { file: `${slug}_Select.ogg`, out: voiceOut, tmp: join(TMP, `${key}-voice.ogg`), kind: 'voice' },
+    { cands: [`${slug}_Select_SFX.ogg`], out: 'select-sfx.mp3' },
+    { cands: [`${slug}_Select.ogg`], out: 'select-voice.mp3' },
+    { cands: [`${o}_Death_0.ogg`, `${o}_Death.ogg`], out: 'death.mp3' },
+    { cands: [`${o}_Kill_0.ogg`, `${o}_Taunt_0.ogg`, `${o}_Taunt.ogg`], out: 'win.mp3' },
   ]
   const got = []
-  const missing = []
   for (const t of targets) {
-    if (!force && existsSync(t.out)) { got.push(t.kind); continue }
-    const url = await resolveUrl(t.file)
-    if (!url) { missing.push(t.kind); continue }
-    await download(url, t.tmp)
-    await toMp3(t.tmp, t.out)
-    rmSync(t.tmp, { force: true })
-    got.push(t.kind)
+    const r = await fetchFirst(t.cands, join(dir, t.out), `${key}-${t.out}.ogg`)
+    if (r !== 'miss') got.push(t.out.replace('.mp3', ''))
   }
-  return { name, status: got.length ? 'ok' : 'fail', got, missing }
+  return got
+}
+
+async function ingestSignatures(cards) {
+  const map = JSON.parse(readFileSync(join(ROOT, 'src', 'data', 'signatureAudio.json'), 'utf8'))
+  const done = new Set()
+  let ok = 0, miss = 0
+  for (const c of cards) {
+    if (c?.supertype !== 'signature') continue
+    const base = c.name.replace(/\s*\([^)]*\)\s*$/, '').trim()
+    const slot = map[base]
+    const champ = (c.tags ?? [])[0]
+    if (!slot || !champ) continue
+    const key = toKey(champ)
+    const tag = `${key}:${slot}`
+    if (done.has(tag)) continue
+    done.add(tag)
+    if (only && champ !== only) continue
+    const dir = join(CH_ROOT, key)
+    mkdirSync(dir, { recursive: true })
+    const slug = wikiSlug(champ)
+    const r = await fetchFirst(
+      [`${slug}_Original_${slot}_0.ogg`, `${slug}_Original_${slot}.ogg`],
+      join(dir, `ability-${slot.toLowerCase()}.mp3`),
+      `${key}-ability-${slot}.ogg`,
+    )
+    if (r === 'miss') { miss++; process.stdout.write(`  ~ ${champ} ${slot} (no VO)\n`) }
+    else { ok++; process.stdout.write(`  ⚡ ${champ} ${slot}\n`) }
+    await sleep(200)
+  }
+  return { ok, miss }
+}
+
+const GENERIC = {
+  victory: ['Announcer_OnVictory_0_old2.ogg'],
+  defeat: ['Announcer_OnDefeat_0_old2.ogg'],
+  'first-blood': ['Announcer_OnFirstBlood_0_old2.ogg'],
+  'double-kill': ['Announcer_OnChampionDoubleKill_0_old2.ogg'],
+  'triple-kill': ['Announcer_OnChampionTripleKill_0_old2.ogg'],
+  'quadra-kill': ['Announcer_OnChampionQuadraKill_0_old2.ogg'],
+  'penta-kill': ['Announcer_OnChampionPentaKill_0_old2.ogg'],
+  turret: ['Announcer_OnTurretDieEnemyTeam_0_old2.ogg'],
+  inhibitor: ['Announcer_OnDampenerDieEnemyTeam_0_old2.ogg'],
+  recall: ['Recall_SFX.ogg'],
+}
+async function ingestGeneric() {
+  mkdirSync(GEN_ROOT, { recursive: true })
+  let ok = 0, miss = 0
+  for (const [outName, cands] of Object.entries(GENERIC)) {
+    const r = await fetchFirst(cands, join(GEN_ROOT, `${outName}.mp3`), `gen-${outName}.ogg`)
+    if (r === 'miss') { miss++; process.stdout.write(`  ~ generic ${outName} (missing)\n`) }
+    else { ok++; process.stdout.write(`  ♪ generic ${outName}\n`) }
+    await sleep(200)
+  }
+  return { ok, miss }
 }
 
 async function main() {
-  if (!ffmpegPath) {
-    console.error('ffmpeg-static not found. Run: npm i -D ffmpeg-static')
-    process.exit(1)
-  }
-  const names = only ? [only] : championNames()
-  console.log(`ffmpeg: ${ffmpegPath}`)
-  console.log(`Ingesting ${names.length} champion(s) → ${OUT_ROOT}\n`)
-  const summary = { ok: [], skip: [], fail: [], partial: [] }
+  if (!ffmpegPath) { console.error('ffmpeg-static missing. npm i -D ffmpeg-static'); process.exit(1) }
+  const cards = loadCards()
+  const names = only ? [only] : championNames(cards)
+  console.log(`ffmpeg: ${ffmpegPath}\nChampions: ${names.length}\n`)
+  const sum = { champOk: 0, champFail: 0 }
   for (const name of names) {
     try {
-      const r = await ingestOne(name)
-      if (r.status === 'skip') { summary.skip.push(name); process.stdout.write(`  · ${name}: skip (exists)\n`) }
-      else if (r.status === 'fail') { summary.fail.push(name); process.stdout.write(`  ✗ ${name}: no audio found\n`) }
-      else if (r.missing?.length) { summary.partial.push(`${name} (no ${r.missing.join('/')})`); process.stdout.write(`  ~ ${name}: got ${r.got.join('+')}, missing ${r.missing.join('/')}\n`) }
-      else { summary.ok.push(name); process.stdout.write(`  ✓ ${name}\n`) }
-    } catch (e) {
-      summary.fail.push(name)
-      process.stdout.write(`  ✗ ${name}: ${e.message}\n`)
-    }
-    if (!only) await sleep(300)
+      const got = await ingestChampion(name)
+      if (got.length) { sum.champOk++; process.stdout.write(`  ✓ ${name} [${got.join(',')}]\n`) }
+      else { sum.champFail++; process.stdout.write(`  ✗ ${name}: nothing\n`) }
+    } catch (e) { sum.champFail++; process.stdout.write(`  ✗ ${name}: ${e.message}\n`) }
+    if (!only) await sleep(250)
   }
+  console.log('\n-- signature abilities --')
+  const sig = await ingestSignatures(cards)
+  console.log('\n-- generic SFX --')
+  const gen = await ingestGeneric()
   rmSync(TMP, { force: true, recursive: true })
-  console.log(`\nDone. ok=${summary.ok.length} partial=${summary.partial.length} skip=${summary.skip.length} fail=${summary.fail.length}`)
-  if (summary.partial.length) console.log('Partial:', summary.partial.join(', '))
-  if (summary.fail.length) console.log('Failed:', summary.fail.join(', '))
+  console.log(`\nDone. champions ok=${sum.champOk} fail=${sum.champFail} | abilities ok=${sig.ok} miss=${sig.miss} | generic ok=${gen.ok} miss=${gen.miss}`)
 }
-
 main().catch((e) => { console.error(e); process.exit(1) })

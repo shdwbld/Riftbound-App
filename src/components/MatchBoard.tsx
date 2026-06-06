@@ -17,7 +17,8 @@ import MechanicTooltip from './MechanicTooltip'
 import CombatBanner, { type BannerData } from './CombatBanner'
 import { type Card, type Domain, DOMAIN_META, DOMAINS } from '../types/cards'
 import { matGradient, domainGlow, domainAnimClass } from '../lib/theme'
-import { audio } from '../lib/audio'
+import { audio, toChampionKey } from '../lib/audio'
+import signatureAudio from '../data/signatureAudio.json'
 import BoardCard from './BoardCard'
 import CardBack from './CardBack'
 import CardPreview from './CardPreview'
@@ -327,6 +328,8 @@ export default function MatchBoard({
   // A turn-start draw waits here until the end-turn recap is dismissed, then flips in.
   const [pendingDraw, setPendingDraw] = useState<{ seq: number; cards: string[]; heading: string } | null>(null)
   const prevActiveRef = useRef(match.activePlayer)
+  const firstBloodRef = useRef(false)
+  const winnerAnnouncedRef = useRef(false)
   useEffect(() => {
     // A turn just started for a new active player → the begin-turn draw gets the
     // "breath" pause + flip-zoom reveal (vs an immediate reveal for mid-turn draws).
@@ -386,14 +389,24 @@ export default function MatchBoard({
   useEffect(() => {
     if (!events?.length) return
     const kinds = new Set(events.map((e) => e.kind))
+    // Champion display name → audio key (strip " - subtitle" and trailing "(set)").
+    const champBase = (name: string) => name.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim()
     const playEvt = events.find((e) => e.kind === 'play')
     if (playEvt?.cardId) {
       const c = getCard(playEvt.cardId)
-      if (c && c.type === 'spell') audio.play((c.energy ?? 0) >= 5 ? 'spellBig' : 'spell')
+      if (c && c.supertype === 'signature') {
+        // Signature spell → its champion's ability voice line (slot map + tags[0]),
+        // layered over the spell whoosh.
+        const base = c.name.replace(/\s*\([^)]*\)\s*$/, '').trim()
+        const slot = (signatureAudio as Record<string, string>)[base]
+        const champ = (c.tags ?? [])[0]
+        if (slot && champ) void audio.playChampionAudio(toChampionKey(champ), 'ability-' + slot.toLowerCase(), { delay: 0.15 })
+        audio.play(c.type === 'spell' ? ((c.energy ?? 0) >= 5 ? 'spellBig' : 'spell') : 'playCard')
+      } else if (c && c.type === 'spell') audio.play((c.energy ?? 0) >= 5 ? 'spellBig' : 'spell')
       else if (c && c.supertype === 'champion') {
         // Champion played → its Select SFX + voiceline ~1s later (layered), while
         // the 80% reveal is on screen for everyone. Keep the thud underneath.
-        void audio.playChampionSelect(c.name.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim())
+        void audio.playChampionSelect(champBase(c.name))
         audio.play('playCard')
       } else if (c) audio.play('playCard')
     }
@@ -401,14 +414,44 @@ export default function MatchBoard({
     // here we only chirp for OTHER players' draws (a soft "they drew" cue).
     if (kinds.has('draw') && !events.some((e) => e.kind === 'draw' && e.player === perspective)) audio.play('cardFlip')
     if (kinds.has('channel')) audio.play('shuffle', { volume: 0.6 })
-    if (kinds.has('move')) audio.play('cardThrow')
+    // A retreat off a battlefield (→ base or hand) gets the recall whoosh; other moves the throw.
+    if (events.some((e) => e.kind === 'move' && e.retreat)) void audio.playGeneric('recall')
+    else if (kinds.has('move')) audio.play('cardThrow')
     if (kinds.has('damage')) audio.play(Math.random() < 0.5 ? 'sword' : 'punch')
-    if (kinds.has('defeat')) audio.play('unitKilled')
+    if (kinds.has('defeat')) {
+      audio.play('unitKilled')
+      // Each dying champion speaks its death line (staggered + capped by the queue).
+      for (const e of events) {
+        if (e.kind !== 'defeat' || !e.cardId) continue
+        const dc = getCard(e.cardId)
+        if (dc?.supertype === 'champion') audio.queueChampionLine(toChampionKey(champBase(dc.name)), 'death')
+      }
+      // Announcer: first blood once per match; multi-kill when several fall at once.
+      const n = events.filter((e) => e.kind === 'defeat').length
+      if (n >= 2) void audio.playGeneric(n >= 5 ? 'penta-kill' : n === 4 ? 'quadra-kill' : n === 3 ? 'triple-kill' : 'double-kill', { delay: 0.5 })
+      else if (!firstBloodRef.current) void audio.playGeneric('first-blood', { delay: 0.5 })
+      firstBloodRef.current = true
+    }
     if (kinds.has('counter')) audio.play('spell')
-    if (kinds.has('conquer')) audio.play('sword')
+    if (kinds.has('conquer')) {
+      audio.play('sword')
+      void audio.playGeneric('turret', { delay: 0.3 })
+      // The conquering player's legend champion taunts.
+      const conq = events.find((e) => e.kind === 'conquer')
+      const lg = conq?.player != null ? match.players[conq.player]?.legend : null
+      if (lg) void audio.playChampionAudio(toChampionKey(champBase(getCard(lg.cardId)?.name ?? '')), 'win', { delay: 0.55 })
+    }
     if (kinds.has('score') && !kinds.has('conquer')) audio.play('confirm', { volume: 0.7 })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
+
+  // Match end → Victory / Defeat announcer (once).
+  useEffect(() => {
+    if (match.winner == null || winnerAnnouncedRef.current) return
+    winnerAnnouncedRef.current = true
+    void audio.playGeneric(match.winner === perspective ? 'victory' : 'defeat', { volume: 0.95 })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.winner])
 
   // Battle music + ambience while the board is mounted (gameplay phases). The
   // music bus keeps it low; the per-track volumes are scaled by the settings.

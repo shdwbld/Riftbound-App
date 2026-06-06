@@ -3224,7 +3224,8 @@ function bounceUnitToHand(s: MatchState, iid: string, by: PlayerId, spellName: s
     const [bu] = base.splice(idx, 1)
     if (!isToken) s.players[owner].zones.hand.push({ iid: bu.iid, cardId: bu.cardId, owner, exhausted: false, damage: 0, attached: [] })
   }
-  emit({ kind: 'play', iid, player: owner })
+  if (bfi >= 0) emit({ kind: 'move', iid, player: owner, cardId: u.cardId, retreat: 'hand' })
+  else emit({ kind: 'play', iid, player: owner })
   s = log(s, by, `${spellName}: returned ${getCard(u.cardId)?.name}${isToken ? ' (token — it ceases to exist)' : ` to ${owner === by ? 'your' : "its owner's"} hand`}.`)
   // The bounced unit's owner channels N runes exhausted.
   let ch = 0
@@ -6625,6 +6626,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           bfScriptAt(s, i)?.onMoveFrom?.(u) // Back-Alley Bar: +1 Might this turn
           s.players[action.player].zones.base.push({ ...u, exhausted: true })
           recomputeControllers(s)
+          emit({ kind: 'move', iid: u.iid, player: action.player, cardId: u.cardId, retreat: 'base' })
           return ok(log(s, action.player, `${def(u)?.name} retreated to base.`))
         }
       }
