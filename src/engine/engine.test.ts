@@ -6097,4 +6097,63 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.error).toBeUndefined()
     expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(true) // pulled to Evelynn's battlefield
   })
+
+  it('Temptation: only offers destinations holding another unit of the moved enemy', () => {
+    const id = injectCard('a3-temptation', "Move an enemy unit to a location where there's a unit with the same controller.", { name: 'Temptation', type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const enemyA = mk(furyUnit.id, 1, { exhausted: true })
+    const enemyB = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemyA], controller: 1 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemyB], controller: 1 } // has a same-controller unit
+    s.battlefields[2] = { cardId: battlefield.id, units: [], controller: null } // empty → not a valid destination
+    const sp = mk(id, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemyA.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.pendingChoice?.kind).toBe('moveToBf')
+    const opts = r.state.pendingChoice?.options.map((o) => o.iid) ?? []
+    expect(opts).toContain('bf:1')
+    expect(opts).not.toContain('bf:2') // empty location excluded
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'bf:1' })
+    expect(r.state.battlefields[1].units.some((u) => u.iid === enemyA.iid)).toBe(true)
+  })
+
+  it("Dragon's Rage: after moving an enemy, it and another enemy at the destination collide", () => {
+    const id = injectCard('a3-dragonsrage', 'Move an enemy unit. Then do this: Choose another enemy unit at its destination. They deal damage equal to their Mights to each other.', { name: "Dragon's Rage", type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const enemyA = mk(injectCard('a3-dr-a', 'unit', { might: 3 }), 1, { exhausted: true })
+    const enemyB = mk(injectCard('a3-dr-b', 'unit', { might: 3 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemyA], controller: 1 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemyB], controller: 1 }
+    const sp = mk(id, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemyA.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.pendingChoice?.kind).toBe('moveToBf')
+    expect(r.state.pendingChoice?.srcName).toBe("Dragon's Rage")
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'bf:1' })
+    const onBoard = (iid: string) => r.state.battlefields.some((b) => b.units.some((u) => u.iid === iid))
+    expect(onBoard(enemyA.iid)).toBe(false) // 3 vs 3 — both destroyed
+    expect(onBoard(enemyB.iid)).toBe(false)
+  })
+
+  it('Blast Cone: exhausts to Stun an enemy unit you move', () => {
+    const moveSpell = injectCard('a3-bc-move', 'Move an enemy unit.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const cone = mk(injectCard('a3-blastcone', 'When you move an enemy unit, you may exhaust this to [Stun] it.', { name: 'Blast Cone', type: 'gear', energy: 0 }), 0)
+    s.players[0].zones.base.push(cone)
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [], controller: null }
+    const sp = mk(moveSpell, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [enemy.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'bf:1' })
+    expect(r.state.battlefields[1].units.find((u) => u.iid === enemy.iid)?.stunned).toBe(true) // Blast Cone stunned it
+    expect(r.state.players[0].zones.base.find((c) => c.iid === cone.iid)?.exhausted).toBe(true) // cone exhausted
+  })
 })

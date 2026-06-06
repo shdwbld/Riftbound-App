@@ -298,6 +298,9 @@ export interface MatchState {
     options: { iid: string; label: string }[]
     /** Carries state between multi-step choices (e.g. the Forge equipment iid). */
     payload?: string
+    /** Source card name, when the resolver needs card-specific follow-up after a
+     *  generic choice (e.g. Dragon's Rage's post-move collision via a moveToBf). */
+    srcName?: string
   }
   /** Pre-game setup state (turn-order roll, first-player choice, champion +
    *  battlefield selection). Present only while phase === 'setup'. */

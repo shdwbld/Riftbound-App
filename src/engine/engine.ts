@@ -2164,7 +2164,23 @@ function pullEnemyToBf(s: MatchState, player: PlayerId, destBf: number, label: s
   s.battlefields[destBf].units.push(pulled)
   recomputeControllers(s)
   s = log(s, player, `${label}: pulled ${getCard(pulled.cardId)?.name} to battlefield ${destBf + 1}.`)
+  s = blastConeOnEnemyMove(s, player, pulled.iid)
   return showdownOrConquerAfterEffectMove(s, destBf, pulled.iid, priorCtrl)
+}
+
+/** Blast Cone (gear): "When you move an enemy unit, you may exhaust this to [Stun]
+ *  it." Auto-fired after `mover` moves an enemy unit — exhausts one ready Blast Cone
+ *  the mover controls (in their base) and stuns the moved unit. */
+function blastConeOnEnemyMove(s: MatchState, mover: PlayerId, enemyIid: string): MatchState {
+  const enemy = findUnitAnywhere(s, enemyIid)
+  if (!enemy || enemy.owner === mover || enemy.stunned) return s
+  const cone = s.players[mover].zones.base.find((c) => getCard(c.cardId)?.name === 'Blast Cone' && !c.exhausted)
+  if (!cone) return s
+  cone.exhausted = true
+  enemy.stunned = true
+  emit({ kind: 'stun', iid: enemy.iid, player: mover })
+  s = log(s, mover, `Blast Cone: exhausted to Stun ${getCard(enemy.cardId)?.name}.`)
+  return fireStun(s, mover)
 }
 
 /** Record a conquered battlefield for the turn (Perched Grimwyrm's placement
@@ -4414,10 +4430,12 @@ function resolveSpellEffects(
   }
 
   // Generic "deal damage equal to Might/Assault" spells (Challenge, Clash of Giants,
-  // Marching Orders, Gentlemen's Duel, Dragon's Rage, Last Breath, Stormbringer,
-  // Alpha Strike). Self-dealer trigger cards (Ezreal/Lucian/Snapvine) resolve via the
-  // combat/on-play handlers, not here.
-  if (e.dealMight && e.dealMight.dealer !== 'self') {
+  // Marching Orders, Gentlemen's Duel, Last Breath, Stormbringer, Alpha Strike).
+  // Self-dealer trigger cards (Ezreal/Lucian/Snapvine) resolve via the combat/on-play
+  // handlers, not here. Dragon's Rage is excluded: it MOVES an enemy first, then the
+  // moved unit clashes with another enemy at the destination (handled in the moveToBf
+  // resolver after the move), so it must fall through to the e.moveUnit offer below.
+  if (e.dealMight && e.dealMight.dealer !== 'self' && card.name !== "Dragon's Rage") {
     const dm = e.dealMight
     const isUnitCard = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
     const friendlies = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === controller && isUnitCard(u))
@@ -4600,12 +4618,14 @@ function resolveSpellEffects(
         // battlefield via a pendingChoice (offered for the first moved target).
         const mu = findUnitAnywhere(s, t)
         const here = battlefieldOf(s, t)
-        const dests = s.battlefields
-          .map((b, i) => ({ i, b }))
-          .filter(({ i }) => i !== here)
-          .map(({ i }) => ({ iid: `bf:${i}`, label: bfBaseNameAt(s, i) || `Battlefield ${i + 1}` }))
+        let destBfs = s.battlefields.map((b, i) => ({ i, b })).filter(({ i }) => i !== here)
+        // Temptation: "Move an enemy unit to a location where there's a unit with the
+        // same controller." Restrict to bfs holding another unit owned by the moved unit.
+        if (card.name === 'Temptation' && mu)
+          destBfs = destBfs.filter(({ b }) => b.units.some((u) => u.owner === mu.owner && u.iid !== mu.iid))
+        const dests = destBfs.map(({ i }) => ({ iid: `bf:${i}`, label: bfBaseNameAt(s, i) || `Battlefield ${i + 1}` }))
         if (mu && dests.length) {
-          offerChoice(s, { player: controller, kind: 'moveToBf', bfIndex: here, prompt: `Move ${getCard(mu.cardId)?.name ?? 'the unit'} to which battlefield?`, options: dests, payload: t })
+          offerChoice(s, { player: controller, kind: 'moveToBf', bfIndex: here, prompt: `Move ${getCard(mu.cardId)?.name ?? 'the unit'} to which battlefield?`, options: dests, payload: t, srcName: card.name })
         }
       }
       if (e.deathShield) {
@@ -5849,6 +5869,24 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             s.battlefields[dest].units.push(card)
             recomputeControllers(s)
             s = log(s, action.player, `Moved ${getCard(card.cardId)?.name ?? 'a unit'} to ${bfBaseNameAt(s, dest) || `Battlefield ${dest + 1}`}.`)
+            // Blast Cone: "When you move an enemy unit, you may exhaust this to [Stun] it."
+            s = blastConeOnEnemyMove(s, action.player, card.iid)
+            // Dragon's Rage: "Then do this: Choose another enemy unit at its destination.
+            // They deal damage equal to their Mights to each other." Auto-picks the
+            // strongest other enemy at the destination; both take the other's Might.
+            if (pc.srcName === "Dragon's Rage") {
+              const others = s.battlefields[dest].units.filter((u) => u.owner === card.owner && u.iid !== card.iid && getCard(u.cardId)?.type === 'unit')
+              if (others.length) {
+                const other = others.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
+                const m1 = mightOf(card)
+                const m2 = mightOf(other)
+                let dead: EngineCard[] = []
+                dead = dead.concat(applyTargetDamage(s, other.iid, m1))
+                dead = dead.concat(applyTargetDamage(s, card.iid, m2))
+                s = log(s, action.player, `Dragon's Rage: ${getCard(card.cardId)?.name} and ${getCard(other.cardId)?.name} dealt ${m1}/${m2} to each other.`)
+                s = fireDeaths(s, dead, action.player)
+              }
+            }
             // The moved unit "becomes present" → contested ⇒ showdown (Charm initiates combat).
             s = showdownOrConquerAfterEffectMove(s, dest, card.iid, priorCtrl)
           }
