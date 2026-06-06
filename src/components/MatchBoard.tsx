@@ -319,8 +319,13 @@ export default function MatchBoard({
   //  • A NON-CHAIN play (unit or gear) → glowing card for everyone. Spells/counters
   //    are chain-related and use ChainResponsePopup instead (mutually exclusive).
   //  • One of MY draws → reveal the drawn card(s), shorter, private to me.
-  const [announce, setAnnounce] = useState<{ seq: number; cards: string[]; heading: string; sub?: string; durationMs: number } | null>(null)
+  const [announce, setAnnounce] = useState<{ seq: number; cards: string[]; heading: string; sub?: string; durationMs: number; flip?: boolean; delayMs?: number; sfx?: 'cardFlip' } | null>(null)
+  const prevActiveRef = useRef(match.activePlayer)
   useEffect(() => {
+    // A turn just started for a new active player → the begin-turn draw gets the
+    // "breath" pause + flip-zoom reveal (vs an immediate reveal for mid-turn draws).
+    const turnStarted = match.activePlayer !== prevActiveRef.current
+    prevActiveRef.current = match.activePlayer
     const evs = events ?? []
     // A gear was equipped to a unit → fancy 3s "equipped" announcement for all.
     const equip = evs.filter((e) => e.kind === 'equip' && e.cardId).pop()
@@ -352,7 +357,12 @@ export default function MatchBoard({
     if (myDraw > 0) {
       const hand = me.zones.hand
       const drawn = hand.slice(Math.max(0, hand.length - myDraw)).map((c) => c.cardId).slice(0, 2)
-      if (drawn.length) setAnnounce({ seq: match.seq, cards: drawn, heading: myDraw > 1 ? `You drew ${myDraw}` : 'You drew', durationMs: 3500 })
+      const heading = myDraw > 1 ? `You drew ${myDraw}` : 'You drew'
+      if (drawn.length && turnStarted)
+        // Turn start: 1s pause → flip+zoom (cardFlip SFX) → hold ~2s → slide to hand.
+        setAnnounce({ seq: match.seq, cards: drawn, heading, durationMs: 2900, flip: true, delayMs: 1000, sfx: 'cardFlip' })
+      else if (drawn.length)
+        setAnnounce({ seq: match.seq, cards: drawn, heading, durationMs: 3500, sfx: 'cardFlip' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
@@ -367,7 +377,9 @@ export default function MatchBoard({
       if (c && c.type === 'spell') audio.play((c.energy ?? 0) >= 5 ? 'spellBig' : 'spell')
       else if (c) audio.play('playCard')
     }
-    if (kinds.has('draw')) audio.play('cardFlip')
+    // The drawer's own draw plays cardFlip via the reveal (delayed for turn start);
+    // here we only chirp for OTHER players' draws (a soft "they drew" cue).
+    if (kinds.has('draw') && !events.some((e) => e.kind === 'draw' && e.player === perspective)) audio.play('cardFlip')
     if (kinds.has('channel')) audio.play('shuffle', { volume: 0.6 })
     if (kinds.has('move')) audio.play('cardThrow')
     if (kinds.has('damage')) audio.play(Math.random() < 0.5 ? 'sword' : 'punch')
@@ -1109,6 +1121,9 @@ export default function MatchBoard({
         heading={announce?.heading ?? ''}
         sub={announce?.sub}
         durationMs={announce?.durationMs ?? 10000}
+        flip={announce?.flip}
+        delayMs={announce?.delayMs}
+        sfx={announce?.sfx}
       />
       <ChainResponsePopup
         chainItemId={respondChainTop?.id ?? null}
@@ -1449,7 +1464,7 @@ function BattlefieldZone({
 }) {
   const dndOn = !!match.sandbox && !!onMoveOverride
   return (
-    <div className="grid h-full justify-items-center gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(match.battlefields.length, 4)}, minmax(0,1fr))` }}>
+    <div className="grid h-full gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(match.battlefields.length, 4)}, minmax(0,1fr))` }}>
       {match.battlefields.map((bf, i) => {
         const bfCard = getCard(bf.cardId)
         const ctrl = bf.controller
