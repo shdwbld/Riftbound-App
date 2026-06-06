@@ -6534,4 +6534,38 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     expect(after.players[1].banished.some((c) => c.iid === victimCard.iid)).toBe(false)
     expect(after.asheBanishPending?.length ?? 0).toBe(0) // drained
   })
+
+  it('Insightful Investigator: optional 2-XP prompt → victim discards highest-cost & draws 1 (pay / decline)', async () => {
+    const { onPlayEffect } = await import('./effects')
+    expect(onPlayEffect(CARD_INDEX['unl-135-219']).opponentHandStrip).toEqual({ to: 'trash', nonUnit: false })
+    const iid = injectCard('a5-insight', 'When you play me, choose an opponent. They reveal their hand. You may pay 2 XP to choose a card from their hand. If you do, they discard that card and draw 1.', { type: 'unit', energy: 0, might: 1 })
+    // --- Pay branch ---
+    const s = baseState()
+    s.players[0].xp = 3
+    const inv = mk(iid, 0)
+    s.players[0].zones.hand.push(inv)
+    const cheap = mk(injectCard('a5-inv-cheap', 'x', { type: 'unit', energy: 1, might: 1 }), 1)
+    const pricey = mk(injectCard('a5-inv-pricey', 'x', { type: 'unit', energy: 8, might: 8 }), 1)
+    s.players[1].zones.hand.push(cheap, pricey)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1)) // a card for the victim to draw
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: inv.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('insightfulInvestigator') // optional XP prompt, not an unconditional strip
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].xp).toBe(1) // 3 − 2
+    expect(r.state.players[1].zones.trash.some((c) => c.iid === pricey.iid)).toBe(true) // highest-cost stripped
+    expect(r.state.players[1].zones.hand.length).toBe(2) // −pricey, +1 drawn = back to 2
+    // --- Decline branch ---
+    const s2 = baseState()
+    s2.players[0].xp = 3
+    const inv2 = mk(iid, 0)
+    s2.players[0].zones.hand.push(inv2)
+    s2.players[1].zones.hand.push(mk(injectCard('a5-inv-c2', 'x', { type: 'unit', energy: 2, might: 2 }), 1))
+    let r2 = reduce(s2, { type: 'PLAY_UNIT', player: 0, iid: inv2.iid, payment: emptyPayment() })
+    r2 = reduce(r2.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'decline' })
+    expect(r2.error).toBeFalsy()
+    expect(r2.state.players[0].xp).toBe(3) // unchanged — declined
+    expect(r2.state.players[1].zones.hand.length).toBe(1) // not stripped
+  })
 })

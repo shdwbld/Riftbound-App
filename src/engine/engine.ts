@@ -5562,7 +5562,13 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         const e = onPlayEffect(card)
         const legionGated = kw.legion && !legionActive
-        if (!legionGated) {
+        // Insightful Investigator: the parser reads "You may pay 2 XP to choose a card
+        // from their hand. If you do, they discard that card and draw 1." as an
+        // UNCONDITIONAL strip (+ a draw mis-attributed to the caster). Suppress the
+        // generic effect and gate it behind an optional N-XP prompt instead (below).
+        const xpStripM = (card.text ?? '').toLowerCase().match(/you may pay (\d+) xp/)
+        const insightfulXp = !!xpStripM && (!!e.opponentHandStrip || !!e.opponentDiscards)
+        if (!legionGated && !insightfulXp) {
           for (const line of applyParsed(s1, p, e, undefined, ci.iid)) s1 = log(s1, action.player, line)
           s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(e)) // Lillia: token-unit play synergy
           // Fizz - Trickster: "When you play me, you may play a spell from your trash…"
@@ -5570,8 +5576,24 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // Raging Firebrand: "the next spell you play this turn costs N less."
           const rfM = (card.text ?? '').toLowerCase().match(/the next spell you play this turn costs :rb_energy_(\d+): less/)
           if (rfM) s1.players[action.player].nextSpellCostDiscount = parseInt(rfM[1], 10)
-        } else {
+        } else if (legionGated) {
           s1 = log(s1, action.player, `${card.name}: Legion inactive (no prior card this turn).`)
+        }
+        // Insightful Investigator: offer the optional 2-XP "they discard + draw 1"
+        // (PaymentModal-style yes/no). Auto-targets the opponent holding the most cards.
+        if (insightfulXp && !legionGated) {
+          const xpCost = parseInt(xpStripM![1], 10)
+          const victim = s1.players.filter((pl) => pl.id !== action.player && !pl.out && pl.zones.hand.length > 0).sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
+          if (victim && p.xp >= xpCost) {
+            offerChoice(s1, {
+              player: action.player, kind: 'insightfulInvestigator', bfIndex: -1,
+              prompt: `${card.name} — pay ${xpCost} XP to make ${victim.name} discard a card and draw 1? (You have ${p.xp} XP)`,
+              options: [{ iid: 'pay', label: `Pay ${xpCost} XP` }, { iid: 'decline', label: 'Decline' }],
+              payload: JSON.stringify({ victimId: victim.id, xpCost }),
+            })
+          } else {
+            s1 = log(s1, action.player, `${card.name}: ${!victim ? 'no opponent has cards' : 'not enough XP'} — no effect.`)
+          }
         }
         // Optional additional-cost bonus — only applied when the player paid it
         // ("When you play me, if you paid the additional cost, …"). Reuses the same
@@ -6202,6 +6224,33 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s = playFromTrashPayingCost(s, action.player, action.iid, cost)
         } else {
           s = log(s, action.player, 'Discard-play — declined.')
+        }
+        return ok(s)
+      }
+
+      // Insightful Investigator: "You may pay 2 XP … they discard that card and draw 1."
+      // On pay: −2 XP, strip the victim's highest-cost card to trash (firing their
+      // discard cascade), then the VICTIM draws 1 (per the card, not the caster).
+      if (pc.kind === 'insightfulInvestigator') {
+        if (action.iid === 'pay') {
+          let victimId = 0, xpCost = 2
+          try { const pl = JSON.parse(pc.payload ?? '{}'); victimId = pl.victimId ?? 0; xpCost = pl.xpCost ?? 2 } catch { victimId = 0 }
+          const caster = s.players[action.player]
+          const victim = s.players[victimId]
+          if (caster.xp >= xpCost && victim && victim.zones.hand.length > 0) {
+            caster.xp -= xpCost
+            const pick = [...victim.zones.hand].sort((a, b) => cardCost(b) - cardCost(a))[0]
+            const [stripped] = victim.zones.hand.splice(victim.zones.hand.findIndex((c) => c.iid === pick.iid), 1)
+            sendToTrash(victim, stripped)
+            victim.discardedThisTurn = true
+            s = log(s, action.player, `Insightful Investigator — paid 2 XP; ${victim.name} discarded ${getCard(stripped.cardId)?.name} and draws 1.`)
+            s = fireDiscard(s, victimId, [stripped]) // the victim's discard cascade
+            drawN(s.players[victimId], 1) // the VICTIM draws 1
+          } else {
+            s = log(s, action.player, 'Insightful Investigator — could not pay (no XP / no cards).')
+          }
+        } else {
+          s = log(s, action.player, 'Insightful Investigator — declined (kept 2 XP).')
         }
         return ok(s)
       }
