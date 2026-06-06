@@ -4429,6 +4429,37 @@ function resolveSpellEffects(
     return s
   }
 
+  // Void Assault: "Move a friendly unit, then move an enemy unit. (If they both move
+  // to a battlefield you don't control, you're the attacker.)" Auto-resolved: send your
+  // strongest unit to an enemy-controlled battlefield (else the strongest enemy's
+  // battlefield) and drag the strongest enemy there too, fighting as the attacker.
+  // Honours UI-selected targets when provided.
+  if (card.name === 'Void Assault') {
+    const isUnit = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
+    const allUnits = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+    const chosen = (own: boolean) => (targets ?? []).map((t) => findUnitAnywhere(s, t)).find((u) => !!u && isUnit(u) && (own ? u.owner === controller : u.owner !== controller))
+    const friendly = chosen(true) ?? allUnits.filter((u) => u.owner === controller && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
+    const enemy = chosen(false) ?? s.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== controller && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
+    if (!friendly || !enemy) return log(s, controller, `${card.name} fizzled — need a friendly and an enemy unit.`)
+    const enemyBf = battlefieldOf(s, enemy.iid)
+    let dest = s.battlefields.findIndex((b) => b.controller != null && b.controller !== controller)
+    if (dest < 0) dest = enemyBf >= 0 ? enemyBf : 0
+    const priorCtrl = s.battlefields[dest].controller
+    const fcard = pluckCardAnywhere(s, friendly.iid)
+    if (fcard) s.battlefields[dest].units.push(fcard)
+    const ecard = pluckCardAnywhere(s, enemy.iid)
+    if (ecard) {
+      s.battlefields[dest].units.push(ecard)
+      recomputeControllers(s)
+      s = blastConeOnEnemyMove(s, controller, ecard.iid)
+    }
+    recomputeControllers(s)
+    s = log(s, controller, `Void Assault: moved ${getCard(friendly.cardId)?.name} and ${getCard(enemy.cardId)?.name} to ${bfBaseNameAt(s, dest) || `Battlefield ${dest + 1}`}.`)
+    // "You're the attacker" → designate the friendly unit as the mover (attacker).
+    if (fcard) s = showdownOrConquerAfterEffectMove(s, dest, fcard.iid, priorCtrl)
+    return s
+  }
+
   // Generic "deal damage equal to Might/Assault" spells (Challenge, Clash of Giants,
   // Marching Orders, Gentlemen's Duel, Last Breath, Stormbringer, Alpha Strike).
   // Self-dealer trigger cards (Ezreal/Lucian/Snapvine) resolve via the combat/on-play
@@ -5461,7 +5492,21 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const applyGearOnPlay = (st: MatchState): MatchState => {
           for (const line of applyParsed(st, st.players[action.player], gearOnPlay, undefined, ci.iid))
             st = log(st, action.player, line)
-          return fireTokenPlay(st, action.player, tokenUnitsIn(gearOnPlay))
+          st = fireTokenPlay(st, action.player, tokenUnitsIn(gearOnPlay))
+          // Blast Cone: "When you play this, you may move an enemy unit." Auto-sends
+          // the strongest enemy to its base; Part 2 (blastConeOnEnemyMove) then exhausts
+          // the freshly-played cone to [Stun] that unit.
+          if (card.name === 'Blast Cone') {
+            const enemy = st.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => mightOf(b) - mightOf(a))[0]
+            if (enemy) {
+              const nm = getCard(enemy.cardId)?.name
+              if (sendUnitToBase(st, enemy.iid)) {
+                st = log(st, action.player, `Blast Cone: moved ${nm} to its base.`)
+                st = blastConeOnEnemyMove(st, action.player, enemy.iid)
+              }
+            }
+          }
+          return st
         }
         // Attaching from hand on play is ONLY allowed for attach-on-play gear —
         // [Quick-Draw], a Quick-Draw aura (Jax), or [Weaponmaster] — and in sandbox.

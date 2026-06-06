@@ -6156,4 +6156,37 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.state.battlefields[1].units.find((u) => u.iid === enemy.iid)?.stunned).toBe(true) // Blast Cone stunned it
     expect(r.state.players[0].zones.base.find((c) => c.iid === cone.iid)?.exhausted).toBe(true) // cone exhausted
   })
+
+  it('Blast Cone (on play): moves the strongest enemy to base and stuns it', () => {
+    const id = injectCard('a3-blastcone2', 'When you play this, you may move an enemy unit. When you move an enemy unit, you may exhaust this to [Stun] it.', { name: 'Blast Cone', type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const cone = mk(id, 0)
+    s.players[0].zones.hand.push(cone)
+    const enemy = mk(injectCard('a3-bc2-e', 'enemy', { might: 4 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: cone.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[1].zones.base.some((u) => u.iid === enemy.iid)).toBe(true) // sent to its base
+    expect(r.state.players[1].zones.base.find((u) => u.iid === enemy.iid)?.stunned).toBe(true) // and stunned
+    expect(r.state.players[0].zones.base.find((c) => c.iid === cone.iid)?.exhausted).toBe(true) // cone exhausted itself
+  })
+
+  it('Void Assault: moves a friendly and an enemy to an enemy battlefield (you attack)', () => {
+    const id = injectCard('a3-voidassault', "Move a friendly unit, then move an enemy unit. (If they both move to a battlefield you don't control, you're the attacker.)", { name: 'Void Assault', type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const F = mk(injectCard('a3-va-f', 'friendly', { might: 5 }), 0) // ready at base
+    s.players[0].zones.base.push(F)
+    const E1 = mk(injectCard('a3-va-e1', 'small enemy', { might: 2 }), 1, { exhausted: true })
+    const E2 = mk(injectCard('a3-va-e2', 'big enemy', { might: 8 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [E1], controller: 1 } // enemy-controlled destination
+    s.battlefields[1] = { cardId: battlefield.id, units: [E2], controller: 1 }
+    const sp = mk(id, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [F.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.battlefields[0].units.some((u) => u.iid === F.iid)).toBe(true) // friendly attacked into bf0
+    expect(r.state.battlefields[0].units.some((u) => u.iid === E2.iid)).toBe(true) // strongest enemy dragged to bf0
+    expect(r.state.battlefields[1].units.some((u) => u.iid === E2.iid)).toBe(false) // moved off bf1
+  })
 })
