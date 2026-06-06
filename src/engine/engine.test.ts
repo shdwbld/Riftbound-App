@@ -6698,4 +6698,48 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(d?.tempMight).toBe(2) // +2 Might this turn
     expect(d?.exhausted).toBe(false) // readied
   })
+
+  it('Beast Below: on play, returns another friendly unit and an enemy unit to hand', () => {
+    const bid = injectCard('b-beastbelow', "When you play me, return another friendly unit and an enemy unit to their owners' hands.", { type: 'unit', energy: 0, might: 3 })
+    const s = baseState()
+    const bb = mk(bid, 0)
+    s.players[0].zones.hand.push(bb)
+    const friendly = mk(furyUnit.id, 0)
+    const enemy = mk(injectCard('b-bb-enemy', 'x', { type: 'unit', might: 4 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [friendly, enemy], controller: null }
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: bb.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === friendly.iid)).toBe(true) // friendly returned
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === enemy.iid)).toBe(true) // enemy returned
+  })
+
+  it('Windsinger: on play, returns a unit ≤3 Might at a battlefield to hand', () => {
+    const wid = injectCard('b-windsinger', "When you play me, you may return another unit at a battlefield with 3 :rb_might: or less to its owner's hand.", { type: 'unit', energy: 0, might: 2 })
+    const s = baseState()
+    const w = mk(wid, 0)
+    s.players[0].zones.hand.push(w)
+    const small = mk(injectCard('b-wind-small', 'x', { type: 'unit', might: 2 }), 1)
+    const big = mk(injectCard('b-wind-big', 'x', { type: 'unit', might: 8 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [small, big], controller: 1 }
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: w.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === small.iid)).toBe(true) // ≤3 returned
+    expect(r.state.battlefields[0].units.some((u) => u.iid === big.iid)).toBe(true) // >3 stays
+  })
+
+  it('Angler Beast: on play, returns all units ≤2 Might (both sides) to hand', () => {
+    const aid = injectCard('b-angler', "When you play me, return all units with 2 :rb_might: or less to their owners' hands.", { type: 'unit', energy: 0, might: 5 })
+    const s = baseState()
+    const a = mk(aid, 0)
+    s.players[0].zones.hand.push(a)
+    const mySmall = mk(injectCard('b-ang-mine', 'x', { type: 'unit', might: 1 }), 0)
+    const enemySmall = mk(injectCard('b-ang-enemy', 'x', { type: 'unit', might: 2 }), 1)
+    const enemyBig = mk(injectCard('b-ang-big', 'x', { type: 'unit', might: 5 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [mySmall, enemySmall, enemyBig], controller: null }
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: a.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === mySmall.iid)).toBe(true) // my ≤2 returned
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === enemySmall.iid)).toBe(true) // enemy ≤2 returned
+    expect(r.state.battlefields[0].units.some((u) => u.iid === enemyBig.iid)).toBe(true) // >2 stays
+  })
 })

@@ -5718,6 +5718,34 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             s1 = log(s1, action.player, `${card.name}: no enemy unit to clash with.`)
           }
         }
+        // On-play bounce variants the generic `e.bounce` can't express — auto-pick
+        // targets (Beast Below / Windsinger / Angler Beast). The just-played source
+        // (ci.iid) is never a target.
+        if (!legionGated) {
+          const txt = (card.text ?? '').toLowerCase()
+          const isUnit = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
+          // Beast Below: "return another friendly unit and an enemy unit to their owners' hands."
+          if (/return another friendly unit and an enemy unit to their owners'? hands/.test(txt)) {
+            const friendly = [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === action.player && u.iid !== ci.iid && isUnit(u)).sort((a, b) => mightOf(a) - mightOf(b))[0]
+            const enemy = s1.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== action.player && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
+            if (friendly) s1 = bounceUnitToHand(s1, friendly.iid, action.player, card.name, 0)
+            if (enemy) s1 = bounceUnitToHand(s1, enemy.iid, action.player, card.name, 0)
+          }
+          // Windsinger: "you may return another unit at a battlefield with N Might or less to its owner's hand."
+          const winM = txt.match(/return another unit at a battlefield with (\d+)\s*(?::rb_might:|might) or less/)
+          if (winM) {
+            const cap = parseInt(winM[1], 10)
+            const tgt = s1.battlefields.flatMap((b) => b.units).filter((u) => u.iid !== ci.iid && isUnit(u) && mightOf(u) <= cap).sort((a, b) => mightOf(b) - mightOf(a))[0]
+            if (tgt) s1 = bounceUnitToHand(s1, tgt.iid, action.player, card.name, 0)
+          }
+          // Angler Beast: "return all units with N Might or less to their owners' hands." (both sides)
+          const allM = txt.match(/return all units with (\d+)\s*(?::rb_might:|might) or less/)
+          if (allM) {
+            const cap = parseInt(allM[1], 10)
+            for (const v of s1.battlefields.flatMap((b) => b.units).filter((u) => u.iid !== ci.iid && isUnit(u) && mightOf(u) <= cap).map((u) => u.iid))
+              s1 = bounceUnitToHand(s1, v, action.player, card.name, 0)
+          }
+        }
         // Keeper of Masks: when played, play two Reflection copies of itself here.
         if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Keeper of Masks' && !legionGated) {
           const dest = ambushBf != null ? s1.battlefields[ambushBf].units : s1.players[action.player].zones.base
