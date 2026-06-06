@@ -6780,4 +6780,15 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.error).toBeFalsy()
     expect(r.state.battlefields[1].units.some((u) => u.iid === p1.iid)).toBe(true) // played to the open battlefield
   })
+
+  it('Stealthy Pursuer: follows a friendly unit that moves from its battlefield', () => {
+    const s = baseState()
+    const ganker = mk(injectCard('b-sp-ganker', '[Ganking]', { type: 'unit', might: 3 }), 0)
+    const pursuer = mk('ogn-177-298', 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [ganker, pursuer], controller: 0 }
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [ganker.iid], toBattlefield: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.some((u) => u.iid === pursuer.iid)).toBe(true) // followed to bf1
+    expect(r.state.battlefields[0].units.some((u) => u.iid === pursuer.iid)).toBe(false)
+  })
 })

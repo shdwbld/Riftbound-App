@@ -3188,6 +3188,7 @@ function moveUnits(
   const s = clone(state)
   const p = s.players[player]
   const moved: EngineCard[] = []
+  const sourceBfs = new Set<number>() // battlefields a moved unit left (Stealthy Pursuer follow)
   for (const iid of iids) {
     let unit = removeFromZone(p, 'base', iid)
     if (!unit) {
@@ -3205,6 +3206,7 @@ function moveUnits(
           if (!hasGank)
             return fail(state, 'Only units with Ganking can move between battlefields.')
           unit = s.battlefields[i].units.splice(idx, 1)[0]
+          sourceBfs.add(i) // Stealthy Pursuer: a friendly unit left battlefield i
           bfScriptAt(s, i)?.onMoveFrom?.(unit) // Back-Alley Bar: +1 Might this turn
           break
         }
@@ -3217,6 +3219,16 @@ function moveUnits(
     s.battlefields[toBattlefield].units.push(unit)
     moved.push(unit)
     emit({ kind: 'move', iid: unit.iid, player, cardId: unit.cardId })
+  }
+  // Stealthy Pursuer: "When a friendly unit moves from my location, I may be moved
+  // with it." Auto-follow — relocate friendly Pursuers from each vacated bf to dest.
+  for (const src of sourceBfs) {
+    for (const pur of s.battlefields[src].units.filter((u) => u.owner === player && !moved.includes(u) && /when a friendly unit moves from my location, i may be moved with it/i.test(getCard(u.cardId)?.text ?? ''))) {
+      s.battlefields[src].units = s.battlefields[src].units.filter((u) => u.iid !== pur.iid)
+      s.battlefields[toBattlefield].units.push(pur)
+      moved.push(pur)
+      emit({ kind: 'move', iid: pur.iid, player, cardId: pur.cardId })
+    }
   }
   recomputeControllers(s)
   const bf = s.battlefields[toBattlefield]
