@@ -43,20 +43,23 @@ export default function ChainResponsePopup({
         className="fx-play pointer-events-auto relative flex cursor-pointer overflow-hidden rounded-2xl border-2 border-fuchsia-400/50 bg-[#0d0f1c]/95 shadow-2xl backdrop-blur-md"
         style={{ width: '80vw', height: '80vh' }}
       >
-        {/* LEFT — the card you're reacting to. */}
+        {/* LEFT — the card you're reacting to (with a premium foil shine + float). */}
         <div className="flex w-[38%] shrink-0 flex-col items-center justify-center gap-3 border-r border-white/10 bg-black/30 p-5">
-          {card.imageUrl ? (
-            <img
-              src={card.imageUrl}
-              alt={card.name}
-              className="max-h-full rounded-xl shadow-xl"
-              style={{ aspectRatio: '744/1039', objectFit: 'contain' }}
-            />
-          ) : (
-            <div className="flex aspect-[744/1039] w-full items-center justify-center rounded-xl bg-[#1c1c28] p-4 text-center">
-              {card.name}
-            </div>
-          )}
+          <div className="card-announce relative overflow-hidden rounded-xl shadow-xl">
+            {card.imageUrl ? (
+              <img
+                src={card.imageUrl}
+                alt={card.name}
+                className="block max-h-[55vh]"
+                style={{ aspectRatio: '744/1039', objectFit: 'contain' }}
+              />
+            ) : (
+              <div className="flex aspect-[744/1039] w-full items-center justify-center bg-[#1c1c28] p-4 text-center">
+                {card.name}
+              </div>
+            )}
+            <div className="light-overlay-foil pointer-events-none absolute inset-0" />
+          </div>
           <div className="text-center">
             <div className="text-lg font-bold text-white">{card.name}</div>
             {playerName && <div className="text-sm text-white/60">played by {playerName}</div>}

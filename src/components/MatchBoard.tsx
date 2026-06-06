@@ -308,17 +308,26 @@ export default function MatchBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
 
-  // Premium 80%-screen "card played" announcement for ALL players. Only units,
-  // spells & gear (skip rune channels / token spawns). Keyed on seq so it fires
-  // once per play; the float is non-blocking and click-dismissable.
-  const [announce, setAnnounce] = useState<{ cardId: string; player: PlayerId; seq: number } | null>(null)
+  // Premium 80%-screen announcement (non-blocking float). Two cases, keyed on seq:
+  //  • A NON-CHAIN play (unit or gear) → glowing card for everyone. Spells/counters
+  //    are chain-related and use ChainResponsePopup instead (mutually exclusive).
+  //  • One of MY draws → reveal the drawn card(s), shorter, private to me.
+  const [announce, setAnnounce] = useState<{ seq: number; cards: string[]; heading: string; sub?: string; durationMs: number } | null>(null)
   useEffect(() => {
-    const plays = (events ?? []).filter(
-      (e) => e.kind === 'play' && e.cardId && ['unit', 'spell', 'gear'].includes(getCard(e.cardId)?.type ?? ''),
-    )
-    if (plays.length) {
-      const last = plays[plays.length - 1]
-      setAnnounce({ cardId: last.cardId!, player: last.player ?? perspective, seq: match.seq })
+    const evs = events ?? []
+    const play = evs
+      .filter((e) => e.kind === 'play' && e.cardId && ['unit', 'gear'].includes(getCard(e.cardId)?.type ?? ''))
+      .pop()
+    if (play?.cardId) {
+      const who = play.player != null ? match.players[play.player]?.name?.replace(/\s*\([^)]*\)\s*$/, '') : undefined
+      setAnnounce({ seq: match.seq, cards: [play.cardId], heading: getCard(play.cardId)?.name ?? 'Played', sub: who ? `${who} played this` : undefined, durationMs: 10000 })
+      return
+    }
+    const myDraw = evs.filter((e) => e.kind === 'draw' && e.player === perspective).reduce((s, e) => s + (e.amount ?? 1), 0)
+    if (myDraw > 0) {
+      const hand = me.zones.hand
+      const drawn = hand.slice(Math.max(0, hand.length - myDraw)).map((c) => c.cardId).slice(0, 2)
+      if (drawn.length) setAnnounce({ seq: match.seq, cards: drawn, heading: myDraw > 1 ? `You drew ${myDraw}` : 'You drew', durationMs: 3500 })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
@@ -1058,8 +1067,10 @@ export default function MatchBoard({
       {/* Premium 80%-screen announcements (both non-blocking floats). */}
       <PlayedCardAnnouncement
         seq={announce?.seq ?? -1}
-        cardId={announce?.cardId ?? null}
-        playerName={announce ? (match.players[announce.player]?.name ?? '') : ''}
+        cards={announce?.cards ?? []}
+        heading={announce?.heading ?? ''}
+        sub={announce?.sub}
+        durationMs={announce?.durationMs ?? 10000}
       />
       <ChainResponsePopup
         chainItemId={respondChainTop?.id ?? null}
