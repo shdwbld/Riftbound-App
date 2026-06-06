@@ -1,5 +1,15 @@
 # Phase B architectural-tail dossier (verified)
 
+## ✅ DONE (2026-06-06) — all 13 unhandled tail cards wired; 716 tests pass
+Commits: Zaun Punk `0cf6304`; additional-cost cluster (Brazen/Crescent/Safety) `d0dd401`;
+Atakhan `13b4d72`; Kato + Tideturner `09b1850`; Mageseeker + Ava `9f581a9`; Last Rites
+`28ab7b4`; Dramatic Visionary + Svellsongur `b8c240e`; Void Hatchling `1094ad5`. Each
+gated tsc→vitest→build→surgical commit→push. Immortal Phoenix was already wired (`fireDeaths`).
+Flagged simplifications: Dramatic Visionary Predict-2 auto-resolves (reorder, no recycle);
+Svellsongur copies host text for SELF-triggers only (combat + activated-ability copy deferred);
+Void Hatchling recycles only on no-loss type-digs; Last Rites/play-from-trash auto-resolves.
+**Phase B complete. Next: Phase D verification, then A6 (on hold).**
+
 _Generated 2026-06-06 by the `b-tail-dossier` workflow (5 Sonnet research + 7 adversarial verifiers + synth, ~919k tokens). Grounded in `docs/core-rules-v1.2.txt` + `docs/core-rules-faq.txt`. Drives the final Phase-B serial implementation. Anchors are against HEAD at generation time — re-grep before editing._
 
 ## Status of the 14 tail cards
