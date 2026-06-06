@@ -7,7 +7,8 @@
     "rarity": "common",
     "set": "UNL",
     "number": 1,
-    "tags": ["Battlefield"]
+    "tags": ["Battlefield"],
+    "text": "Units can move here from anywhere."
   },
   {
     "id": "unl-t03-219",

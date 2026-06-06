@@ -2867,7 +2867,7 @@ function moveUnits(
           // - Tempered) OR granted by the source battlefield (Windswept
           // Hillock). The destination must also allow it.
           const gankU = s.battlefields[i].units[idx]
-          const hasGank = unitHasGanking(s, gankU) || !!bfScriptAt(s, i)?.grantsGanking
+          const hasGank = unitHasGanking(s, gankU) || !!bfScriptAt(s, i)?.grantsGanking || !!bfScriptAt(s, toBattlefield)?.grantsGankingDest
           if (!hasGank)
             return fail(state, 'Only units with Ganking can move between battlefields.')
           unit = s.battlefields[i].units.splice(idx, 1)[0]
@@ -5221,6 +5221,32 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Elder Dragon: "When you play me, choose up to one enemy unit at each location.
         // Deal 1 to them." Auto-picks the strongest enemy at each battlefield + each
         // opponent's base; the passive above makes that 1 damage lethal.
+        if (card.name === 'Baron Nashor') {
+          // "As you play me, add the Baron Pit battlefield token to the board if it's
+          // not there already. If you do, I enter there." A 4th battlefield slot isn't
+          // supported, so (per the Ivern/Brush precedent) replace the least-contested
+          // existing slot's identity with Baron Pit and move Baron there.
+          const BARON_PIT_ID = 'unl-t01-219'
+          if (!s1.battlefields.some((b) => b.cardId === BARON_PIT_ID)) {
+            const slotIdx = (() => {
+              const open = s1.battlefields.findIndex((b) => b.controller == null)
+              if (open >= 0) return open
+              return s1.battlefields.reduce((best, b, i) => (b.units.length < s1.battlefields[best].units.length ? i : best), 0)
+            })()
+            s1.battlefields[slotIdx].cardId = BARON_PIT_ID
+            recomputeControllers(s1)
+            s1 = log(s1, action.player, `Baron Nashor: added Baron Pit (battlefield ${slotIdx + 1}).`)
+            const baronIdx = s1.players[action.player].zones.base.findIndex((u) => u.iid === ci.iid)
+            if (baronIdx >= 0) {
+              const priorCtrl = s1.battlefields[slotIdx].controller
+              const [baron] = s1.players[action.player].zones.base.splice(baronIdx, 1)
+              s1.battlefields[slotIdx].units.push({ ...baron, exhausted: true })
+              recomputeControllers(s1)
+              s1 = log(s1, action.player, 'Baron Nashor entered Baron Pit.')
+              s1 = showdownOrConquerAfterEffectMove(s1, slotIdx, ci.iid, priorCtrl)
+            }
+          }
+        }
         if (card.name === 'Elder Dragon') {
           const strongestEnemy = (units: EngineCard[]) => {
             const en = units.filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit')

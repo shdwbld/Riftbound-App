@@ -55,6 +55,8 @@ export interface BattlefieldScript {
   noPlayHere?: boolean
   /** Units here may move battlefield-to-battlefield (Windswept Hillock → Ganking). */
   grantsGanking?: boolean
+  /** Any unit at another battlefield may move TO here, ignoring Ganking (Baron Pit). */
+  grantsGankingDest?: boolean
   /** The controller can't score this battlefield until their Nth turn (Forgotten Monument). */
   scoreFromTurn?: number
   /** The controller wins immediately if they hold ≥N units here (The Grand Plaza). */
@@ -90,6 +92,7 @@ const SCRIPTS: Record<string, BattlefieldScript> = {
   "Vilemaw's Lair": { noMoveToBase: true },
   'Rockfall Path': { noPlayHere: true },
   'Windswept Hillock': { grantsGanking: true },
+  'Baron Pit': { grantsGankingDest: true },
   'Forgotten Monument': { scoreFromTurn: 3 },
   'The Grand Plaza': { winOnUnitsHere: 7 },
   'Frozen Fortress': { beginningDamageHere: 1 },

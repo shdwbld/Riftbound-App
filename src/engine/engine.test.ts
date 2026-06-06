@@ -5847,3 +5847,28 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === bigElsewhere.iid)).toBe(false) // dealt 6 excess → killed
   })
 })
+
+describe('Baron Nashor / Baron Pit', () => {
+  it('Baron Nashor: on play, adds Baron Pit to the board and enters it', () => {
+    const baronId = injectCard('a2-baron-np', "As you play me, add the Baron Pit battlefield token to the board if it's not there already. If you do, I enter there.", { name: 'Baron Nashor', might: 12, energy: 0, power: {} })
+    const s = baseState()
+    const baron = mk(baronId, 0)
+    s.players[0].zones.hand.push(baron)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: baron.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    const pitBf = r.state.battlefields.find((b) => b.cardId === 'unl-t01-219')
+    expect(pitBf).toBeTruthy()
+    expect(pitBf!.units.some((u) => u.iid === baron.iid)).toBe(true) // Baron entered Baron Pit
+  })
+
+  it('Baron Pit: a non-Ganking unit can move there from another battlefield', () => {
+    const pitId = injectCard('a2-pit', 'Units can move here from anywhere.', { type: 'battlefield', name: 'Baron Pit' })
+    const s = baseState()
+    const u = mk(furyUnit.id, 0) // no Ganking
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    s.battlefields[1] = { cardId: pitId, units: [], controller: null }
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: u.iid, toBattlefield: 1 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[1].units.some((x) => x.iid === u.iid)).toBe(true)
+  })
+})
