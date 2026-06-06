@@ -6664,3 +6664,23 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     expect(r.state.players[1].zones.hand.some((c) => c.iid === small.iid)).toBe(true) // the weaker unit kept
   })
 })
+
+describe('Phase B — card wiring (conditional Might)', () => {
+  it('Prepared Neophyte: +4 Might if you spent 4+ Energy on a spell this turn', () => {
+    const s = baseState()
+    const n = mk('unl-004-219', 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [n], controller: 0 }
+    const before = combatMightAt(s, 0, n, 'attacker')
+    s.players[0].energySpentOnSpellsThisTurn = 4
+    expect(combatMightAt(s, 0, n, 'attacker') - before).toBe(4)
+  })
+
+  it('Trusty Ramhound: +1 Might while another friendly unit is here', () => {
+    const s = baseState()
+    const r = mk('sfd-159-221', 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [r], controller: 0 }
+    const alone = combatMightAt(s, 0, r, 'attacker')
+    s.battlefields[0].units.push(mk(furyUnit.id, 0)) // another friendly unit here
+    expect(combatMightAt(s, 0, r, 'attacker') - alone).toBe(1)
+  })
+})

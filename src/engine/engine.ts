@@ -4142,6 +4142,17 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     const wm = text.match(/(?:i have )?\+(\d+)\s*(?::rb_might:|might) while (?:i'm|i am) attacking with another unit/)
     if (wm) b += parseInt(wm[1], 10)
   }
+  // Self: "If you've spent :rb_energy_N: or more to play a spell this turn, I have +M Might." (Prepared Neophyte)
+  const spentM = text.match(/if you've spent :rb_energy_(\d+): or more to play a spell this turn,? i have \+(\d+)\s*(?::rb_might:|might)/)
+  if (spentM && (owner.energySpentOnSpellsThisTurn ?? 0) >= parseInt(spentM[1], 10)) b += parseInt(spentM[2], 10)
+  // Self: "While you have another unit here, I have +N Might." (Trusty Ramhound) —
+  // another friendly unit at the same battlefield.
+  const anotherM = text.match(/while you have another unit here,? i have \+(\d+)\s*(?::rb_might:|might)/)
+  if (anotherM) {
+    const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
+    const others = bi >= 0 ? s.battlefields[bi].units.filter((x) => x.owner === u.owner && x.iid !== u.iid && getCard(x.cardId)?.type === 'unit').length : 0
+    if (others > 0) b += parseInt(anotherM[1], 10)
+  }
   // Legend-granted global buffs.
   const lt = (getCard(owner.legend?.cardId ?? '')?.text ?? '').toLowerCase()
   if (lt) {
