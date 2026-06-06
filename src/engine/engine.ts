@@ -4485,9 +4485,20 @@ function resolveSpellEffects(
       if (e.moveToBase) {
         const mu = findUnitAnywhere(s, t)
         const nm = getCard(mu?.cardId ?? '')?.name ?? 'a unit'
+        const srcBf = battlefieldOf(s, t)
         if (mu && (unitCantMoveToBase(mu) || globalNoMoveToBaseActive(s)))
           s = log(s, controller, `${card.name}: ${nm} can't be moved to base.`)
-        else if (mu && sendUnitToBase(s, t)) s = log(s, controller, `${card.name}: moved ${nm} to its base.`)
+        else if (mu && sendUnitToBase(s, t)) {
+          s = log(s, controller, `${card.name}: moved ${nm} to its base.`)
+          // Isolate: "Then, if there's an enemy unit alone at that battlefield, draw 1."
+          if (card.name === 'Isolate' && srcBf >= 0) {
+            const left = s.battlefields[srcBf].units
+            if (left.length === 1 && left[0].owner !== controller) {
+              drawN(p, 1)
+              s = log(s, controller, 'Isolate: an enemy is alone there — drew 1.')
+            }
+          }
+        }
       }
       if (e.moveUnit) {
         // "Move an enemy unit" (Charm) — the caster picks the destination

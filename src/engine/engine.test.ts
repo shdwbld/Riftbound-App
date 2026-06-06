@@ -6001,4 +6001,21 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.error).toBeUndefined()
     expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(true) // pulled to Blitzcrank's battlefield
   })
+
+  it('Isolate: moves an enemy to base, then draws 1 if an enemy is left alone there', () => {
+    const id = injectCard('a3-isolate', "Move an enemy unit from a battlefield to its base. Then, if there's an enemy unit alone at that battlefield, draw 1.", { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const e1 = mk(furyUnit.id, 1, { exhausted: true })
+    const e2 = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [e1, e2], controller: 1 }
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))
+    const sp = mk(id, 0)
+    s.players[0].zones.hand.push(sp)
+    const before = s.players[0].zones.mainDeck.length
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [e1.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[1].zones.base.some((u) => u.iid === e1.iid)).toBe(true) // moved to base
+    expect(r.state.players[0].zones.mainDeck.length).toBe(before - 1) // e2 left alone → drew 1
+  })
 })
