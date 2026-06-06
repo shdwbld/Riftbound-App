@@ -20,6 +20,7 @@ import PromptModal from '../components/PromptModal'
 import BugReportModal from '../components/BugReportModal'
 import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
+import TagNameModal from '../components/TagNameModal'
 import VisionPrompt from '../components/VisionPrompt'
 import SetupScreen from '../components/SetupScreen'
 import DamageAssignModal from '../components/DamageAssignModal'
@@ -776,7 +777,14 @@ export default function MatchPage() {
           onCancel={() => setDestPick(null)}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === controlling && (
+      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind === 'nameTag' && (
+        <TagNameModal
+          prompt={match.pendingChoice.prompt}
+          onConfirm={(tag) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: tag })}
+          onCancel={() => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null })}
+        />
+      )}
+      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && (
         <ChoiceModal
           title="✦ Battlefield"
           subtitle={match.pendingChoice.prompt}

@@ -25,6 +25,7 @@ import PromptModal from '../components/PromptModal'
 import BugReportModal from '../components/BugReportModal'
 import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
+import TagNameModal from '../components/TagNameModal'
 import VisionPrompt from '../components/VisionPrompt'
 import DamageAssignModal from '../components/DamageAssignModal'
 import BattleSummary, { worthSummarizing } from '../components/BattleSummary'
@@ -931,7 +932,14 @@ export default function OnlinePage() {
           onCancel={() => setDestPick(null)}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === seat && (
+      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind === 'nameTag' && (
+        <TagNameModal
+          prompt={match.pendingChoice.prompt}
+          onConfirm={(tag) => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: tag })}
+          onCancel={() => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null })}
+        />
+      )}
+      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && (
         <ChoiceModal
           title="✦ Battlefield"
           subtitle={match.pendingChoice.prompt}
