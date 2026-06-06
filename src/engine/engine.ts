@@ -1175,7 +1175,15 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
       for (const ref of u.attached) {
         const gCard = getCard(ref.split('|')[0])
         if (!gCard) continue
-        for (const ab of triggersFor(gCard, ev))
+        // Svellsongur: "copy that unit's text to this Equipment's effect text for as long
+        // as this is attached." Its effective text is a live copy of the host unit's text,
+        // so the host's self-triggers fire an additional time via the gear. (FLAGGED
+        // snapshot approximation: combat attack/defend + activated-ability forwarding are
+        // deferred — only self-trigger forwarding here.)
+        const effGear = (gCard.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Svellsongur'
+          ? { ...gCard, text: getCard(u.cardId)?.text ?? '' }
+          : gCard
+        for (const ab of triggersFor(effGear, ev))
           if (ab.scope === 'self') out.push({ player, ability: ab, sourceIid: u.iid, sourceCardId: gCard.id })
       }
   }
@@ -1232,6 +1240,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       || (srcName === 'Draven - Vanquisher' && (ability.event === 'attack' || ability.event === 'defend')) // pay-gated +2, handled bespoke
       || (srcName === 'Atakhan' && ability.event === 'attack') // defender-must-kill, handled bespoke
       || (srcName === 'Ava Achiever' && ability.event === 'attack') // pay-Mind play-Hidden, handled bespoke
+      || (srcName === 'Dramatic Visionary' && ability.event === 'death') // [Predict 2] Deathknell, handled bespoke
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1744,6 +1753,21 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         let readied = 0
         for (const r of p.zones.runePool) if (r.exhausted) { r.exhausted = false; readied++ }
         s = log(s, player, `${label}: recycled ${baseName} and readied ${readied} rune(s).`)
+        handled = true
+      } else if (baseName === 'Dramatic Visionary') {
+        // "[Deathknell] [Predict 2]: look at the top two cards of your Main Deck. Recycle
+        // any of them and put the rest back in any order." Auto-resolved per the
+        // auto-resolve preference: keep both and order the higher-cost card on top (a
+        // faithful no-recycle Predict). Full player-chosen recycle/reorder is deferred
+        // (a mid-death pendingChoice would risk re-entrancy during combat resolution).
+        const deck = p.zones.mainDeck
+        if (deck.length >= 2) {
+          const costOfTop = (c: EngineCard) => (getCard(c.cardId) as { energy?: number } | undefined)?.energy ?? 0
+          if (costOfTop(deck[1]) > costOfTop(deck[0])) { const tmp = deck[0]; deck[0] = deck[1]; deck[1] = tmp }
+          s = log(s, player, `${label}: Predict 2 — looked at the top two cards and set the order.`)
+        } else {
+          s = log(s, player, `${label}: Predict 2 — too few cards in deck.`)
+        }
         handled = true
       }
     }

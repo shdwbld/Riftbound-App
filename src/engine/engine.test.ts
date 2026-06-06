@@ -7110,6 +7110,36 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect([...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[0].zones.base].some((u) => u.iid === trashUnit.iid)).toBe(true)
   })
 
+  it('Dramatic Visionary: its [Deathknell] Predict 2 sets the higher-cost card on top', () => {
+    const dvId = injectCard('b-dramatic', '[Deathknell] [Predict 2]. (When I die, look at the top two cards of your Main Deck. Recycle any of them and put the rest back in any order.)', { name: 'Dramatic Visionary', type: 'unit', energy: 0, might: 4 })
+    const lowId = injectCard('b-dv-low', 'cheap', { type: 'unit', energy: 1 })
+    const highId = injectCard('b-dv-high', 'pricey', { type: 'unit', energy: 5 })
+    const s = baseState()
+    const dv = mk(dvId, 0)
+    s.players[0].zones.base.push(dv)
+    s.players[0].zones.mainDeck.push(mk(lowId, 0), mk(highId, 0)) // low on top, high second
+    const killId = injectCard('b-dv-kill', 'Kill a unit.', { type: 'spell', energy: 0, power: {} })
+    const sp = mk(killId, 0) // active player kills Dramatic Visionary (fires its Deathknell)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [dv.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.mainDeck[0].cardId).toBe(highId) // Predict 2 ordered the costlier card on top
+  })
+
+  it('Svellsongur: copies the host text so its conquer trigger fires an extra time', () => {
+    const hostId = injectCard('b-svell-host', 'When I conquer, draw 1.', { type: 'unit', might: 3 })
+    const s = baseState()
+    const host = mk(hostId, 0, { attached: ['sfd-059-221|svell-1'] }) // Svellsongur attached
+    s.players[0].zones.base.push(host)
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0)) // draw fuel
+    const before = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [host.iid], toBattlefield: 0 }) // conquers open bf0
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length - before).toBe(2) // host draw 1 + Svellsongur copy draw 1
+  })
+
   it('Zaun Punk: declining the additional cost kills no gear', () => {
     const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
     const s = baseState()
