@@ -6643,4 +6643,24 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     expect(r.state.players[0].zones.hand.some((c) => c.iid === unit.iid)).toBe(true) // returned to hand
     expect(r.state.players[0].zones.runePool.some((x) => x.exhausted)).toBe(true) // channeled a rune exhausted
   })
+
+  it("Bone Skewer: forces an opponent to play their best unit to a battlefield, Stunned", () => {
+    const bid = injectCard('a5-skewer', 'Choose a battlefield. An opponent reveals their hand. You may choose a unit from it. They play that unit to that battlefield, ignoring any and all costs. When they do, [Stun] it.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const skewer = mk(bid, 0)
+    s.players[0].zones.hand.push(skewer)
+    const big = mk(injectCard('a5-skewer-big', 'x', { type: 'unit', energy: 7, might: 7 }), 1)
+    const small = mk(injectCard('a5-skewer-small', 'x', { type: 'unit', energy: 1, might: 1 }), 1)
+    s.players[1].zones.hand.push(small, big)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: skewer.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === big.iid)).toBe(false) // pulled from hand
+    const placed = r.state.battlefields.flatMap((b) => b.units).find((u) => u.iid === big.iid)
+    expect(placed).toBeTruthy()
+    expect(placed?.owner).toBe(1) // it's still the opponent's unit
+    expect(placed?.stunned).toBe(true) // Stunned (deals no combat damage this turn)
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === small.iid)).toBe(true) // the weaker unit kept
+  })
 })

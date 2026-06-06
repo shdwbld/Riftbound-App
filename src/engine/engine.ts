@@ -4635,6 +4635,33 @@ function resolveSpellEffects(
     return log(s, controller, `${card.name}: played ${made} ${tokName} token(s)${readied ? `, readied ${readied}` : ''} (Equipment: ${equip}).`)
   }
 
+  // Bone Skewer: "Choose a battlefield. An opponent reveals their hand. You may choose a
+  // unit from it. They play that unit to that battlefield, ignoring any and all costs.
+  // When they do, [Stun] it." Auto-picks the opponent with the most cards, their
+  // highest-Might unit in hand, and a safe battlefield (one you control, else empty,
+  // else bf0); the unit enters as THEIRS, exhausted + stunned (deals no combat damage).
+  if (/play that unit to that battlefield, ignoring any and all costs/i.test(card.text ?? '')) {
+    const foe = s.players
+      .filter((pl) => pl.id !== controller && !pl.out && pl.zones.hand.some((c) => getCard(c.cardId)?.type === 'unit'))
+      .sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
+    if (!foe) return log(s, controller, `${card.name}: no opponent has a unit in hand.`)
+    const pick = foe.zones.hand
+      .filter((c) => getCard(c.cardId)?.type === 'unit')
+      .sort((a, b) => mightOf(b) - mightOf(a))[0]
+    const destBf = (() => {
+      const own = s.battlefields.findIndex((b) => b.controller === controller)
+      if (own >= 0) return own
+      const empty = s.battlefields.findIndex((b) => b.units.length === 0)
+      return empty >= 0 ? empty : 0
+    })()
+    const [played] = foe.zones.hand.splice(foe.zones.hand.findIndex((c) => c.iid === pick.iid), 1)
+    s.battlefields[destBf].units.push({ ...played, exhausted: true, stunned: true, enteredTurn: s.turn, attached: [] })
+    emit({ kind: 'stun', iid: played.iid, player: controller })
+    recomputeControllers(s)
+    s = log(s, controller, `${card.name}: forced ${foe.name} to play ${getCard(played.cardId)?.name} to battlefield ${destBf + 1}, Stunned.`)
+    return fireStun(s, controller, destBf) // caster's "when you stun an enemy" payoffs
+  }
+
   // Strike Down: a chosen equipped friendly unit deals its Might to an enemy, then
   // detaches an Equipment. Auto-picks the strongest equipped friendly + strongest enemy.
   if (e.strikeDown) {
