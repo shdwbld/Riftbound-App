@@ -4,9 +4,9 @@ import { DOMAINS, DOMAIN_META } from '../types/cards'
 import type { Action, EngineCard, MatchState, OverrideOp, OverrideZone, PlayerId, Phase } from '../engine/types'
 import { DomainIcon } from './CardText'
 
-// The consolidated manual-override HUD (sandbox only). Bottom-docked and
-// collapsible so it never eats board width like the old left rail did. Three
-// tabs:
+// The consolidated manual-override HUD (sandbox only). A collapsible LEFT rail
+// (the bottom-dock version covered the playable hand area, so it lives on the
+// left where the rules text stays readable). Three tabs:
 //   ① Selected  — contextual one-tap ops for the card you clicked (stays open so
 //                 you can chain ops without re-summoning a menu).
 //   ② Player    — score/resources, deck tutor, trash retrieve, spawn-any-card.
@@ -18,7 +18,7 @@ import { DomainIcon } from './CardText'
 // remain available via the right-click drill-down.
 
 const BTN = 'rounded bg-white/10 px-2 py-1 text-xs font-semibold hover:bg-white/20'
-const TAB = 'rounded-t-lg px-3 py-1.5 text-xs font-bold'
+const TAB = 'flex-1 rounded px-2 py-1 text-xs font-bold'
 const LABEL = 'text-[10px] font-semibold uppercase tracking-wide text-fuchsia-200/70'
 const SECTION = 'rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/5 p-2 space-y-1.5'
 const bare = (n?: string) => (n ? n.replace(/\s*\([^)]*\)\s*$/, '') : '')
@@ -130,41 +130,33 @@ export default function ControlHUD({
     return CARDS.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 14)
   }, [query])
 
-  // ---- Collapsed bar ------------------------------------------------------
-  if (!open) {
-    return (
-      <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-3 border-t border-fuchsia-400/40 bg-[#160d1a]/95 px-3 py-1.5 backdrop-blur">
-        <button onClick={() => onOpenChange(true)} className="rounded bg-fuchsia-500/30 px-3 py-1 text-xs font-bold text-fuchsia-100 hover:bg-fuchsia-500/50">
-          🛠 Manual override ▲
-        </button>
-        {sel && <span className="text-xs text-white/60">Selected: <b className="text-white/80">{bare(getCard(sel.ci.cardId)?.name) || sel.ci.cardId}</b></span>}
-        <span className="ml-auto text-[10px] text-white/35">
-          right-click a card for the full menu · Z/C/Shift+click hotkeys still work
-        </span>
-      </div>
-    )
-  }
-
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-fuchsia-400/40 bg-[#160d1a]/97 backdrop-blur">
-      {/* Tab strip + collapse */}
-      <div className="flex items-end gap-1 px-3 pt-1.5">
-        <button onClick={() => setTab('selected')} className={`${TAB} ${tab === 'selected' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>
-          ① Selected{sel ? ` · ${bare(getCard(sel.ci.cardId)?.name)}` : ''}
+    <div className="order-last w-full shrink-0 space-y-2 rounded-xl border-2 border-fuchsia-400/40 bg-[#160d1a] p-2 xl:order-first xl:w-[300px]">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-bold text-fuchsia-100">🛠 Manual override</span>
+        {sel && !open && <span className="truncate text-[11px] text-white/55">{bare(getCard(sel.ci.cardId)?.name)}</span>}
+        <button onClick={() => onOpenChange(!open)} className="ml-auto rounded bg-white/10 px-2 py-0.5 text-xs font-semibold hover:bg-white/20">
+          {open ? '▾ Hide' : '▸ Show'}
         </button>
-        <button onClick={() => setTab('player')} className={`${TAB} ${tab === 'player' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>② Player</button>
-        <button onClick={() => setTab('game')} className={`${TAB} ${tab === 'game' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>③ Game state</button>
-        <span className="ml-3 hidden text-[10px] text-white/35 sm:inline">
-          right-click = full menu · <b className="text-white/55">Z</b>+click hide · <b className="text-white/55">C</b>+click marker · <b className="text-white/55">Shift</b>+click recycle rune
-        </span>
-        <button onClick={() => onOpenChange(false)} className="ml-auto rounded bg-white/10 px-3 py-1 text-xs font-semibold hover:bg-white/20">▼ Hide</button>
       </div>
 
-      <div className="max-h-[300px] overflow-y-auto px-3 py-2">
+      {open && (
+        <>
+          {/* Tab strip */}
+          <div className="flex gap-1">
+            <button onClick={() => setTab('selected')} className={`${TAB} ${tab === 'selected' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>① Selected</button>
+            <button onClick={() => setTab('player')} className={`${TAB} ${tab === 'player' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>② Player</button>
+            <button onClick={() => setTab('game')} className={`${TAB} ${tab === 'game' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>③ Game</button>
+          </div>
+          <div className="rounded bg-black/20 px-2 py-1 text-[10px] leading-relaxed text-white/40">
+            right-click a card = full menu · <b className="text-white/60">Z</b>+click hide · <b className="text-white/60">C</b>+click marker · <b className="text-white/60">Shift</b>+click recycle rune
+          </div>
+
+          <div className="max-h-[62vh] overflow-y-auto pr-0.5">
         {tab === 'selected' && <SelectedTab match={match} perspective={perspective} sel={sel} onAct={onAct} onClearSelected={onClearSelected} />}
 
         {tab === 'player' && (
-          <div className="grid gap-2 lg:grid-cols-3">
+          <div className="space-y-2">
             {/* Target player */}
             <div className={SECTION}>
               <div className={LABEL}>Target player</div>
@@ -268,7 +260,7 @@ export default function ControlHUD({
         )}
 
         {tab === 'game' && (
-          <div className="grid gap-2 lg:grid-cols-2">
+          <div className="space-y-2">
             <div className={SECTION}>
               <div className={LABEL}>⚠ Advanced game state</div>
               <div className="flex flex-wrap items-center gap-1">
@@ -330,7 +322,9 @@ export default function ControlHUD({
             </div>
           </div>
         )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -384,7 +378,7 @@ function SelectedTab({
         <button onClick={onClearSelected} className="ml-auto rounded bg-white/10 px-2 py-0.5 text-[11px] hover:bg-white/20">Clear ✕</button>
       </div>
 
-      <div className="grid gap-2 lg:grid-cols-3">
+      <div className="space-y-2">
         {isUnit && (
           <div className={SECTION}>
             <div className={LABEL}>State</div>

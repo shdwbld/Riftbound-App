@@ -756,11 +756,21 @@ export default function MatchBoard({
   return (
     <div
       className="flex flex-col gap-3 xl:flex-row xl:items-start"
-      style={{ paddingBottom: match.sandbox && onCardAction && hudOpen ? 340 : undefined }}
       onContextMenu={(e) => e.preventDefault()}
       onClickCapture={onManualClickCapture}
     >
-    {/* Manual-override HUD is bottom-docked (fixed) — rendered near the end. */}
+    {/* LEFT RAIL — consolidated manual-override HUD (sandbox only). */}
+    {match.sandbox && onCardAction && (
+      <ControlHUD
+        match={match}
+        perspective={perspective}
+        onAct={onCardAction}
+        selectedIid={selectedIid}
+        onClearSelected={() => setSelectedIid(null)}
+        open={hudOpen}
+        onOpenChange={setHudOpen}
+      />
+    )}
     {/* CENTER — the board */}
     <div ref={rootRef} className={`min-w-0 flex-1 space-y-3 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
       {/* Opponents */}
@@ -1044,19 +1054,6 @@ export default function MatchBoard({
         />
       )}
 
-      {/* Consolidated manual-override HUD — bottom-docked (sandbox only). Replaces
-          the old left rail; right-click / drag / hotkeys are untouched. */}
-      {match.sandbox && onCardAction && (
-        <ControlHUD
-          match={match}
-          perspective={perspective}
-          onAct={onCardAction}
-          selectedIid={selectedIid}
-          onClearSelected={() => setSelectedIid(null)}
-          open={hudOpen}
-          onOpenChange={setHudOpen}
-        />
-      )}
 
       {/* Floating feedback toasts */}
       <FeedbackLayer events={events} seq={match.seq} players={match.players} />
