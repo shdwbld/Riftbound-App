@@ -6856,4 +6856,18 @@ describe('Phase B — card wiring (conditional Might)', () => {
     const r2 = reduce(r.state, { type: 'PLAY_UNIT', player: 1, iid: foeCard.iid, payment: emptyPayment() })
     expect(r2.error).toBeTruthy() // blocked from playing this turn
   })
+
+  it('Azir - Sovereign: moves your token units to its battlefield when it attacks', () => {
+    const s = baseState()
+    const azir = mk('sfd-177-221', 0)
+    const tok = mk(TOKEN_BY_NAME['sand soldier'], 0)
+    s.players[0].zones.base.push(azir, tok)
+    const enemy = mk(injectCard('b-azir-enemy', 'x', { type: 'unit', might: 1 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [azir.iid], toBattlefield: 0 }) // attack
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === tok.iid)).toBe(true) // token moved in
+  })
 })

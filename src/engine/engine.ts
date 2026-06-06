@@ -1350,6 +1350,19 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       }
       handled = true
     }
+    if (ability.event === 'attack' && srcName === 'Azir - Sovereign' && sourceIid) {
+      // "When I attack, you may move any number of your token units to this battlefield."
+      // Auto-move all friendly token units from elsewhere to Azir's battlefield.
+      const bi = battlefieldOf(s, sourceIid)
+      if (bi >= 0) {
+        const tokens = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
+          .filter((u) => u.owner === player && u.iid !== sourceIid && (getCard(u.cardId)?.supertype === 'token' || u.token) && battlefieldOf(s, u.iid) !== bi)
+        let n = 0
+        for (const tok of tokens) { const pl = pluckCardAnywhere(s, tok.iid); if (pl) { s.battlefields[bi].units.push(pl); n++ } }
+        if (n) { recomputeControllers(s); s = log(s, player, `${label}: Azir - Sovereign moved ${n} token unit(s) here.`) }
+      }
+      handled = true
+    }
     // Twisted Fate - Gambler: "When I attack, reveal the top rune of your rune deck,
     // then recycle it. Do one of the following based on its domain: Fury → 2 to an
     // enemy here + 1 to all others; Mind → draw 1; Order → stun an enemy here."
