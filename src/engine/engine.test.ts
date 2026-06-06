@@ -5629,3 +5629,33 @@ describe('Manual override — grant flags / setDamage / readyAll', () => {
     expect(swap.state.players[1].zones.hand.some((c) => c.iid === a.iid)).toBe(true)
   })
 })
+
+describe('A1 trigger events — buff & targeted self-triggers', () => {
+  it('buff: "When you buff me, ready me" readies the buffed unit', () => {
+    const id = injectCard('a1-buff-ready', 'When you buff me, ready me.')
+    const s = baseState()
+    const u = mk(id, 0, { exhausted: true })
+    s.players[0].zones.base.push(u)
+    const r = reduce(s, { type: 'BUFF_UNIT', player: 0, iid: u.iid })
+    expect(r.error).toBeUndefined()
+    const after = r.state.players[0].zones.base.find((x) => x.iid === u.iid)
+    expect(after?.buffs).toBe(1)
+    expect(after?.exhausted).toBe(false) // the buff trigger readied it
+  })
+
+  it('targeted: choosing your own unit with a spell fires its reaction (Jae-style draw)', () => {
+    const targetId = injectCard('a1-targeted-draw', 'When you choose me with a spell, draw 1.')
+    const spellId = injectCard('a1-target-spell', 'Give a unit +1 :rb_might: this turn.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const tu = mk(targetId, 0)
+    s.players[0].zones.base.push(tu)
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0)) // draw fuel
+    const sp = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [tu.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.mainDeck.length).toBe(1) // drew 1 of 2 via the targeted trigger
+    expect(r.state.players[0].zones.base.find((x) => x.iid === tu.iid)?.tempMight).toBe(1)
+  })
+})

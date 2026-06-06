@@ -485,6 +485,7 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
     emit({ kind: 'buff', iid: u.iid, player: p.id })
     lines.push(`Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
     for (const l of fireBuffReactions(s, p, u.iid)) lines.push(l)
+    for (const l of fireBuffTriggers(s, p, u.iid)) lines.push(l)
     return true
   }
   if (e.buffSelf) give(sourceIid ? findUnitAnywhere(s, sourceIid) : undefined)
@@ -530,6 +531,34 @@ function fireBuffReactions(s: MatchState, p: PlayerState, buffedIid: string): st
   emit({ kind: 'buff', iid: buffed.iid, player: p.id })
   lines.push(`Mistfall: paid a body Power and readied ${getCard(buffed.cardId)?.name}.`)
   return lines
+}
+
+/** Fire a buffed unit's own "when you buff me, …" self-triggers (Simian Ancestor:
+ *  "When you buff me, ready me"). Resolves the parsed effect inline on the source. */
+function fireBuffTriggers(s: MatchState, p: PlayerState, buffedIid: string): string[] {
+  const lines: string[] = []
+  const u = findUnitAnywhere(s, buffedIid)
+  if (!u) return lines
+  for (const ab of triggersFor(getCard(u.cardId), 'buff')) {
+    if (ab.scope !== 'self') continue
+    const bfi = bfIndexOfUnit(s, u.iid)
+    for (const l of applyParsed(s, p, ab.effect, bfi >= 0 ? bfi : undefined, u.iid)) lines.push(l)
+  }
+  return lines
+}
+
+/** Fire a chosen unit's own "when you choose me with a spell, …" self-triggers
+ *  (Jae Medarda → draw, Irelia - Fervent → +1 Might this turn). Only fires when the
+ *  unit's own controller is the chooser ("you"). Returns the threaded state. */
+function fireTargetedSelf(s: MatchState, chooser: PlayerId, iid: string): MatchState {
+  const u = findUnitAnywhere(s, iid)
+  if (!u || u.owner !== chooser) return s
+  for (const ab of triggersFor(getCard(u.cardId), 'targeted')) {
+    if (ab.scope !== 'self') continue
+    const bfi = bfIndexOfUnit(s, u.iid)
+    for (const l of applyParsed(s, s.players[u.owner], ab.effect, bfi >= 0 ? bfi : undefined, u.iid)) s = log(s, u.owner, l)
+  }
+  return s
 }
 
 /** Apply the auto-resolvable parts of a parsed effect to `p`; returns log text.
@@ -4200,6 +4229,7 @@ function resolveSpellEffects(
       s = log(s, controller, `${card.name} fizzled — no valid target.`)
     let stunnedEnemy = false
     for (const t of tgts) {
+      s = fireTargetedSelf(s, controller, t) // Jae Medarda / Irelia - Fervent "when you choose me"
       let dead: EngineCard[] = []
       // Smite: mark the target so a death from this damage banishes it instead.
       if (e.banishOnDeath) {
@@ -6238,7 +6268,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if ((u.buffs ?? 0) >= 1) return fail(state, 'A unit can have at most 1 Buff.')
           u.buffs = 1
           emit({ kind: 'buff', iid: u.iid, player: action.player })
-          return ok(log(s, action.player, `Buffed ${getCard(u.cardId)?.name} (+1 Might).`))
+          let out = log(s, action.player, `Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
+          for (const l of fireBuffTriggers(out, out.players[action.player], u.iid)) out = log(out, action.player, l)
+          return ok(out)
         }
       }
       return fail(state, 'No such friendly unit to buff.')

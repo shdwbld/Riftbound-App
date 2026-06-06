@@ -31,13 +31,15 @@ export type TriggerEvent =
   | 'recycleCard' // you recycle one or more (non-rune) cards to your Main Deck (Karma - Channeler)
   | 'spendBuff' // you spend a buff (Fae Dragon)
   | 'becomesState' // a unit gains a state (e.g. becomes [Mighty])
+  | 'buff' // a unit you control is buffed (Simian Ancestor)
+  | 'targeted' // a unit is chosen as a spell/ability target (Jae Medarda, Irelia - Fervent)
 
 /** Runtime list of all trigger events (mirrors the TriggerEvent union above) —
  *  used by the card-spec editor vocabulary so its options can't drift from the engine. */
 export const TRIGGER_EVENTS: TriggerEvent[] = [
   'play', 'conquer', 'hold', 'death', 'startOfTurn', 'attack', 'defend', 'move',
   'winCombat', 'stun', 'enemyDeath', 'discard', 'recycleRune', 'recycleCard', 'spendBuff',
-  'becomesState',
+  'becomesState', 'buff', 'targeted',
 ]
 
 export interface TriggeredAbility {
@@ -112,6 +114,11 @@ const PATTERNS: Pattern[] = [
   { event: 'recycleCard', scope: 'global', re: /when(?:ever)?\s+you\s+recycle\s+(?:one or more\s+)?cards?/i },
   // "When you spend a buff" (Fae Dragon).
   { event: 'spendBuff', scope: 'global', re: /when(?:ever)?\s+you\s+spend\s+a\s+buff/i },
+  // "When you buff me, …" (Simian Ancestor) — self.
+  { event: 'buff', scope: 'self', re: /when(?:ever)?\s+you\s+buff\s+(?:me|this(?:\s+unit)?)/i },
+  // "When you choose/target me with a spell …" (Jae Medarda), "choose or ready me"
+  // (Irelia - Fervent) — self. "me"/"this" must follow choose/target within ~40 chars.
+  { event: 'targeted', scope: 'self', re: /when(?:ever)?\s+(?:you|a player)\s+(?:choose|chooses|target|targets)\b[^.]{0,40}?\b(?:me|this(?:\s+unit)?)\b/i },
 ]
 
 /** The effect clause following a trigger phrase: from the phrase's end to the
