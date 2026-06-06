@@ -322,6 +322,24 @@ export default function MatchBoard({
   const [announce, setAnnounce] = useState<{ seq: number; cards: string[]; heading: string; sub?: string; durationMs: number } | null>(null)
   useEffect(() => {
     const evs = events ?? []
+    // A gear was equipped to a unit → fancy 3s "equipped" announcement for all.
+    const equip = evs.filter((e) => e.kind === 'equip' && e.cardId).pop()
+    if (equip?.cardId) {
+      let unitName: string | undefined
+      if (equip.iid) {
+        for (const pl of match.players) {
+          const u = pl.zones.base.find((x) => x.iid === equip.iid)
+          if (u) { unitName = getCard(u.cardId)?.name; break }
+        }
+        if (!unitName)
+          for (const bf of match.battlefields) {
+            const u = bf.units.find((x) => x.iid === equip.iid)
+            if (u) { unitName = getCard(u.cardId)?.name; break }
+          }
+      }
+      setAnnounce({ seq: match.seq, cards: [equip.cardId], heading: getCard(equip.cardId)?.name ?? 'Equipment', sub: unitName ? `⚔ equipped to ${unitName}` : 'equipped', durationMs: 3000 })
+      return
+    }
     const play = evs
       .filter((e) => e.kind === 'play' && e.cardId && ['unit', 'gear'].includes(getCard(e.cardId)?.type ?? ''))
       .pop()

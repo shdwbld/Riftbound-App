@@ -6,7 +6,7 @@ import type { Deck } from '../types/deck'
 import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { checkInvariants } from '../engine/invariants'
@@ -436,10 +436,14 @@ export default function MatchPage() {
       flash(count > 1 ? `Pick up to ${count} targets.` : 'Pick a target unit.')
       return
     }
-    const isEquipment = parseKeywords(card).equip || /attach (?:this|it) to a unit/i.test(card.text ?? '')
-    if (type === 'PLAY_GEAR' && isEquipment && friendlyUnitIids(match, controlling).length > 0) {
+    // Only attach-on-play gear (Quick-Draw / Weaponmaster / a Quick-Draw aura, or
+    // sandbox) attaches straight from hand — pick the unit. Normal Equipment plays
+    // UNATTACHED to your base (ready); you equip it later via its [Equip] ability.
+    const kw = parseKeywords(card)
+    const attachOnPlay = match.sandbox || kw.quickDraw || kw.weaponmaster || controlsQuickDrawAura(match, controlling)
+    if (type === 'PLAY_GEAR' && attachOnPlay && friendlyUnitIids(match, controlling).length > 0) {
       setTargeting({ iid: c.iid, cardId: card.id, payment, player: controlling, kind: 'gear', count: 1, picked: [] })
-      flash('Choose a unit to equip (or right-click the gear later to attach).')
+      flash('Choose a unit to attach this to.')
       return
     }
     if (type === 'PLAY_UNIT') {

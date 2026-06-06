@@ -1149,7 +1149,7 @@ function controlledPermanents(s: MatchState, player: PlayerId): EngineCard[] {
 
 /** Jax - Unmatched: "Your Equipment everywhere have [Quick-Draw]" — a played gear
  *  auto-attaches to a unit you control. */
-function controlsQuickDrawAura(s: MatchState, player: PlayerId): boolean {
+export function controlsQuickDrawAura(s: MatchState, player: PlayerId): boolean {
   return controlledPermanents(s, player).some((perm) => /your equipment everywhere have \[quick-?draw\]/i.test(getCard(perm.cardId)?.text ?? ''))
 }
 
@@ -6297,6 +6297,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             if (u.iid === action.targetIid && u.owner === action.player) {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
+              emit({ kind: 'equip', iid: u.iid, player: action.player, cardId: card.id })
               let s1 = log(s, action.player, `Equipped ${card.name} to ${getCard(u.cardId)?.name}.`)
               s1 = fireAttachEquip(s1, action.player, u) // Aphelios - Exalted
               s1 = applyGearOnPlay(s1)
@@ -6313,6 +6314,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (host) {
             host.attached = [...host.attached, `${card.id}|${ci.iid}`]
             emit({ kind: 'buff', iid: host.iid, player: action.player, cardId: card.id })
+            emit({ kind: 'equip', iid: host.iid, player: action.player, cardId: card.id })
             let s1 = log(s, action.player, `Quick-Draw: attached ${card.name} to ${getCard(host.cardId)?.name}.`)
             s1 = fireAttachEquip(s1, action.player, host)
             s1 = applyGearOnPlay(s1)
