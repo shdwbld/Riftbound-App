@@ -220,6 +220,9 @@ export interface DamageAssignStep {
   hp: Record<string, number>
   /** Tank iids that must be assigned lethal before non-Tanks. */
   tanks: string[]
+  /** Iids that "must be assigned combat damage last" — every other target must be
+   *  lethal before these take any damage (Caitlyn - Patrolling). */
+  assignedLast?: string[]
 }
 
 export interface ShowdownState {

@@ -3929,7 +3929,11 @@ function gearMight(unit: EngineCard, xp = 0): number {
  *  others), then normal, then backline. `isTank` is state-aware (granted Tank
  *  from Lillia counts, not just the printed keyword). */
 function damageOrder(units: EngineCard[], isTank: (u: EngineCard) => boolean): EngineCard[] {
-  const rank = (u: EngineCard) => (isTank(u) ? 0 : parseKeywords(def(u)).backline ? 2 : 1)
+  // Tank (0) → normal (1) → backline (2) → "assigned last" (3, e.g. Caitlyn - Patrolling).
+  const rank = (u: EngineCard) =>
+    isTank(u) ? 0
+    : /must be assigned combat damage last/i.test(getCard(u.cardId)?.text ?? '') ? 3
+    : parseKeywords(def(u)).backline ? 2 : 1
   return [...units].sort((a, b) => rank(a) - rank(b))
 }
 
@@ -3990,12 +3994,13 @@ function buildAssignStep(
   const ordered = damageOrder(receiving, isTank)
   const hp = hpMap(receiving, role, xpOf, bonusOf)
   const tanks = receiving.filter(isTank).map((u) => u.iid)
+  const assignedLast = receiving.filter((u) => /must be assigned combat damage last/i.test(getCard(u.cardId)?.text ?? '')).map((u) => u.iid)
   const totalHp = Object.values(hp).reduce((a, b) => a + b, 0)
   // A choice only exists with 2+ live targets and damage that won't kill them all.
   const liveTargets = receiving.filter((u) => hp[u.iid] > 0)
   const manual = !elderLethal && manualAllowed && amount > 0 && liveTargets.length >= 2 && amount < totalHp
   const defeated = manual ? [] : [...assignDamage(amount, ordered, role, xpOf, bonusOf, elderLethal)]
-  return { dealer, side, targets: ordered.map((u) => u.iid), amount, manual, defeated, hp, tanks }
+  return { dealer, side, targets: ordered.map((u) => u.iid), amount, manual, defeated, hp, tanks, assignedLast }
 }
 
 /** Conditional / legend-granted combat Might for a unit (not from its printed
@@ -4218,6 +4223,12 @@ export function validateAllocation(step: DamageAssignStep, alloc: Record<string,
   const nonTankDamaged = step.targets.some((iid) => !step.tanks.includes(iid) && (alloc[iid] ?? 0) > 0)
   if (nonTankDamaged && step.tanks.some((iid) => (alloc[iid] ?? 0) < step.hp[iid]))
     return 'Tanks must be assigned lethal damage first.'
+  // "Assigned last": a unit that must take combat damage last may only be assigned
+  // damage once every OTHER target is lethal (Caitlyn - Patrolling).
+  for (const last of step.assignedLast ?? []) {
+    if ((alloc[last] ?? 0) > 0 && step.targets.some((iid) => iid !== last && (alloc[iid] ?? 0) < step.hp[iid]))
+      return 'Other units must be assigned lethal damage before the "assigned last" unit.'
+  }
   return null
 }
 
@@ -6428,6 +6439,23 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       } else if (ab.effect.tempMightSelf) {
         u.tempMight = (u.tempMight ?? 0) + ab.effect.tempMightSelf
         emit({ kind: 'buff', iid: u.iid, player: action.player })
+      } else if (ab.effect.dealMight?.dealer === 'self') {
+        // Caitlyn - Patrolling: ":rb_exhaust:: Deal damage equal to my Might to a unit
+        // at a battlefield." Use the player's chosen target, else auto-pick the
+        // strongest enemy at a battlefield (per the auto-resolve preference).
+        const bi = battlefieldOf(s1, u.iid)
+        const amt = bi >= 0 ? combatMightAt(s1, bi, u, 'attacker') : mightOf(u)
+        const explicit = action.targets?.[0]
+        let tgt = explicit ? findUnitAnywhere(s1, explicit) : undefined
+        if (tgt && tgt.owner !== action.player && untargetableByEnemy(s1, tgt)) tgt = undefined
+        if (!tgt) {
+          const foes = s1.battlefields.flatMap((b) => b.units).filter((x) => x.owner !== action.player && getCard(x.cardId)?.type === 'unit')
+          tgt = foes.sort((a, b) => mightOf(b) - mightOf(a))[0]
+        }
+        if (tgt && amt > 0) {
+          s1 = fireDeaths(s1, applyTargetDamage(s1, tgt.iid, amt, true, action.player))
+          s1 = log(s1, action.player, `${name}: dealt ${amt} to ${getCard(tgt.cardId)?.name}.`)
+        }
       } else {
         // Targeted parts (deal N / give a unit +N Might this turn / Buff a unit).
         for (const t of action.targets ?? []) {

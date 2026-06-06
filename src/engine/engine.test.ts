@@ -6433,4 +6433,49 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     expect(r.state.battlefields[1].units.some((x) => x.iid === v.iid)).toBe(true) // moved to the stun's battlefield
     expect(r.state.battlefields[0].units.some((x) => x.iid === v.iid)).toBe(false)
   })
+
+  it('Caitlyn - Patrolling: activated ability deals her Might to an enemy unit', () => {
+    const ab = unitActivatedAbility(CARD_INDEX['ogn-068-298'])
+    expect(ab?.effect.dealMight?.dealer).toBe('self')
+    const caitMight = (CARD_INDEX['ogn-068-298'] as { might?: number }).might ?? 0
+    const s = baseState()
+    const cait = mk('ogn-068-298', 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [cait], controller: 0 }
+    const enemy = mk(injectCard('a5-cait-e', 'enemy', { might: 12 }), 1)
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: cait.iid, targets: [enemy.iid] })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.find((x) => x.iid === enemy.iid)?.damage).toBe(caitMight) // dealt = her Might
+  })
+
+  it('validateAllocation: an "assigned last" unit takes damage only after others are lethal', async () => {
+    const { validateAllocation } = await import('./engine')
+    const step = {
+      dealer: 0 as const, side: 'defenders' as const,
+      targets: ['ally', 'cait'], amount: 1, manual: true, defeated: [],
+      hp: { ally: 1, cait: 3 }, tanks: [], assignedLast: ['cait'],
+    }
+    expect(validateAllocation(step, { ally: 1 })).toBeNull() // the non-last ally absorbs it — OK
+    expect(validateAllocation(step, { cait: 1 })).toBeTruthy() // assigned-last took damage before ally was lethal
+    // With enough damage to make both lethal, assigning to the last unit is fine.
+    const full = { ...step, amount: 4 }
+    expect(validateAllocation(full, { ally: 1, cait: 3 })).toBeNull()
+  })
+
+  it('Caitlyn - Patrolling: combat orders her last & flags her "assigned last" in the step', async () => {
+    const { pendingAssignment } = await import('./engine')
+    const s = baseState()
+    const atk = mk(injectCard('a5-cait-atk', 'atk', { might: 2 }), 0) // deals 2 (< total defender HP)
+    s.players[0].zones.base.push(atk)
+    const cait = mk('ogn-068-298', 1) // defender that must be assigned last
+    const ally = mk(injectCard('a5-cait-ally', 'ally', { might: 1 }), 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [cait, ally], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: atk.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    const step = pendingAssignment(r.state, 0) // the defenders step (player 0 assigns)
+    expect(step).toBeTruthy()
+    expect(step!.assignedLast).toContain(cait.iid)
+    expect(step!.targets[step!.targets.length - 1]).toBe(cait.iid) // Caitlyn ordered last
+  })
 })
