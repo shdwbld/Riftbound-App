@@ -11,14 +11,25 @@ import CardText from './CardText'
 // never overflows the viewport. `display: contents` keeps layout untouched.
 
 function PreviewPanel({ card, anchor }: { card: Card; anchor: DOMRect }) {
-  const W = 240
   const margin = 12
-  // Prefer the right side; flip left if it would overflow.
+  // Viewport-adaptive width: big enough to read both art and rules text, never
+  // wider than ~28vw, with a small floor so it stays usable on narrow screens.
+  const W = Math.max(140, Math.min(320, Math.floor(window.innerWidth * 0.28)))
+  // Prefer the right side; flip left if it would overflow; else pin to margin.
   const spaceRight = window.innerWidth - anchor.right
-  const left =
-    spaceRight > W + margin ? anchor.right + margin : Math.max(margin, anchor.left - W - margin)
-  // Vertically clamp so the panel stays on screen.
-  const approxH = 420
+  const spaceLeft = anchor.left
+  const rawLeft =
+    spaceRight >= W + margin
+      ? anchor.right + margin
+      : spaceLeft >= W + margin
+        ? anchor.left - W - margin
+        : margin
+  // Final clamp so it never overflows the right edge either.
+  const left = Math.min(rawLeft, window.innerWidth - W - margin)
+  // Vertically clamp so the panel stays on screen. Height is derived from the
+  // card aspect ratio plus the text block below it.
+  const imgH = Math.round(W * (1039 / 744))
+  const approxH = imgH + 100
   const top = Math.min(
     Math.max(margin, anchor.top - 40),
     Math.max(margin, window.innerHeight - approxH - margin),
@@ -26,7 +37,7 @@ function PreviewPanel({ card, anchor }: { card: Card; anchor: DOMRect }) {
   const labels = keywordLabels(card)
   return createPortal(
     <div
-      className="pointer-events-none fixed z-[60] overflow-hidden rounded-xl border border-amber-400/40 bg-[#0d111c] shadow-2xl fx-play"
+      className="pointer-events-none fixed z-[65] overflow-hidden rounded-xl border border-amber-400/40 bg-[#0d111c] shadow-2xl fx-play"
       style={{ left, top, width: W }}
     >
       {card.imageUrl ? (
@@ -70,7 +81,7 @@ function PreviewPanel({ card, anchor }: { card: Card; anchor: DOMRect }) {
           </div>
         )}
         {card.text && (
-          <p className="rounded bg-black/30 p-1.5 text-[11px] leading-snug text-white/80">
+          <p className="rounded bg-black/30 p-1.5 text-[12px] leading-snug text-white/80">
             <CardText text={card.text} />
           </p>
         )}

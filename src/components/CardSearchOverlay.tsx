@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { getCard } from '../data/cards'
 import type { Action, MatchState, OverrideZone, PlayerId } from '../engine/types'
+import CardPreview from './CardPreview'
 
 // A big centered search / tutor pop-up (sandbox manual tool). Right-click a pile
 // (trash / rune deck / main deck) → search its cards in an art grid → send the
@@ -138,19 +139,20 @@ export default function CardSearchOverlay({
               {filtered.map((c) => {
                 const def = getCard(c.cardId)
                 return (
-                  <button
-                    key={c.iid}
-                    onClick={() => send(c.iid)}
-                    title={`${def?.name ?? c.cardId} — send to ${dests[dest]?.label}`}
-                    className="w-20 overflow-hidden rounded-md border border-white/15 bg-[#1c1c28] transition hover:border-amber-300 hover:ring-2 hover:ring-amber-300/60"
-                    style={{ aspectRatio: '744/1039' }}
-                  >
-                    {def?.imageUrl ? (
-                      <img src={def.imageUrl} alt={def.name} loading="lazy" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center p-1 text-center text-[8px] text-white/70">{def?.name ?? c.cardId}</div>
-                    )}
-                  </button>
+                  <CardPreview key={c.iid} cardId={c.cardId} delay={300}>
+                    <button
+                      onClick={() => send(c.iid)}
+                      title={`${def?.name ?? c.cardId} — send to ${dests[dest]?.label}`}
+                      className="w-20 overflow-hidden rounded-md border border-white/15 bg-[#1c1c28] transition hover:border-amber-300 hover:ring-2 hover:ring-amber-300/60"
+                      style={{ aspectRatio: '744/1039' }}
+                    >
+                      {def?.imageUrl ? (
+                        <img src={def.imageUrl} alt={def.name} loading="lazy" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center p-1 text-center text-[8px] text-white/70">{def?.name ?? c.cardId}</div>
+                      )}
+                    </button>
+                  </CardPreview>
                 )
               })}
               {filtered.length === 0 && <div className="w-full py-8 text-center text-white/30">{query ? 'no matches' : 'empty'}</div>}
