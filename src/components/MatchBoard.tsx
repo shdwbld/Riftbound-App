@@ -25,7 +25,7 @@ import CardText, { DomainIcon } from './CardText'
 import PlayedCardSpotlight from './PlayedCardSpotlight'
 import PlayedCardAnnouncement from './PlayedCardAnnouncement'
 import ChainResponsePopup from './ChainResponsePopup'
-import OverridePanel from './OverridePanel'
+import ControlHUD from './ControlHUD'
 import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
 
 /** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
@@ -207,6 +207,8 @@ export default function MatchBoard({
   const [sub, setSub] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null) // hover flyout (Add status effect)
   const [stepper, setStepper] = useState<{ title: string; value: number; make: (n: number) => Action } | null>(null) // inline −/value/+ set
   const [searchOverlay, setSearchOverlay] = useState<{ owner: PlayerId; source: SearchSource } | null>(null) // big search/tutor pop-up
+  const [selectedIid, setSelectedIid] = useState<string | null>(null) // the card the ControlHUD's Selected tab manages (sandbox)
+  const [hudOpen, setHudOpen] = useState(true) // ControlHUD expanded/collapsed (sandbox)
   // Keep the right-click menu + status flyout inside the viewport: after each render
   // measure the panel and, if it overflows the bottom/right edge, shift it back in
   // (effectively opening upward / leftward). Runs pre-paint so there's no flash.
@@ -354,6 +356,8 @@ export default function MatchBoard({
   const openMenu = (e: React.MouseEvent, ci: EngineCard, zone: 'base' | 'runePool' | 'hand' | 'battlefield' | 'legend' | 'champion') => {
     e.preventDefault()
     if (!onCardAction) return
+    // Keep the HUD's Selected tab in sync with what was right-clicked (sandbox).
+    if (match.sandbox) setSelectedIid(ci.iid)
     const card = getCard(ci.cardId)
     const items: MenuItem[] = []
     if (card?.type === 'unit') {
@@ -699,6 +703,9 @@ export default function MatchBoard({
       if (fx.legalSet.has(ci.iid)) onTarget(ci.iid)
       return
     }
+    // In sandbox, also focus this card in the ControlHUD's Selected tab (additive —
+    // the inspect modal still opens).
+    if (match.sandbox) setSelectedIid(ci.iid)
     const c = getCard(ci.cardId)
     if (c && onInspect) onInspect(c)
   }
@@ -735,9 +742,13 @@ export default function MatchBoard({
               : { text: `${activeName}'s turn`, cls: 'border-white/15 bg-white/5 text-white/60' }
 
   return (
-    <div className="flex flex-col gap-3 xl:flex-row xl:items-start" onContextMenu={(e) => e.preventDefault()} onClickCapture={onManualClickCapture}>
-    {/* FAR-LEFT — manual override panel (sandbox only) */}
-    {match.sandbox && onCardAction && <OverridePanel match={match} perspective={perspective} onAct={onCardAction} />}
+    <div
+      className="flex flex-col gap-3 xl:flex-row xl:items-start"
+      style={{ paddingBottom: match.sandbox && onCardAction && hudOpen ? 340 : undefined }}
+      onContextMenu={(e) => e.preventDefault()}
+      onClickCapture={onManualClickCapture}
+    >
+    {/* Manual-override HUD is bottom-docked (fixed) — rendered near the end. */}
     {/* CENTER — the board */}
     <div ref={rootRef} className={`min-w-0 flex-1 space-y-3 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
       {/* Opponents */}
@@ -1018,6 +1029,20 @@ export default function MatchBoard({
           source={searchOverlay.source}
           onAct={onCardAction}
           onClose={() => setSearchOverlay(null)}
+        />
+      )}
+
+      {/* Consolidated manual-override HUD — bottom-docked (sandbox only). Replaces
+          the old left rail; right-click / drag / hotkeys are untouched. */}
+      {match.sandbox && onCardAction && (
+        <ControlHUD
+          match={match}
+          perspective={perspective}
+          onAct={onCardAction}
+          selectedIid={selectedIid}
+          onClearSelected={() => setSelectedIid(null)}
+          open={hudOpen}
+          onOpenChange={setHudOpen}
         />
       )}
 
