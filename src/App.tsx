@@ -18,7 +18,7 @@ const CardSpecPage = lazy(() => import('./pages/CardSpecPage'))
 function Loading() {
   return (
     <div className="flex items-center justify-center py-24 text-white/40">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-indigo-400" />
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-sky-400" />
     </div>
   )
 }

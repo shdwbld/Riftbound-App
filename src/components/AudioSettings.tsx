@@ -25,7 +25,7 @@ export default function AudioSettings() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-2 w-60 space-y-3 rounded-xl border border-white/15 bg-[#15151f] p-3 shadow-2xl">
+          <div className="absolute right-0 top-full z-50 mt-2 w-60 space-y-3 rounded-xl border border-white/15 bg-[#0a1428] p-3 shadow-2xl">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold">Sound</span>
               <button
@@ -46,7 +46,7 @@ export default function AudioSettings() {
                 max={100}
                 value={Math.round(s.sfxVolume * 100)}
                 onChange={(e) => audio.setSettings({ sfxVolume: Number(e.target.value) / 100 })}
-                className="mt-1 w-full accent-indigo-400"
+                className="mt-1 w-full accent-sky-400"
               />
             </label>
             <label className="block">
@@ -60,7 +60,7 @@ export default function AudioSettings() {
                 max={100}
                 value={Math.round(s.musicVolume * 100)}
                 onChange={(e) => audio.setSettings({ musicVolume: Number(e.target.value) / 100 })}
-                className="mt-1 w-full accent-fuchsia-400"
+                className="mt-1 w-full accent-amber-400"
               />
             </label>
             <p className="text-[10px] text-white/35">Saved on this device. Battle music stays low by default.</p>

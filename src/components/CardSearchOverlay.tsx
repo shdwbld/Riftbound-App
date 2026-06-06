@@ -143,7 +143,7 @@ export default function CardSearchOverlay({
                     <button
                       onClick={() => send(c.iid)}
                       title={`${def?.name ?? c.cardId} — send to ${dests[dest]?.label}`}
-                      className="w-20 overflow-hidden rounded-md border border-white/15 bg-[#1c1c28] transition hover:border-amber-300 hover:ring-2 hover:ring-amber-300/60"
+                      className="w-20 overflow-hidden rounded-md border border-white/15 bg-[#0a1e33] transition hover:border-amber-300 hover:ring-2 hover:ring-amber-300/60"
                       style={{ aspectRatio: '744/1039' }}
                     >
                       {def?.imageUrl ? (

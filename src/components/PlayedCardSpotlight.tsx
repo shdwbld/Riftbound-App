@@ -25,7 +25,7 @@ export default function PlayedCardSpotlight({
   const bare = (n?: string) => (n ? n.replace(/\s*\([^)]*\)\s*$/, '') : '')
 
   return (
-    <div className="rounded-xl border border-white/10 bg-[#15151f] p-3">
+    <div className="rounded-xl border border-white/10 bg-[#0a1428] p-3">
       <div className="mb-2 text-[10px] uppercase tracking-wide text-white/40">
         {match.chain.length ? `⛓ Chain (${match.chain.length})` : 'Last played'}
       </div>
@@ -45,7 +45,7 @@ export default function PlayedCardSpotlight({
                 />
               ) : (
                 <div
-                  className="flex w-24 shrink-0 items-center justify-center rounded-lg bg-[#1c1c28] p-1 text-center text-[10px]"
+                  className="flex w-24 shrink-0 items-center justify-center rounded-lg bg-[#0a1e33] p-1 text-center text-[10px]"
                   style={{ aspectRatio: '744/1039' }}
                 >
                   {card.name}

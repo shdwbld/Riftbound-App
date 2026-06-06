@@ -156,7 +156,7 @@ export default function PaymentModal({
           role === 'energy'
             ? 'border-amber-300 shadow-[0_0_16px_-2px_rgba(251,191,36,0.8)]'
             : role === 'power'
-              ? 'border-fuchsia-300 shadow-[0_0_16px_-2px_rgba(232,121,249,0.8)]'
+              ? 'border-amber-300 shadow-[0_0_16px_-2px_rgba(232,121,249,0.8)]'
               : role === 'both'
                 ? 'border-emerald-300 shadow-[0_0_16px_-2px_rgba(52,211,153,0.85)]'
                 : 'border-white/15 hover:border-white/45'
@@ -175,7 +175,7 @@ export default function PaymentModal({
         {role && (
           <span
             className={`absolute inset-x-0 bottom-0 py-0.5 text-center text-[10px] font-bold text-white ${
-              role === 'energy' ? 'bg-amber-500/90' : role === 'power' ? 'bg-fuchsia-500/90' : 'bg-emerald-500/90'
+              role === 'energy' ? 'bg-amber-500/90' : role === 'power' ? 'bg-amber-500/90' : 'bg-emerald-500/90'
             }`}
           >
             {role === 'energy' ? '⚡ Exhaust' : role === 'power' ? '♺ Recycle' : '⚡♺ Both'}
@@ -239,13 +239,13 @@ export default function PaymentModal({
                 ? 'border-white/10 bg-white/5 opacity-50'
                 : powerOk
                   ? 'border-emerald-400/50 bg-emerald-500/10'
-                  : 'border-fuchsia-400/50 bg-fuchsia-500/10'
+                  : 'border-amber-400/50 bg-amber-500/10'
             }`}
           >
             <span className="text-2xl">♺</span>
             <div>
               <div className="text-xs uppercase tracking-wide text-white/50">Recycle (put back to rune pile)</div>
-              <div className={`font-mono text-lg font-bold ${powerOk ? 'text-emerald-200' : 'text-fuchsia-200'}`}>
+              <div className={`font-mono text-lg font-bold ${powerOk ? 'text-emerald-200' : 'text-amber-200'}`}>
                 {recyclePicked} / {totalNeedPower} rune{totalNeedPower === 1 ? '' : 's'}
               </div>
               {totalNeedPower > 0 && (
@@ -315,7 +315,7 @@ export default function PaymentModal({
             <button
               onClick={confirm}
               disabled={!valid}
-              className="rounded-lg bg-indigo-500 px-6 py-2 text-sm font-semibold hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-lg bg-sky-500 px-6 py-2 text-sm font-semibold hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {confirmLabel}
             </button>

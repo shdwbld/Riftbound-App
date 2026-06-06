@@ -58,7 +58,7 @@ export default function TurnRecapBanner({ data, onDismiss }: { data: TurnRecapDa
       onClick={close}
     >
       <div
-        className="fx-play flex flex-col gap-4 overflow-hidden rounded-3xl border-2 border-indigo-400/50 bg-[#0d0f1c] p-6 text-indigo-50 shadow-2xl"
+        className="fx-play flex flex-col gap-4 overflow-hidden rounded-3xl border-2 border-sky-400/50 bg-[#0d0f1c] p-6 text-sky-50 shadow-2xl"
         style={{ width: '80vw', height: '80vh' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -103,7 +103,7 @@ export default function TurnRecapBanner({ data, onDismiss }: { data: TurnRecapDa
                 return (
                   <CardPreview key={`${cid}-${i}`} cardId={cid} delay={80}>
                     <div
-                      className="overflow-hidden rounded-lg border border-white/20 bg-[#1c1c28] shadow-lg"
+                      className="overflow-hidden rounded-lg border border-white/20 bg-[#0a1e33] shadow-lg"
                       style={{ width: cardW, aspectRatio: '744/1039' }}
                     >
                       {def?.imageUrl ? (

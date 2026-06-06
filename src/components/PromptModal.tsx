@@ -43,7 +43,7 @@ export default function PromptModal({
               key={i}
               onClick={o.onClick}
               className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${
-                o.variant === 'primary' ? 'bg-indigo-500 hover:bg-indigo-400' : 'bg-white/10 hover:bg-white/20'
+                o.variant === 'primary' ? 'bg-sky-500 hover:bg-sky-400' : 'bg-white/10 hover:bg-white/20'
               }`}
             >
               {o.label}

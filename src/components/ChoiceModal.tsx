@@ -26,7 +26,7 @@ export default function ChoiceModal<T extends string | number>({
             <button
               key={String(o.value)}
               onClick={() => onPick(o.value)}
-              className="rounded-lg bg-white/10 px-4 py-2 text-left text-sm font-semibold hover:bg-indigo-500/30"
+              className="rounded-lg bg-white/10 px-4 py-2 text-left text-sm font-semibold hover:bg-sky-500/30"
             >
               {o.label}
             </button>

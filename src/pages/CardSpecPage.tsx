@@ -148,7 +148,7 @@ export default function CardSpecPage() {
               return (
                 <tr key={c.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="p-2">
-                    <button onClick={() => setInspect(c)} title="View card" className="block w-10 overflow-hidden rounded border border-white/15 bg-[#1c1c28]" style={{ aspectRatio: '744/1039' }}>
+                    <button onClick={() => setInspect(c)} title="View card" className="block w-10 overflow-hidden rounded border border-white/15 bg-[#0a1e33]" style={{ aspectRatio: '744/1039' }}>
                       {c.imageUrl ? <img src={c.imageUrl} alt={c.name} loading="lazy" className="h-full w-full object-cover" /> : <span className="text-[7px] text-white/50">{bare(c.name)}</span>}
                     </button>
                   </td>

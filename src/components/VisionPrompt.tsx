@@ -23,7 +23,7 @@ export default function VisionPrompt({
           {card?.imageUrl ? (
             <img src={card.imageUrl} alt={card.name} className="w-full rounded-xl" style={{ aspectRatio: '744/1039', objectFit: 'cover' }} />
           ) : (
-            <div className="flex w-full items-center justify-center rounded-xl bg-[#1c1c28] p-4 text-sm" style={{ aspectRatio: '744/1039' }}>
+            <div className="flex w-full items-center justify-center rounded-xl bg-[#0a1e33] p-4 text-sm" style={{ aspectRatio: '744/1039' }}>
               {card?.name ?? cardId}
             </div>
           )}
@@ -39,10 +39,10 @@ export default function VisionPrompt({
           </div>
         )}
         <div className="flex justify-center gap-2">
-          <button onClick={onRecycle} className="rounded-lg bg-fuchsia-500/80 px-4 py-2 text-sm font-semibold hover:bg-fuchsia-500">
+          <button onClick={onRecycle} className="rounded-lg bg-amber-500/80 px-4 py-2 text-sm font-semibold hover:bg-amber-500">
             ♺ Recycle (bottom)
           </button>
-          <button onClick={onKeep} className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400">
+          <button onClick={onKeep} className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold hover:bg-sky-400">
             Keep on top
           </button>
         </div>

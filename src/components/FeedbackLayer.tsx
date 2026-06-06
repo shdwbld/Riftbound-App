@@ -7,7 +7,7 @@ import type { GameEvent } from '../engine/types'
 // (damage / play / buff) are handled directly on the BoardCards in MatchBoard;
 // this layer covers the events that have no surviving card to attach to.
 
-type Tone = 'emerald' | 'rose' | 'fuchsia' | 'sky'
+type Tone = 'emerald' | 'rose' | 'amber' | 'sky'
 interface Toast {
   id: number
   text: string
@@ -17,7 +17,7 @@ interface Toast {
 const TONE: Record<Tone, string> = {
   emerald: 'bg-emerald-500/90 text-black',
   rose: 'bg-rose-500/90 text-white',
-  fuchsia: 'bg-fuchsia-500/90 text-white',
+  amber: 'bg-amber-500/90 text-white',
   sky: 'bg-sky-500/90 text-black',
 }
 
@@ -54,7 +54,7 @@ export default function FeedbackLayer({
           break
         }
         case 'counter':
-          queued.push({ text: 'Countered!', tone: 'fuchsia' })
+          queued.push({ text: 'Countered!', tone: 'amber' })
           break
         case 'defeat':
           defeats++

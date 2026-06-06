@@ -111,7 +111,7 @@ export default function BattleSummary({
         {shown >= rows.length && (
           <button
             onClick={onClose}
-            className="mt-4 w-full rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400"
+            className="mt-4 w-full rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold hover:bg-sky-400"
           >
             Continue ▶
           </button>

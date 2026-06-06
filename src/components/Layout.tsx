@@ -47,11 +47,11 @@ export default function Layout() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="border-b border-white/10 bg-[#10101a]/80 backdrop-blur">
+      <header className="border-b border-amber-500/15 bg-[#0a1428]/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-3 py-3 sm:gap-6 sm:px-4">
           <NavLink to="/" className="flex shrink-0 items-center gap-2 text-lg font-bold">
             <span className="text-xl">⚔️</span>
-            <span className="hidden bg-gradient-to-r from-indigo-400 to-fuchsia-400 bg-clip-text text-transparent sm:inline">
+            <span className="hidden bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text uppercase tracking-[0.18em] text-transparent [font-family:var(--font-display)] sm:inline">
               Riftbound
             </span>
           </NavLink>
@@ -88,7 +88,7 @@ export default function Layout() {
         </p>
         <p className="mx-auto mt-1 max-w-2xl">
           Unofficial and unaffiliated with, and not endorsed or sponsored by, Riot Games. <em>Riftbound</em>,
-          <em> League of Legends</em>, all card text, and artwork are the property of Riot Games, Inc. Created
+          <em> League of Legends</em>, all card text, artwork, and audio are the property of Riot Games, Inc. Created
           under Riot's “Legal Jibber Jabber” fan-content policy. No copyright infringement intended; no money is
           made from this. Not for redistribution.
         </p>

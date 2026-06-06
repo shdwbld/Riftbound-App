@@ -34,7 +34,7 @@ export default function MulliganHand({
             style={{ aspectRatio: '744/1039', objectFit: 'cover' }}
           />
         ) : (
-          <div className="flex w-full items-center justify-center rounded-2xl bg-[#1c1c28] p-4" style={{ aspectRatio: '744/1039' }}>
+          <div className="flex w-full items-center justify-center rounded-2xl bg-[#0a1e33] p-4" style={{ aspectRatio: '744/1039' }}>
             {preview?.name}
           </div>
         )}

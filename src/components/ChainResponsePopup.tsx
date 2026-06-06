@@ -40,7 +40,7 @@ export default function ChainResponsePopup({
       <div
         onClick={() => setShow(false)}
         title="Click to dismiss"
-        className="fx-play pointer-events-auto relative flex cursor-pointer overflow-hidden rounded-2xl border-2 border-fuchsia-400/50 bg-[#0d0f1c]/95 shadow-2xl backdrop-blur-md"
+        className="fx-play pointer-events-auto relative flex cursor-pointer overflow-hidden rounded-2xl border-2 border-amber-400/50 bg-[#0d0f1c]/95 shadow-2xl backdrop-blur-md"
         style={{ width: '80vw', height: '80vh' }}
       >
         {/* LEFT — the card you're reacting to (with a premium foil shine + float). */}
@@ -54,7 +54,7 @@ export default function ChainResponsePopup({
                 style={{ aspectRatio: '744/1039', objectFit: 'contain' }}
               />
             ) : (
-              <div className="flex aspect-[744/1039] w-full items-center justify-center bg-[#1c1c28] p-4 text-center">
+              <div className="flex aspect-[744/1039] w-full items-center justify-center bg-[#0a1e33] p-4 text-center">
                 {card.name}
               </div>
             )}
@@ -68,7 +68,7 @@ export default function ChainResponsePopup({
 
         {/* RIGHT — what you need to react to. */}
         <div className="flex min-w-0 flex-1 flex-col gap-4 p-8">
-          <div className="text-3xl font-extrabold text-fuchsia-200">⛓ Your window to react</div>
+          <div className="text-3xl font-extrabold text-amber-200">⛓ Your window to react</div>
           <div className="text-base text-white/50">Respond with a Reaction, Counter it, or Pass.</div>
           <div className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-black/30 p-5 text-lg leading-relaxed text-white/90">
             <CardText text={card.text ?? 'No rules text.'} />
@@ -80,7 +80,7 @@ export default function ChainResponsePopup({
 
         {/* 5s countdown drain bar. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1.5 bg-white/10">
-          <div className="chain-countdown-bar h-full bg-fuchsia-400/70" />
+          <div className="chain-countdown-bar h-full bg-amber-400/70" />
         </div>
       </div>
     </div>

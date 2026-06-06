@@ -22,7 +22,7 @@ export default function CombatBanner({ data }: { data: BannerData | null }) {
   if (!data || !show) return null
   const tone =
     data.tone === 'react'
-      ? 'border-fuchsia-400/60 bg-fuchsia-600/25 text-fuchsia-50'
+      ? 'border-amber-400/60 bg-amber-600/25 text-amber-50'
       : data.tone === 'showdown'
         ? 'border-amber-400/60 bg-amber-600/25 text-amber-50'
         : 'border-sky-400/60 bg-sky-600/25 text-sky-50'

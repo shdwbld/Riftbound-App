@@ -10,8 +10,8 @@ import { DomainIcon } from './CardText'
 // the deck, retrieve a mis-discard, spawn any card, or (Advanced) edit game state.
 
 const BTN = 'rounded bg-white/10 px-2 py-1 text-xs font-semibold hover:bg-white/20'
-const SECTION = 'rounded-xl border border-fuchsia-400/25 bg-fuchsia-500/5 p-2.5 space-y-2'
-const LABEL = 'text-[10px] font-semibold uppercase tracking-wide text-fuchsia-200/70'
+const SECTION = 'rounded-xl border border-amber-400/25 bg-amber-500/5 p-2.5 space-y-2'
+const LABEL = 'text-[10px] font-semibold uppercase tracking-wide text-amber-200/70'
 const bare = (n?: string) => (n ? n.replace(/\s*\([^)]*\)\s*$/, '') : '')
 
 export default function OverridePanel({
@@ -65,9 +65,9 @@ export default function OverridePanel({
   ]
 
   return (
-    <div className="order-last space-y-2 rounded-xl border border-fuchsia-400/40 bg-[#160d1a] p-2.5 xl:order-first xl:w-[300px] xl:shrink-0">
+    <div className="order-last space-y-2 rounded-xl border border-amber-400/40 bg-[#160d1a] p-2.5 xl:order-first xl:w-[300px] xl:shrink-0">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-bold text-fuchsia-100">🛠 Manual override</span>
+        <span className="text-sm font-bold text-amber-100">🛠 Manual override</span>
       </div>
       <div className="rounded bg-black/20 px-2 py-1 text-[10px] leading-relaxed text-white/40">
         Click-tips: <b className="text-white/60">Z</b>+click hide · <b className="text-white/60">C</b>+click marker · <b className="text-white/60">Ctrl+C</b>+click clears · <b className="text-white/60">Shift</b>+click recycle rune
@@ -79,7 +79,7 @@ export default function OverridePanel({
           <button
             key={i}
             onClick={() => setTarget(i)}
-            className={`rounded px-2 py-1 text-xs font-semibold ${target === i ? 'bg-fuchsia-500/40 text-white' : 'bg-white/10 text-white/60 hover:bg-white/20'}`}
+            className={`rounded px-2 py-1 text-xs font-semibold ${target === i ? 'bg-amber-500/40 text-white' : 'bg-white/10 text-white/60 hover:bg-white/20'}`}
           >
             {i === perspective ? 'You' : bare(pl.name)}
           </button>
@@ -186,7 +186,7 @@ export default function OverridePanel({
               <button
                 key={c.id}
                 onClick={() => spawn(c.id)}
-                className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px] text-white/75 hover:bg-fuchsia-500/25"
+                className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px] text-white/75 hover:bg-amber-500/25"
               >
                 + {bare(c.name)} <span className="text-white/30">· {c.type}</span>
               </button>

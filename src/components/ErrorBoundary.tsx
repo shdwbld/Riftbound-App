@@ -27,7 +27,7 @@ export default class ErrorBoundary extends Component<
               this.setState({ error: null })
               location.assign('/')
             }}
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold"
+            className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold"
           >
             Back to home
           </button>

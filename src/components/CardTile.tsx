@@ -71,7 +71,7 @@ export default function CardTile({
   return (
     <div
       onClick={onClick}
-      className={`group flex flex-col overflow-hidden rounded-lg border border-white/10 bg-[#15151f] transition hover:border-white/25 hover:bg-[#1a1a26] ${
+      className={`group flex flex-col overflow-hidden rounded-lg border border-white/10 bg-[#0a1428] transition hover:border-white/25 hover:bg-[#0a1e33] ${
         onClick ? 'cursor-pointer' : ''
       }`}
     >

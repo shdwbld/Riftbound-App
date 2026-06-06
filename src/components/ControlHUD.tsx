@@ -19,8 +19,8 @@ import { DomainIcon } from './CardText'
 
 const BTN = 'rounded bg-white/10 px-2 py-1 text-xs font-semibold hover:bg-white/20'
 const TAB = 'flex-1 rounded px-2 py-1 text-xs font-bold'
-const LABEL = 'text-[10px] font-semibold uppercase tracking-wide text-fuchsia-200/70'
-const SECTION = 'rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/5 p-2 space-y-1.5'
+const LABEL = 'text-[10px] font-semibold uppercase tracking-wide text-amber-200/70'
+const SECTION = 'rounded-lg border border-amber-400/20 bg-amber-500/5 p-2 space-y-1.5'
 const bare = (n?: string) => (n ? n.replace(/\s*\([^)]*\)\s*$/, '') : '')
 
 type OvExtra = Partial<{
@@ -131,9 +131,9 @@ export default function ControlHUD({
   }, [query])
 
   return (
-    <div className="order-last w-full shrink-0 space-y-2 rounded-xl border-2 border-fuchsia-400/40 bg-[#160d1a] p-2 xl:order-first xl:w-[300px]">
+    <div className="order-last w-full shrink-0 space-y-2 rounded-xl border-2 border-amber-400/40 bg-[#160d1a] p-2 xl:order-first xl:w-[300px]">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-bold text-fuchsia-100">🛠 Manual override</span>
+        <span className="text-sm font-bold text-amber-100">🛠 Manual override</span>
         {sel && !open && <span className="truncate text-[11px] text-white/55">{bare(getCard(sel.ci.cardId)?.name)}</span>}
         <button onClick={() => onOpenChange(!open)} className="ml-auto rounded bg-white/10 px-2 py-0.5 text-xs font-semibold hover:bg-white/20">
           {open ? '▾ Hide' : '▸ Show'}
@@ -144,9 +144,9 @@ export default function ControlHUD({
         <>
           {/* Tab strip */}
           <div className="flex gap-1">
-            <button onClick={() => setTab('selected')} className={`${TAB} ${tab === 'selected' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>① Selected</button>
-            <button onClick={() => setTab('player')} className={`${TAB} ${tab === 'player' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>② Player</button>
-            <button onClick={() => setTab('game')} className={`${TAB} ${tab === 'game' ? 'bg-fuchsia-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>③ Game</button>
+            <button onClick={() => setTab('selected')} className={`${TAB} ${tab === 'selected' ? 'bg-amber-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>① Selected</button>
+            <button onClick={() => setTab('player')} className={`${TAB} ${tab === 'player' ? 'bg-amber-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>② Player</button>
+            <button onClick={() => setTab('game')} className={`${TAB} ${tab === 'game' ? 'bg-amber-500/30 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>③ Game</button>
           </div>
           <div className="rounded bg-black/20 px-2 py-1 text-[10px] leading-relaxed text-white/40">
             right-click a card = full menu · <b className="text-white/60">Z</b>+click hide · <b className="text-white/60">C</b>+click marker · <b className="text-white/60">Shift</b>+click recycle rune
@@ -162,7 +162,7 @@ export default function ControlHUD({
               <div className={LABEL}>Target player</div>
               <div className="flex flex-wrap gap-1">
                 {match.players.map((pl, i) => (
-                  <button key={i} onClick={() => setTarget(i)} className={`rounded px-2 py-1 text-xs font-semibold ${target === i ? 'bg-fuchsia-500/40 text-white' : 'bg-white/10 text-white/60 hover:bg-white/20'}`}>
+                  <button key={i} onClick={() => setTarget(i)} className={`rounded px-2 py-1 text-xs font-semibold ${target === i ? 'bg-amber-500/40 text-white' : 'bg-white/10 text-white/60 hover:bg-white/20'}`}>
                     {i === perspective ? 'You' : bare(pl.name)}
                   </button>
                 ))}
@@ -249,7 +249,7 @@ export default function ControlHUD({
               {matches.length > 0 && (
                 <div className="max-h-40 space-y-0.5 overflow-y-auto">
                   {matches.map((c) => (
-                    <button key={c.id} onClick={() => spawn(c.id)} className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px] text-white/75 hover:bg-fuchsia-500/25">
+                    <button key={c.id} onClick={() => spawn(c.id)} className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px] text-white/75 hover:bg-amber-500/25">
                       + {bare(c.name)} <span className="text-white/30">· {c.type}</span>
                     </button>
                   ))}
@@ -373,7 +373,7 @@ function SelectedTab({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-bold text-fuchsia-100">{bare(card?.name) || ci.cardId}</span>
+        <span className="text-sm font-bold text-amber-100">{bare(card?.name) || ci.cardId}</span>
         <span className="text-[10px] uppercase tracking-wide text-white/40">{card?.type} · {zone}{bfIndex != null ? ` ${bfIndex + 1}` : ''} · {owner === perspective ? 'you' : bare(match.players[owner]?.name)}</span>
         <button onClick={onClearSelected} className="ml-auto rounded bg-white/10 px-2 py-0.5 text-[11px] hover:bg-white/20">Clear ✕</button>
       </div>

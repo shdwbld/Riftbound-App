@@ -89,7 +89,7 @@ export default function PlayedCardAnnouncement({
               {card.imageUrl ? (
                 <img src={card.imageUrl} alt={card.name} className="block w-full" style={{ aspectRatio: '744/1039', objectFit: 'cover' }} />
               ) : (
-                <div className="flex w-full items-center justify-center bg-[#1c1c28] p-8 text-center text-2xl" style={{ aspectRatio: '744/1039' }}>
+                <div className="flex w-full items-center justify-center bg-[#0a1e33] p-8 text-center text-2xl" style={{ aspectRatio: '744/1039' }}>
                   {card.name}
                 </div>
               )}
@@ -103,7 +103,7 @@ export default function PlayedCardAnnouncement({
       </div>
 
       <div className="h-1.5 w-64 overflow-hidden rounded bg-white/10">
-        <div className="announcement-drain h-full bg-indigo-400/70" style={{ animationDuration: `${durationMs}ms` }} />
+        <div className="announcement-drain h-full bg-sky-400/70" style={{ animationDuration: `${durationMs}ms` }} />
       </div>
       <div className="text-[10px] uppercase tracking-wide text-white/40">click a card to dismiss</div>
     </div>

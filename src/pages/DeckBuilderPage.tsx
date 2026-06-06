@@ -70,7 +70,7 @@ export default function DeckBuilderPage() {
     return (
       <div className="space-y-3">
         <p className="text-white/60">Deck not found.</p>
-        <Link to="/decks" className="text-indigo-400 hover:underline">
+        <Link to="/decks" className="text-sky-400 hover:underline">
           ← Back to decks
         </Link>
       </div>
@@ -153,7 +153,7 @@ export default function DeckBuilderPage() {
           <input
             value={deck.name}
             onChange={(e) => update({ name: e.target.value })}
-            className="rounded-lg border border-transparent bg-transparent px-2 py-1 text-xl font-bold outline-none hover:border-white/10 focus:border-indigo-400"
+            className="rounded-lg border border-transparent bg-transparent px-2 py-1 text-xl font-bold outline-none hover:border-white/10 focus:border-sky-400"
           />
           <span
             className={`rounded-full px-2 py-0.5 text-[11px] ${
@@ -182,7 +182,7 @@ export default function DeckBuilderPage() {
             onClick={() => navigate('/play', { state: { deckId: deck.id } })}
             disabled={pileSize(deck.main) === 0}
             title={pileSize(deck.main) === 0 ? 'Add some cards first' : 'Goldfish this deck'}
-            className="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
           >
             Test ▶
           </button>
@@ -201,7 +201,7 @@ export default function DeckBuilderPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search cards…"
-              className="w-48 rounded-lg border border-white/10 bg-[#15151f] px-3 py-1.5 text-sm outline-none focus:border-indigo-400"
+              className="w-48 rounded-lg border border-white/10 bg-[#0a1428] px-3 py-1.5 text-sm outline-none focus:border-sky-400"
             />
             <label className="flex items-center gap-1.5 text-xs text-white/60">
               <input
@@ -218,7 +218,7 @@ export default function DeckBuilderPage() {
                   key={t}
                   onClick={() => setAddTarget(t)}
                   className={`rounded px-2 py-1 font-medium capitalize transition ${
-                    addTarget === t ? 'bg-indigo-500/30 text-white' : 'text-white/50 hover:bg-white/5'
+                    addTarget === t ? 'bg-sky-500/30 text-white' : 'text-white/50 hover:bg-white/5'
                   }`}
                 >
                   {t}
@@ -271,7 +271,7 @@ export default function DeckBuilderPage() {
                 key={m}
                 onClick={() => setDeckView(m)}
                 className={`rounded px-2 py-1 font-medium capitalize transition ${
-                  deckView === m ? 'bg-indigo-500/30 text-white' : 'text-white/50 hover:bg-white/5'
+                  deckView === m ? 'bg-sky-500/30 text-white' : 'text-white/50 hover:bg-white/5'
                 }`}
               >
                 {m === 'list' ? '☰ List' : '▦ Grid'}
@@ -335,7 +335,7 @@ export default function DeckBuilderPage() {
                 <select
                   value={deck.championId ?? ''}
                   onChange={(e) => update({ championId: e.target.value || null })}
-                  className="w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm outline-none focus:border-indigo-400"
+                  className="w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm outline-none focus:border-sky-400"
                 >
                   <option value="">Auto (first match)</option>
                   {eligibleChampions.map((c) => (
@@ -545,7 +545,7 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-[#15151f] p-3">
+    <div className="rounded-xl border border-white/10 bg-[#0a1428] p-3">
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">
         {title}
       </h3>
@@ -568,7 +568,7 @@ function Chip({
       onClick={onClick}
       className={`rounded-full border px-2.5 py-1 text-xs font-medium capitalize transition ${
         active
-          ? 'border-indigo-400/50 bg-indigo-500/20 text-white'
+          ? 'border-sky-400/50 bg-sky-500/20 text-white'
           : 'border-white/10 text-white/60 hover:bg-white/5'
       }`}
     >
@@ -663,7 +663,7 @@ function DeckGridGroup({
       <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
         {entries.map(({ card, id, n }) => (
           <CardPreview key={id} cardId={id} delay={260}>
-            <div className="group relative overflow-hidden rounded-md border border-white/10 bg-[#15151f]">
+            <div className="group relative overflow-hidden rounded-md border border-white/10 bg-[#0a1428]">
               <button
                 onClick={() => onInc(id)}
                 disabled={cap != null && n >= cap}
@@ -676,7 +676,7 @@ function DeckGridGroup({
                   <div className="flex aspect-[744/1039] items-center justify-center p-1 text-center text-[9px] text-white/60">{card!.name}</div>
                 )}
               </button>
-              <span className="pointer-events-none absolute right-1 top-1 rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-bold">×{n}</span>
+              <span className="pointer-events-none absolute right-1 top-1 rounded bg-sky-500 px-1.5 py-0.5 text-[10px] font-bold">×{n}</span>
               <button
                 onClick={() => onDec(id)}
                 title="Remove one"
@@ -750,7 +750,7 @@ function CardPool({
             <CardPreview key={c.id} cardId={c.id} delay={260}>
               <button
                 onClick={() => onAdd(c)}
-                className="group relative block w-full overflow-hidden rounded-lg border border-white/10 bg-[#15151f] text-left transition hover:border-indigo-400/50"
+                className="group relative block w-full overflow-hidden rounded-lg border border-white/10 bg-[#0a1428] text-left transition hover:border-sky-400/50"
               >
                 {c.imageUrl ? (
                   <img
@@ -765,7 +765,7 @@ function CardPool({
                   </div>
                 )}
                 {count ? (
-                  <span className="absolute right-1 top-1 rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-bold">
+                  <span className="absolute right-1 top-1 rounded bg-sky-500 px-1.5 py-0.5 text-[10px] font-bold">
                     {count}
                   </span>
                 ) : null}
@@ -815,14 +815,14 @@ function LegendPicker({
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search legends…"
-          className="mb-3 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+          className="mb-3 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-sky-400"
         />
         <div className="grid grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4 md:grid-cols-5">
           {legends.map((c) => (
             <button
               key={c.id}
               onClick={() => onPick(c)}
-              className="overflow-hidden rounded-lg border border-white/10 transition hover:border-indigo-400"
+              className="overflow-hidden rounded-lg border border-white/10 transition hover:border-sky-400"
             >
               {c.imageUrl && (
                 <img
@@ -845,7 +845,7 @@ function ExportPanel({ deck, onClose }: { deck: Deck; onClose: () => void }) {
   const text = exportDeck(deck)
   const [copied, setCopied] = useState(false)
   return (
-    <div className="space-y-2 rounded-xl border border-white/10 bg-[#15151f] p-4">
+    <div className="space-y-2 rounded-xl border border-white/10 bg-[#0a1428] p-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-white/60">Deck code</p>
         <div className="flex gap-2">
@@ -854,7 +854,7 @@ function ExportPanel({ deck, onClose }: { deck: Deck; onClose: () => void }) {
               navigator.clipboard?.writeText(text)
               setCopied(true)
             }}
-            className="rounded bg-indigo-500 px-2 py-1 text-xs font-semibold hover:bg-indigo-400"
+            className="rounded bg-sky-500 px-2 py-1 text-xs font-semibold hover:bg-sky-400"
           >
             {copied ? 'Copied!' : 'Copy'}
           </button>
@@ -887,7 +887,7 @@ function StatsPanel({ deck }: { deck: Deck }) {
         <div className="flex items-end gap-1" style={{ height: 56 }}>
           {stats.curve.map((n, cost) => (
             <div key={cost} className="flex flex-1 flex-col items-center gap-0.5">
-              <div className="w-full rounded-t bg-indigo-500/70" style={{ height: `${(n / peak) * 44}px` }} title={`${n} card(s)`} />
+              <div className="w-full rounded-t bg-sky-500/70" style={{ height: `${(n / peak) * 44}px` }} title={`${n} card(s)`} />
               <span className="text-[9px] text-white/40">
                 {cost === CURVE_MAX ? `${cost}+` : cost}
               </span>
@@ -957,7 +957,7 @@ function SampleHandModal({
           <div className="flex gap-2">
             <button
               onClick={onRedraw}
-              className="rounded bg-indigo-500 px-3 py-1 text-xs font-semibold hover:bg-indigo-400"
+              className="rounded bg-sky-500 px-3 py-1 text-xs font-semibold hover:bg-sky-400"
             >
               ↻ Redraw
             </button>

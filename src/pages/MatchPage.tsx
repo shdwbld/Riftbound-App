@@ -289,7 +289,7 @@ export default function MatchPage() {
         <p className="text-white/50">
           {match.players.map((p) => `${p.name} ${p.points}`).join(' · ')}
         </p>
-        <button onClick={() => setMatch(null)} className="rounded-lg bg-indigo-500 px-4 py-2 font-semibold">
+        <button onClick={() => setMatch(null)} className="rounded-lg bg-sky-500 px-4 py-2 font-semibold">
           New match
         </button>
       </div>
@@ -855,7 +855,7 @@ function Toolbar({
   onToggleSandbox?: () => void
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#15151f] p-2 text-sm">
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#0a1428] p-2 text-sm">
       <span className="rounded bg-white/5 px-2 py-1 text-xs">Turn {match.turn}</span>
       <span className="rounded bg-white/5 px-2 py-1 text-xs capitalize">{match.phase}</span>
       <span className="text-xs text-white/50">First to {match.pointsToWin}</span>
@@ -864,7 +864,7 @@ function Toolbar({
           <span
             key={p.id}
             className={`rounded px-2 py-1 text-xs font-semibold ${
-              match.activePlayer === p.id ? 'bg-indigo-500/30 text-indigo-100' : 'bg-white/5 text-white/60'
+              match.activePlayer === p.id ? 'bg-sky-500/30 text-sky-100' : 'bg-white/5 text-white/60'
             }`}
           >
             {p.name}: {p.points}
@@ -876,7 +876,7 @@ function Toolbar({
           onClick={onToggleSandbox}
           title="Manual overrides (shared): when ON, either player can right-click ANY card to stun / ready / kill / ±Might / move it, to fix or override the engine."
           className={`ml-auto rounded px-2 py-1 text-xs font-semibold ${
-            match.sandbox ? 'bg-fuchsia-500/40 text-fuchsia-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
+            match.sandbox ? 'bg-amber-500/40 text-amber-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
           }`}
         >
           {match.sandbox ? '🛠 Overrides: ON' : '🛠 Overrides'}
@@ -891,7 +891,7 @@ function Toolbar({
       >
         {manualPay ? '⚙ Rune picker: ON' : '⚙ Auto-pay'}
       </button>
-      <span className="rounded bg-indigo-500/20 px-2 py-1 text-xs text-indigo-200">
+      <span className="rounded bg-sky-500/20 px-2 py-1 text-xs text-sky-200">
         Acting: {match.players[controlling].name}
       </span>
       <button onClick={onExit} className="rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/30">
@@ -943,7 +943,7 @@ export function MulliganView({
       <div className="flex items-center justify-center gap-3">
         <button
           onClick={() => onAct({ type: 'MULLIGAN', player: pending.id, toBottom: aside })}
-          className="rounded-xl bg-indigo-500 px-8 py-3 text-base font-bold hover:bg-indigo-400"
+          className="rounded-xl bg-sky-500 px-8 py-3 text-base font-bold hover:bg-sky-400"
         >
           {aside.length ? `Mulligan ${aside.length} ▶` : 'Keep hand ▶'}
         </button>
@@ -980,7 +980,7 @@ function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: M
     return (
       <div className="rounded-xl border border-dashed border-white/15 p-10 text-center">
         <p className="text-white/60">You need at least one deck to play a match.</p>
-        <Link to="/decks" className="mt-3 inline-block rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold">
+        <Link to="/decks" className="mt-3 inline-block rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold">
           Build a deck
         </Link>
       </div>
@@ -1006,7 +1006,7 @@ function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: M
             key={n}
             onClick={() => setCount(n)}
             className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-              count === n ? 'bg-indigo-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
+              count === n ? 'bg-sky-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
             }`}
           >
             {n}
@@ -1023,7 +1023,7 @@ function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: M
       <button
         onClick={start}
         disabled={seats.slice(0, count).some((s) => !s)}
-        className="rounded-lg bg-indigo-500 px-5 py-2.5 font-semibold hover:bg-indigo-400 disabled:opacity-40"
+        className="rounded-lg bg-sky-500 px-5 py-2.5 font-semibold hover:bg-sky-400 disabled:opacity-40"
       >
         Start {count}-player match ▶
       </button>
@@ -1043,12 +1043,12 @@ function DeckSelect({
   onChange: (v: string) => void
 }) {
   return (
-    <label className="block rounded-xl border border-white/10 bg-[#15151f] p-4">
+    <label className="block rounded-xl border border-white/10 bg-[#0a1428] p-4">
       <span className="text-xs uppercase tracking-wide text-white/40">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+        className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-sky-400"
       >
         {decks.map((d) => (
           <option key={d.id} value={d.id}>

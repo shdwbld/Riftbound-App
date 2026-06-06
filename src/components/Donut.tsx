@@ -36,7 +36,7 @@ export default function Donut({
         style={{ width: size, height: size, background: gradient }}
       >
         <div
-          className="absolute rounded-full bg-[#15151f]"
+          className="absolute rounded-full bg-[#0a1428]"
           style={{ inset: thickness }}
         />
         <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white/70">

@@ -30,13 +30,13 @@ export default function TagNameModal({
           onChange={(e) => setTag(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit() }}
           placeholder="e.g. Poro, Demacia, Miss Fortune"
-          className="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm outline-none focus:border-indigo-400/60"
+          className="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm outline-none focus:border-sky-400/60"
         />
         <div className="mt-3 flex gap-2">
           <button
             disabled={!tag.trim()}
             onClick={submit}
-            className="flex-1 rounded-lg bg-indigo-500/30 px-4 py-2 text-sm font-semibold hover:bg-indigo-500/50 disabled:opacity-40"
+            className="flex-1 rounded-lg bg-sky-500/30 px-4 py-2 text-sm font-semibold hover:bg-sky-500/50 disabled:opacity-40"
           >
             Name it
           </button>

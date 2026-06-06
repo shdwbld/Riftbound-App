@@ -37,7 +37,7 @@ export default function CardDetailModal({
             />
           ) : (
             <div
-              className="flex w-full items-center justify-center rounded-xl bg-[#1c1c28] p-4 text-center text-sm"
+              className="flex w-full items-center justify-center rounded-xl bg-[#0a1e33] p-4 text-center text-sm"
               style={{ aspectRatio: card.type === 'battlefield' ? '1039/744' : '744/1039' }}
             >
               {card.name}

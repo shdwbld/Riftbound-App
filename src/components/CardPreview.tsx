@@ -21,7 +21,7 @@ function CardFace({ card }: { card: Card }) {
       {card.imageUrl ? (
         <img src={card.imageUrl} alt={card.name} className="w-full" style={{ aspectRatio: ratio, objectFit: 'cover' }} />
       ) : (
-        <div className="flex w-full items-center justify-center bg-[#1c1c28] p-4 text-center text-sm" style={{ aspectRatio: ratio }}>
+        <div className="flex w-full items-center justify-center bg-[#0a1e33] p-4 text-center text-sm" style={{ aspectRatio: ratio }}>
           {card.name}
         </div>
       )}

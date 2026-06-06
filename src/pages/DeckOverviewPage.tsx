@@ -33,7 +33,7 @@ export default function DeckOverviewPage() {
     return (
       <div className="space-y-3">
         <p className="text-white/60">Deck not found.</p>
-        <Link to="/decks" className="text-indigo-400 hover:underline">
+        <Link to="/decks" className="text-sky-400 hover:underline">
           ← Back to decks
         </Link>
       </div>
@@ -54,7 +54,7 @@ export default function DeckOverviewPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex flex-wrap items-start gap-4 rounded-2xl border border-white/10 bg-[#15151f] p-4">
+      <div className="flex flex-wrap items-start gap-4 rounded-2xl border border-white/10 bg-[#0a1428] p-4">
         {legend?.imageUrl && (
           <img
             src={legend.imageUrl}
@@ -100,7 +100,7 @@ export default function DeckOverviewPage() {
           <button
             onClick={() => navigate('/play', { state: { deckId: deck.id } })}
             disabled={pileSize(deck.main) === 0}
-            className="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-400 disabled:opacity-40"
+            className="rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400 disabled:opacity-40"
           >
             Test ▶
           </button>
@@ -169,7 +169,7 @@ export default function DeckOverviewPage() {
 
       {/* Checklist (only when issues) */}
       {v.issues.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-[#15151f] p-3">
+        <div className="rounded-xl border border-white/10 bg-[#0a1428] p-3">
           <ul className="grid gap-1 text-xs sm:grid-cols-2">
             {v.issues.map((iss, i) => (
               <li key={i} className={iss.level === 'error' ? 'text-rose-300' : 'text-amber-300/80'}>
@@ -187,7 +187,7 @@ export default function DeckOverviewPage() {
             key={t}
             onClick={() => setTab(t)}
             className={`rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition ${
-              tab === t ? 'bg-indigo-500/20 text-white' : 'text-white/50 hover:bg-white/5'
+              tab === t ? 'bg-sky-500/20 text-white' : 'text-white/50 hover:bg-white/5'
             }`}
           >
             {t}
@@ -299,7 +299,7 @@ function CardRow({ card, qty, onClick }: { card: Card; qty?: number; onClick?: (
           )}
         </span>
         {qty != null && qty > 1 && (
-          <span className="shrink-0 rounded bg-indigo-500/30 px-1.5 py-0.5 font-mono text-xs text-indigo-200">×{qty}</span>
+          <span className="shrink-0 rounded bg-sky-500/30 px-1.5 py-0.5 font-mono text-xs text-sky-200">×{qty}</span>
         )}
       </button>
     </li>
@@ -308,7 +308,7 @@ function CardRow({ card, qty, onClick }: { card: Card; qty?: number; onClick?: (
 
 function Column({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`rounded-xl border border-white/10 bg-[#15151f] p-3 ${className ?? ''}`}>
+    <div className={`rounded-xl border border-white/10 bg-[#0a1428] p-3 ${className ?? ''}`}>
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/50">{title}</h3>
       {children}
     </div>
@@ -338,17 +338,17 @@ function StatsView({ deck }: { deck: Deck }) {
 
   return (
     <div className="grid gap-3 lg:grid-cols-2">
-      <div className="rounded-xl border border-white/10 bg-[#15151f] p-4">
-        <CurveBars title={`Energy curve · avg ${stats.avgCost.toFixed(1)}`} data={stats.curve} color="bg-indigo-500/70" />
+      <div className="rounded-xl border border-white/10 bg-[#0a1428] p-4">
+        <CurveBars title={`Energy curve · avg ${stats.avgCost.toFixed(1)}`} data={stats.curve} color="bg-sky-500/70" />
       </div>
-      <div className="rounded-xl border border-white/10 bg-[#15151f] p-4">
-        <CurveBars title="Power curve (pips)" data={stats.powerCurve} color="bg-fuchsia-500/70" />
+      <div className="rounded-xl border border-white/10 bg-[#0a1428] p-4">
+        <CurveBars title="Power curve (pips)" data={stats.powerCurve} color="bg-amber-500/70" />
       </div>
-      <div className="rounded-xl border border-white/10 bg-[#15151f] p-4">
+      <div className="rounded-xl border border-white/10 bg-[#0a1428] p-4">
         <div className="mb-3 text-[10px] uppercase tracking-wide text-white/40">Card types</div>
         <Donut segments={typeSegments} />
       </div>
-      <div className="rounded-xl border border-white/10 bg-[#15151f] p-4">
+      <div className="rounded-xl border border-white/10 bg-[#0a1428] p-4">
         <div className="mb-3 text-[10px] uppercase tracking-wide text-white/40">Domains (main + runes)</div>
         <Donut segments={domainSegments} />
       </div>
@@ -377,7 +377,7 @@ function CurveBars({ title, data, color }: { title: string; data: number[]; colo
 function ExportPanel({ text, onClose }: { text: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false)
   return (
-    <div className="space-y-2 rounded-xl border border-white/10 bg-[#15151f] p-4">
+    <div className="space-y-2 rounded-xl border border-white/10 bg-[#0a1428] p-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-white/60">Deck code</p>
         <div className="flex gap-2">
@@ -386,7 +386,7 @@ function ExportPanel({ text, onClose }: { text: string; onClose: () => void }) {
               navigator.clipboard?.writeText(text)
               setCopied(true)
             }}
-            className="rounded bg-indigo-500 px-2 py-1 text-xs font-semibold hover:bg-indigo-400"
+            className="rounded bg-sky-500 px-2 py-1 text-xs font-semibold hover:bg-sky-400"
           >
             {copied ? 'Copied!' : 'Copy'}
           </button>

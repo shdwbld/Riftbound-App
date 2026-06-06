@@ -91,7 +91,7 @@ export default function CardsPage() {
           <select
             value={set}
             onChange={(e) => setSet(e.target.value)}
-            className="rounded-lg border border-white/10 bg-[#15151f] px-3 py-2 text-sm outline-none focus:border-indigo-400"
+            className="rounded-lg border border-white/10 bg-[#0a1428] px-3 py-2 text-sm outline-none focus:border-sky-400"
           >
             <option value="all">All sets</option>
             {SETS.map((s) => (
@@ -103,7 +103,7 @@ export default function CardsPage() {
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value as SortKey)}
-            className="rounded-lg border border-white/10 bg-[#15151f] px-3 py-2 text-sm outline-none focus:border-indigo-400"
+            className="rounded-lg border border-white/10 bg-[#0a1428] px-3 py-2 text-sm outline-none focus:border-sky-400"
             title="Sort by"
           >
             {SORTS.map((s) => (
@@ -116,7 +116,7 @@ export default function CardsPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, text, tag…"
-            className="w-56 rounded-lg border border-white/10 bg-[#15151f] px-3 py-2 text-sm outline-none focus:border-indigo-400"
+            className="w-56 rounded-lg border border-white/10 bg-[#0a1428] px-3 py-2 text-sm outline-none focus:border-sky-400"
           />
         </div>
       </div>
@@ -176,7 +176,7 @@ function FilterChip({
       onClick={onClick}
       className={`rounded-full border px-3 py-1 text-xs font-medium capitalize transition ${
         active
-          ? 'border-indigo-400/50 bg-indigo-500/20 text-white'
+          ? 'border-sky-400/50 bg-sky-500/20 text-white'
           : 'border-white/10 text-white/60 hover:bg-white/5'
       }`}
     >

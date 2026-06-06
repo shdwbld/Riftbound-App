@@ -493,7 +493,7 @@ export default function OnlinePage() {
       <div className="space-y-4 py-16 text-center">
         <div className="text-5xl">🏆</div>
         <h2 className="text-3xl font-bold">{match.players[w].name} wins!</h2>
-        <button onClick={leave} className="rounded-lg bg-indigo-500 px-4 py-2 font-semibold">
+        <button onClick={leave} className="rounded-lg bg-sky-500 px-4 py-2 font-semibold">
           Back to lobby
         </button>
       </div>
@@ -762,7 +762,7 @@ export default function OnlinePage() {
               onClick={() => dispatch({ type: 'SET_SANDBOX', player: seat, on: !match.sandbox })}
               title="Manual overrides (shared): when ON, either player can right-click ANY card to stun / ready / kill / ±Might / move it, to fix or override the engine."
               className={`rounded px-2 py-1 text-xs font-semibold ${
-                match.sandbox ? 'bg-fuchsia-500/40 text-fuchsia-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
+                match.sandbox ? 'bg-amber-500/40 text-amber-100' : 'bg-white/5 text-white/50 hover:bg-white/10'
               }`}
             >
               {match.sandbox ? '🛠 Overrides: ON' : '🛠 Overrides'}
@@ -1034,7 +1034,7 @@ function Lobby({
     return (
       <div className="rounded-xl border border-dashed border-white/15 p-10 text-center">
         <p className="text-white/60">Build a deck before playing online.</p>
-        <Link to="/decks" className="mt-3 inline-block rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold">
+        <Link to="/decks" className="mt-3 inline-block rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold">
           Build a deck
         </Link>
       </div>
@@ -1050,12 +1050,12 @@ function Lobby({
         </p>
       </div>
 
-      <label className="block rounded-xl border border-white/10 bg-[#15151f] p-4">
+      <label className="block rounded-xl border border-white/10 bg-[#0a1428] p-4">
         <span className="text-xs uppercase tracking-wide text-white/40">Your deck</span>
         <select
           value={deckId}
           onChange={(e) => setDeckId(e.target.value)}
-          className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+          className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-sky-400"
         >
           {decks.map((d) => (
             <option key={d.id} value={d.id}>
@@ -1066,7 +1066,7 @@ function Lobby({
       </label>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-indigo-400/40 bg-indigo-500/10 p-5">
+        <div className="rounded-xl border border-sky-400/40 bg-sky-500/10 p-5">
           <div className="text-lg font-semibold">Create room</div>
           <div className="mt-2 flex items-center gap-2 text-sm">
             <span className="text-white/60">Players:</span>
@@ -1075,7 +1075,7 @@ function Lobby({
                 key={n}
                 onClick={() => setCount(n)}
                 className={`rounded px-2.5 py-1 text-sm font-semibold ${
-                  count === n ? 'bg-indigo-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
+                  count === n ? 'bg-sky-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
                 }`}
               >
                 {n}
@@ -1084,23 +1084,23 @@ function Lobby({
           </div>
           <button
             onClick={() => onCreate(count)}
-            className="mt-3 w-full rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-400"
+            className="mt-3 w-full rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
           >
             Create {count}-player room
           </button>
         </div>
-        <div className="rounded-xl border border-white/10 bg-[#15151f] p-5">
+        <div className="rounded-xl border border-white/10 bg-[#0a1428] p-5">
           <div className="text-lg font-semibold">Join room</div>
           <input
             value={code}
             onChange={(e) => setCode(e.target.value.toUpperCase())}
             maxLength={4}
             placeholder="CODE"
-            className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-center font-mono text-lg tracking-widest outline-none focus:border-indigo-400"
+            className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-center font-mono text-lg tracking-widest outline-none focus:border-sky-400"
           />
           <button
             onClick={() => onJoin(code)}
-            className="mt-2 w-full rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-400"
+            className="mt-2 w-full rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
           >
             Join
           </button>
@@ -1130,9 +1130,9 @@ function Waiting({
       <h2 className="text-xl font-bold">
         {role === 'host' ? 'Waiting for players…' : 'Connecting…'}
       </h2>
-      <div className="rounded-xl border border-white/10 bg-[#15151f] p-5">
+      <div className="rounded-xl border border-white/10 bg-[#0a1428] p-5">
         <div className="text-xs uppercase tracking-wide text-white/40">Room code</div>
-        <div className="mt-1 font-mono text-4xl font-bold tracking-[0.3em] text-indigo-300">
+        <div className="mt-1 font-mono text-4xl font-bold tracking-[0.3em] text-sky-300">
           {roomCode}
         </div>
         <p className="mt-2 text-sm text-white/60">
@@ -1158,7 +1158,7 @@ function RoomBar({
   extra?: React.ReactNode
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#15151f] p-2 text-sm">
+    <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-[#0a1428] p-2 text-sm">
       <span className="rounded bg-white/5 px-2 py-1 font-mono text-xs tracking-widest">{roomCode}</span>
       {extra}
       <button onClick={onLeave} className="ml-auto rounded bg-rose-500/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-500/30">

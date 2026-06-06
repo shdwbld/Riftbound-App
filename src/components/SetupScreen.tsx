@@ -42,7 +42,7 @@ function BigCard({ cardId, onClick, onInspect, selected }: { cardId: string; onC
         {card?.imageUrl ? (
           <img src={card.imageUrl} alt={card.name} className={`h-full w-full ${land ? 'object-contain' : 'object-cover'}`} />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[#1c1c28] p-2 text-center text-sm">{card?.name ?? cardId}</div>
+          <div className="flex h-full w-full items-center justify-center bg-[#0a1e33] p-2 text-center text-sm">{card?.name ?? cardId}</div>
         )}
       </button>
       <div className="text-center text-sm font-semibold">
@@ -52,7 +52,7 @@ function BigCard({ cardId, onClick, onInspect, selected }: { cardId: string; onC
         </span>
       </div>
       <div className="flex gap-2">
-        <button onClick={onClick} className="rounded-lg bg-indigo-500 px-3 py-1 text-xs font-semibold hover:bg-indigo-400">
+        <button onClick={onClick} className="rounded-lg bg-sky-500 px-3 py-1 text-xs font-semibold hover:bg-sky-400">
           Choose
         </button>
         <button onClick={onInspect} className="rounded-lg bg-white/10 px-3 py-1 text-xs hover:bg-white/20">
@@ -181,7 +181,7 @@ function PregameSelect({
           <button
             onClick={() => setStepIdx(idx + 1)}
             disabled={bf == null}
-            className={`rounded-xl px-8 py-3 text-base font-bold transition ${bf != null ? 'bg-indigo-500 hover:bg-indigo-400' : 'cursor-not-allowed bg-white/10 text-white/40'}`}
+            className={`rounded-xl px-8 py-3 text-base font-bold transition ${bf != null ? 'bg-sky-500 hover:bg-sky-400' : 'cursor-not-allowed bg-white/10 text-white/40'}`}
           >
             Next ▶
           </button>
@@ -204,7 +204,7 @@ function PregameSelect({
           <button
             onClick={() => setStepIdx(idx + 1)}
             disabled={champ == null}
-            className={`rounded-xl px-8 py-3 text-base font-bold transition ${champ != null ? 'bg-indigo-500 hover:bg-indigo-400' : 'cursor-not-allowed bg-white/10 text-white/40'}`}
+            className={`rounded-xl px-8 py-3 text-base font-bold transition ${champ != null ? 'bg-sky-500 hover:bg-sky-400' : 'cursor-not-allowed bg-white/10 text-white/40'}`}
           >
             Next ▶
           </button>
@@ -263,7 +263,7 @@ function PregameSelect({
           {back}
           <button
             onClick={() => setStepIdx(idx + 1)}
-            className="rounded-xl bg-indigo-500 px-8 py-3 text-base font-bold transition hover:bg-indigo-400"
+            className="rounded-xl bg-sky-500 px-8 py-3 text-base font-bold transition hover:bg-sky-400"
           >
             Next ▶
           </button>
@@ -375,7 +375,7 @@ export default function SetupScreen({
         ) : seat != null && seat !== 0 ? (
           <Waiting who={`${names[0]} to roll`} />
         ) : (
-          <button onClick={doRoll} className="rounded-xl bg-indigo-500 px-8 py-4 text-lg font-bold hover:bg-indigo-400">
+          <button onClick={doRoll} className="rounded-xl bg-sky-500 px-8 py-4 text-lg font-bold hover:bg-sky-400">
             🎲 Roll
           </button>
         )}
@@ -460,7 +460,7 @@ export default function SetupScreen({
           </div>
           <button
             onClick={() => { setTentative(null); onAct({ type: 'CHOOSE_CHAMPION', player: i, cardId: pick }) }}
-            className="rounded-xl bg-indigo-500 px-8 py-3 text-base font-bold hover:bg-indigo-400"
+            className="rounded-xl bg-sky-500 px-8 py-3 text-base font-bold hover:bg-sky-400"
           >
             Confirm Champion ▶
           </button>
@@ -485,7 +485,7 @@ export default function SetupScreen({
           </div>
           <button
             onClick={() => { setTentative(null); onAct({ type: 'CHOOSE_BATTLEFIELD', player: i, cardId: pick }) }}
-            className="rounded-xl bg-indigo-500 px-8 py-3 text-base font-bold hover:bg-indigo-400"
+            className="rounded-xl bg-sky-500 px-8 py-3 text-base font-bold hover:bg-sky-400"
           >
             Confirm Battlefield ▶
           </button>

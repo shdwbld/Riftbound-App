@@ -71,7 +71,7 @@ export default function PlayPage() {
   return (
     <div className="space-y-3">
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#15151f] p-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#0a1428] p-2">
         <span className="px-2 font-semibold">{game.deckName}</span>
         <span className="rounded bg-white/5 px-2 py-1 text-xs">
           Turn {game.turn}
@@ -159,7 +159,7 @@ export default function PlayPage() {
                   <div
                     onClick={() => selected && moveSelected({ kind: 'battlefield', index: i })}
                     className={`flex min-h-[96px] flex-wrap gap-1 rounded-lg p-1 ${
-                      selected ? 'bg-indigo-500/10 ring-1 ring-indigo-400/30' : ''
+                      selected ? 'bg-sky-500/10 ring-1 ring-sky-400/30' : ''
                     }`}
                   >
                     {bf.units.map((ci) => (
@@ -232,7 +232,7 @@ export default function PlayPage() {
         {/* Sidebar */}
         <aside className="space-y-3">
           {game.legend && (
-            <div className="rounded-xl border border-white/10 bg-[#15151f] p-2">
+            <div className="rounded-xl border border-white/10 bg-[#0a1428] p-2">
               <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">
                 Legend
               </div>
@@ -297,7 +297,7 @@ function TurnBtn({
   return (
     <button
       onClick={onClick}
-      className="rounded bg-indigo-500/80 px-2.5 py-1 text-xs font-semibold hover:bg-indigo-500"
+      className="rounded bg-sky-500/80 px-2.5 py-1 text-xs font-semibold hover:bg-sky-500"
     >
       {children}
     </button>
@@ -324,7 +324,7 @@ function DropZone({
         {active && (
           <button
             onClick={onDrop}
-            className="rounded bg-indigo-500/30 px-2 py-0.5 text-[10px] text-indigo-200 hover:bg-indigo-500/50"
+            className="rounded bg-sky-500/30 px-2 py-0.5 text-[10px] text-sky-200 hover:bg-sky-500/50"
           >
             move here
           </button>
@@ -349,8 +349,8 @@ function Stack({
   return (
     <button
       onClick={onClick}
-      className={`flex aspect-[744/1039] flex-col items-center justify-center rounded-lg border bg-gradient-to-br from-indigo-950 to-fuchsia-950 ${
-        highlight ? 'border-indigo-400' : 'border-white/15'
+      className={`flex aspect-[744/1039] flex-col items-center justify-center rounded-lg border bg-gradient-to-br from-sky-950 to-amber-950 ${
+        highlight ? 'border-sky-400' : 'border-white/15'
       }`}
     >
       <span className="text-lg font-bold">{count}</span>
@@ -361,7 +361,7 @@ function Stack({
 
 function LogPanel({ log }: { log: string[] }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-[#15151f] p-2">
+    <div className="rounded-xl border border-white/10 bg-[#0a1428] p-2">
       <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">
         Log
       </div>
@@ -402,7 +402,7 @@ function ActionBar({
     { z: 'mainDeck', label: 'Deck' },
   ]
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#10101a]/95 p-3 backdrop-blur">
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0a1428]/95 p-3 backdrop-blur">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
         <span className="text-sm font-semibold">{def?.name ?? iid}</span>
         <span className="text-xs text-white/40">{def?.type}</span>
@@ -423,7 +423,7 @@ function ActionBar({
           <button
             key={i}
             onClick={() => onMove({ kind: 'battlefield', index: i })}
-            className="rounded bg-indigo-500/30 px-2.5 py-1 text-xs text-indigo-100 hover:bg-indigo-500/50"
+            className="rounded bg-sky-500/30 px-2.5 py-1 text-xs text-sky-100 hover:bg-sky-500/50"
           >
             → BF{i + 1}
           </button>
@@ -455,7 +455,7 @@ function DeckPicker({ onStart }: { onStart: (d: Deck) => void }) {
           <p className="text-white/60">No decks yet.</p>
           <Link
             to="/decks"
-            className="mt-3 inline-block rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold"
+            className="mt-3 inline-block rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold"
           >
             Build a deck
           </Link>
@@ -469,7 +469,7 @@ function DeckPicker({ onStart }: { onStart: (d: Deck) => void }) {
               <button
                 key={d.id}
                 onClick={() => onStart(d)}
-                className="rounded-xl border border-white/10 bg-[#15151f] p-4 text-left transition hover:border-indigo-400/50"
+                className="rounded-xl border border-white/10 bg-[#0a1428] p-4 text-left transition hover:border-sky-400/50"
               >
                 <div className="font-semibold">{d.name}</div>
                 <div className="text-xs text-white/50">

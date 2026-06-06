@@ -41,7 +41,7 @@ const features = [
 export default function HomePage() {
   return (
     <div className="space-y-10">
-      <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-indigo-950/40 to-fuchsia-950/30 p-8">
+      <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-sky-950/40 to-amber-950/30 p-8">
         <h1 className="text-3xl font-bold sm:text-4xl">
           The open Riftbound simulator
         </h1>
@@ -52,7 +52,7 @@ export default function HomePage() {
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
             to="/cards"
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400"
+            className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-400"
           >
             Browse cards
           </Link>
@@ -70,7 +70,7 @@ export default function HomePage() {
           <Link
             key={f.to}
             to={f.to}
-            className="group rounded-xl border border-white/10 bg-[#15151f] p-5 transition hover:border-white/25 hover:bg-[#1a1a26]"
+            className="group rounded-xl border border-white/10 bg-[#0a1428] p-5 transition hover:border-white/25 hover:bg-[#0a1e33]"
           >
             <div className="flex items-center justify-between">
               <span className="text-2xl">{f.icon}</span>

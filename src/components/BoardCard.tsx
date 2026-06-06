@@ -14,10 +14,10 @@ function keywordBadges(def: Card): { label: string; title: string; cls: string }
   if (k.tank) out.push({ label: 'T', title: 'Tank — must be hit first', cls: 'bg-sky-600/90 text-white' })
   if (k.shield) out.push({ label: `S${k.shield}`, title: `Shield ${k.shield} — +${k.shield} Might while defending`, cls: 'bg-emerald-600/90 text-white' })
   if (k.assault) out.push({ label: `A${k.assault}`, title: `Assault ${k.assault} — +${k.assault} Might while attacking`, cls: 'bg-rose-600/90 text-white' })
-  if (k.deflect) out.push({ label: `D${k.deflect}`, title: `Deflect ${k.deflect} — costs enemies +${k.deflect} to target`, cls: 'bg-indigo-600/90 text-white' })
+  if (k.deflect) out.push({ label: `D${k.deflect}`, title: `Deflect ${k.deflect} — costs enemies +${k.deflect} to target`, cls: 'bg-sky-600/90 text-white' })
   if (k.backline) out.push({ label: 'BL', title: 'Backline — does not fight on the frontline', cls: 'bg-slate-600/90 text-white' })
-  if (k.ganking) out.push({ label: 'G', title: 'Ganking — may move battlefield-to-battlefield', cls: 'bg-fuchsia-600/90 text-white' })
-  if (k.deathknell) out.push({ label: '☠', title: 'Deathknell — triggers an effect when defeated', cls: 'bg-violet-700/90 text-white' })
+  if (k.ganking) out.push({ label: 'G', title: 'Ganking — may move battlefield-to-battlefield', cls: 'bg-amber-600/90 text-white' })
+  if (k.deathknell) out.push({ label: '☠', title: 'Deathknell — triggers an effect when defeated', cls: 'bg-amber-700/90 text-white' })
   if (k.temporary) out.push({ label: '⏳', title: 'Temporary — defeated at the start of your next turn', cls: 'bg-amber-600/90 text-black' })
   return out
 }
@@ -92,7 +92,7 @@ export default function BoardCard({
     glow === 'target'
       ? 'border-amber-300 ring-2 ring-amber-300/70 shadow-[0_0_12px_2px_rgba(252,211,77,0.55)]'
       : selected
-        ? 'border-indigo-400 ring-2 ring-indigo-400/60'
+        ? 'border-sky-400 ring-2 ring-sky-400/60'
         : glow === 'playable'
           ? 'border-emerald-400/60 ring-1 ring-emerald-400/40'
           : 'border-white/15 hover:border-white/40'
@@ -119,7 +119,7 @@ export default function BoardCard({
           className="h-full w-full object-cover"
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-[#1c1c28] p-1 text-center text-[8px] text-white/70">
+        <div className="flex h-full w-full items-center justify-center bg-[#0a1e33] p-1 text-center text-[8px] text-white/70">
           {def?.name ?? ci.cardId}
         </div>
       )}
@@ -210,14 +210,14 @@ export default function BoardCard({
                 <span className="rounded-br bg-lime-400/90 px-0.5 font-bold text-black" title="Protected from its next death this turn">P</span>
               )}
               {(ci as { targetingImmune?: boolean }).targetingImmune && (
-                <span className="rounded-br bg-indigo-400/90 px-0.5 font-bold text-white" title="Can't be chosen by enemy spells/abilities">⦸</span>
+                <span className="rounded-br bg-sky-400/90 px-0.5 font-bold text-white" title="Can't be chosen by enemy spells/abilities">⦸</span>
               )}
               {/\bi can'?t be readied\b/i.test(def.text ?? '') && (
                 <span className="rounded-br bg-slate-400/90 px-0.5 font-bold text-black" title="Can't be readied">∅</span>
               )}
               {lvlThreshold > 0 && (
                 <span
-                  className={`rounded-br px-0.5 font-bold ${lvl.active ? 'bg-fuchsia-500/90 text-white' : 'bg-white/15 text-white/50'}`}
+                  className={`rounded-br px-0.5 font-bold ${lvl.active ? 'bg-amber-500/90 text-white' : 'bg-white/15 text-white/50'}`}
                   title={`Level ${lvlThreshold} — ${lvl.active ? 'ACTIVE' : `needs ${lvlThreshold} XP (have ${xp})`}`}
                 >
                   Lv{lvlThreshold}

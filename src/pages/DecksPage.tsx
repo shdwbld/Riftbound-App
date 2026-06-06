@@ -83,7 +83,7 @@ export default function DecksPage() {
           </button>
           <button
             onClick={onCreate}
-            className="rounded-lg bg-indigo-500 px-3 py-2 text-sm font-semibold hover:bg-indigo-400"
+            className="rounded-lg bg-sky-500 px-3 py-2 text-sm font-semibold hover:bg-sky-400"
           >
             + New Deck
           </button>
@@ -105,7 +105,7 @@ export default function DecksPage() {
             <button
               onClick={onLoadCode}
               disabled={codeBusy || !code.trim()}
-              className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400 disabled:opacity-40"
+              className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold hover:bg-sky-400 disabled:opacity-40"
             >
               {codeBusy ? 'Loading…' : 'Load'}
             </button>
@@ -115,14 +115,14 @@ export default function DecksPage() {
       )}
 
       {importing && (
-        <div className="space-y-2 rounded-xl border border-white/10 bg-[#15151f] p-4">
+        <div className="space-y-2 rounded-xl border border-white/10 bg-[#0a1428] p-4">
           <p className="text-sm text-white/60">Paste a deck code:</p>
           <textarea
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
             rows={6}
             placeholder={'Name: My Deck\nLegend: ...\n# Main\n3 ogn-010-298\n...'}
-            className="w-full rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs outline-none focus:border-indigo-400"
+            className="w-full rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs outline-none focus:border-sky-400"
           />
           <div className="flex justify-end gap-2">
             <button
@@ -133,7 +133,7 @@ export default function DecksPage() {
             </button>
             <button
               onClick={onImport}
-              className="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-400"
+              className="rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
             >
               Import deck
             </button>
@@ -142,7 +142,7 @@ export default function DecksPage() {
       )}
 
       {decks.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/15 bg-[#15151f] p-10 text-center">
+        <div className="rounded-xl border border-dashed border-white/15 bg-[#0a1428] p-10 text-center">
           <div className="text-3xl">🛠️</div>
           <p className="mt-3 font-semibold">No decks yet</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-white/50">
@@ -151,7 +151,7 @@ export default function DecksPage() {
           </p>
           <button
             onClick={onCreate}
-            className="mt-4 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-semibold hover:bg-indigo-400"
+            className="mt-4 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold hover:bg-sky-400"
           >
             + New Deck
           </button>
@@ -165,7 +165,7 @@ export default function DecksPage() {
               <Link
                 key={deck.id}
                 to={`/decks/${deck.id}`}
-                className="group relative overflow-hidden rounded-xl border border-white/10 bg-[#15151f] p-4 transition hover:border-white/25 hover:bg-[#1a1a26]"
+                className="group relative overflow-hidden rounded-xl border border-white/10 bg-[#0a1428] p-4 transition hover:border-white/25 hover:bg-[#0a1e33]"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -281,7 +281,7 @@ function FeaturedDecks({ onCopy }: { onCopy: (f: FeaturedDeck) => void }) {
               return (
                 <div
                   key={f.id}
-                  className="flex gap-3 overflow-hidden rounded-xl border border-white/10 bg-[#15151f] p-3 transition hover:border-white/25"
+                  className="flex gap-3 overflow-hidden rounded-xl border border-white/10 bg-[#0a1428] p-3 transition hover:border-white/25"
                 >
                   {legend?.imageUrl && (
                     <img
@@ -306,7 +306,7 @@ function FeaturedDecks({ onCopy }: { onCopy: (f: FeaturedDeck) => void }) {
                     </div>
                     <button
                       onClick={() => onCopy(f)}
-                      className="mt-auto rounded-lg bg-indigo-500/80 px-3 py-1.5 text-xs font-semibold hover:bg-indigo-500"
+                      className="mt-auto rounded-lg bg-sky-500/80 px-3 py-1.5 text-xs font-semibold hover:bg-sky-500"
                     >
                       Copy to my decks
                     </button>

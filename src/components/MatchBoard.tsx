@@ -134,7 +134,7 @@ function GearPeek({ unit, onInspectGear }: { unit: EngineCard; onInspectGear?: (
               role="button"
               title={g?.name ? `Equipped: ${g.name} — hover to enlarge, click to inspect` : 'Equipped gear'}
               onClick={(e) => { e.stopPropagation(); onInspectGear?.(gid) }}
-              className="pointer-events-auto block h-5 w-2.5 overflow-hidden rounded-r border border-l-0 border-amber-300/80 bg-[#1c1c28] shadow-md ring-1 ring-black/50 transition-[width] hover:w-4"
+              className="pointer-events-auto block h-5 w-2.5 overflow-hidden rounded-r border border-l-0 border-amber-300/80 bg-[#0a1e33] shadow-md ring-1 ring-black/50 transition-[width] hover:w-4"
             >
               {g?.imageUrl ? (
                 <img src={g.imageUrl} alt={g.name} className="h-full w-[320%] max-w-none object-cover object-left" />
@@ -855,9 +855,9 @@ export default function MatchBoard({
   const banner: { text: string; cls: string; pulse?: boolean } | null = targetingActive
     ? null
     : myChainPriority
-      ? { text: '⛓ Your priority — respond, Counter, or Pass', cls: 'border-fuchsia-400/50 bg-fuchsia-500/15 text-fuchsia-100', pulse: true }
+      ? { text: '⛓ Your priority — respond, Counter, or Pass', cls: 'border-amber-400/50 bg-amber-500/15 text-amber-100', pulse: true }
       : chainOpen
-        ? { text: `⛓ Chain open — waiting for ${priorityName}`, cls: 'border-fuchsia-400/25 bg-fuchsia-500/5 text-fuchsia-200/70' }
+        ? { text: `⛓ Chain open — waiting for ${priorityName}`, cls: 'border-amber-400/25 bg-amber-500/5 text-amber-200/70' }
         : myShowdown
           ? { text: '⚔ Showdown — respond or Pass', cls: 'border-amber-400/50 bg-amber-500/15 text-amber-100', pulse: true }
           : match.phase === 'showdown'
@@ -1057,7 +1057,7 @@ export default function MatchBoard({
           <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null); setSub(null); setStepper(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null); setSub(null); setStepper(null) }} />
           <div
             ref={menuRef}
-            className="fixed z-50 max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-white/15 bg-[#1a1a26] text-sm shadow-xl"
+            className="fixed z-50 max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-white/15 bg-[#0a1e33] text-sm shadow-xl"
             style={{ left: menu.x, top: menu.y }}
           >
             {(() => {
@@ -1127,7 +1127,7 @@ export default function MatchBoard({
                       key={g.label}
                       onClick={() => setDrill(gi)}
                       onMouseEnter={() => setSub(null)}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left font-semibold text-fuchsia-200 hover:bg-fuchsia-500/20"
+                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left font-semibold text-amber-200 hover:bg-amber-500/20"
                     >
                       <span>{g.label}</span>
                       <span className="text-white/40">▸</span>
@@ -1255,9 +1255,9 @@ export default function MatchBoard({
       )}
 
       {chainOpen && (
-        <div className="rounded-xl border border-fuchsia-400/40 bg-fuchsia-500/10 p-3">
+        <div className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold text-fuchsia-200">
+            <span className="text-sm font-semibold text-amber-200">
               ⛓ Chain ({match.chain.length}) —{' '}
               {myChainPriority
                 ? 'your priority'
@@ -1266,7 +1266,7 @@ export default function MatchBoard({
             {myChainPriority && onPassPriority && (
               <button
                 onClick={onPassPriority}
-                className="shrink-0 rounded bg-fuchsia-500/30 px-3 py-1 text-sm font-semibold text-fuchsia-100 hover:bg-fuchsia-500/50"
+                className="shrink-0 rounded bg-amber-500/30 px-3 py-1 text-sm font-semibold text-amber-100 hover:bg-amber-500/50"
               >
                 Pass (A)
               </button>
@@ -1280,11 +1280,11 @@ export default function MatchBoard({
                 <div
                   key={item.id}
                   className={`fx-slidein flex items-center justify-between gap-2 rounded px-2 py-1 text-xs ${
-                    i === 0 ? 'bg-fuchsia-500/20' : 'bg-black/20'
+                    i === 0 ? 'bg-amber-500/20' : 'bg-black/20'
                   }`}
                 >
                   <span>
-                    {i === 0 && <span className="text-fuchsia-300">▶ </span>}
+                    {i === 0 && <span className="text-amber-300">▶ </span>}
                     {item.kind === 'counter' ? '✗ Counter: ' : ''}
                     <span className="font-medium">{card?.name ?? item.cardId}</span>{' '}
                     <span className="text-white/40">· {match.players[item.controller].name}</span>
@@ -1309,7 +1309,7 @@ export default function MatchBoard({
         </div>
       )}
 
-      <div className="rounded-xl border border-white/10 bg-[#15151f] p-2">
+      <div className="rounded-xl border border-white/10 bg-[#0a1428] p-2">
         <div className="mb-1 text-[10px] uppercase tracking-wide text-white/40">Log</div>
         <div className="flex max-h-[55vh] flex-col-reverse gap-0.5 overflow-y-auto text-[11px] text-white/60">
           {[...match.log].reverse().map((l, i) => (
@@ -1370,7 +1370,7 @@ function OpponentMat({
   const inspectGear = (cid: string) => { const c = getCard(cid); if (c) onInspectCard?.(c) }
   return (
     <div
-      className={`relative isolate overflow-hidden rounded-xl border p-2 ${active ? 'border-indigo-400/50' : 'border-white/10'}`}
+      className={`relative isolate overflow-hidden rounded-xl border p-2 ${active ? 'border-sky-400/50' : 'border-white/10'}`}
       style={{ background: matGradient(domains) }}
     >
       <MatSplash player={opp} strong />
@@ -1382,7 +1382,7 @@ function OpponentMat({
             <span className="text-amber-300/70">✦{opp.xp} XP</span>
           </MechanicTooltip>
         )}
-        {active && <span className="rounded bg-indigo-500/30 px-1.5 py-0.5 text-[10px] text-indigo-200">turn</span>}
+        {active && <span className="rounded bg-sky-500/30 px-1.5 py-0.5 text-[10px] text-sky-200">turn</span>}
         <span className="ml-auto flex items-center gap-1 text-white/40">
           {domains.map((d) => (
             <span key={d} className="h-2 w-4 rounded-full" style={{ background: DOMAIN_META[d].color }} />
@@ -1571,7 +1571,7 @@ function BattlefieldZone({
                 : ctrl != null
                   ? 'border-rose-400/50'
                   : 'border-amber-600/30'
-            } ${targetable ? 'cursor-pointer ring-2 ring-indigo-400/50' : ''} ${
+            } ${targetable ? 'cursor-pointer ring-2 ring-sky-400/50' : ''} ${
               ctrl != null ? domainAnimClass(ctrlDomains) : ''
             }`}
             style={{
@@ -1691,7 +1691,7 @@ function BattlefieldZone({
                       >
                         <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={match.players[u.owner].xp} auraBonus={auraMightFor(match, i, u)} />
                         {canGank && (
-                          <span className="absolute -right-1 -top-1 z-10 rounded-full bg-fuchsia-500/90 px-1 text-[8px] font-bold text-white shadow">⚡G</span>
+                          <span className="absolute -right-1 -top-1 z-10 rounded-full bg-amber-500/90 px-1 text-[8px] font-bold text-white shadow">⚡G</span>
                         )}
                       </button>
                     </CardPreview>
@@ -1804,7 +1804,7 @@ function PlayerMat({
             </button>
           )}
           {myActionTurn && (
-            <button onClick={endTurn} className="rounded bg-indigo-500 px-3 py-1 text-sm font-semibold hover:bg-indigo-400">
+            <button onClick={endTurn} className="rounded bg-sky-500 px-3 py-1 text-sm font-semibold hover:bg-sky-400">
               End turn ▶
             </button>
           )}
@@ -1861,9 +1861,9 @@ function PlayerMat({
             </MechanicTooltip>
             {usesXp && (
               <MechanicTooltip mechanic="xp">
-                <span className="flex flex-col rounded-lg border border-fuchsia-300/30 bg-fuchsia-500/10 px-2.5 py-1">
-                  <span className="text-[8px] uppercase tracking-wide text-fuchsia-200/50">XP</span>
-                  <span className="font-bold text-fuchsia-100">✦ {me.xp}</span>
+                <span className="flex flex-col rounded-lg border border-amber-300/30 bg-amber-500/10 px-2.5 py-1">
+                  <span className="text-[8px] uppercase tracking-wide text-amber-200/50">XP</span>
+                  <span className="font-bold text-amber-100">✦ {me.xp}</span>
                 </span>
               </MechanicTooltip>
             )}
@@ -1934,7 +1934,7 @@ function PlayerMat({
                 disabled={!championCheck?.valid}
                 title={championCheck?.reason}
                 onClick={() => onPlay(me.champion!)}
-                className="rounded bg-indigo-500/80 px-2 py-0.5 text-[10px] font-semibold hover:bg-indigo-500 disabled:opacity-30"
+                className="rounded bg-sky-500/80 px-2 py-0.5 text-[10px] font-semibold hover:bg-sky-500 disabled:opacity-30"
               >
                 Play
               </button>
@@ -1962,7 +1962,7 @@ function PlayerMat({
                     onClick={() => onInspect(u)}
                     onContextMenu={(e) => onContext?.(e, u, 'base')}
                     {...dragSrc(dndOn, u.iid)}
-                    className={selectedUnits.includes(u.iid) ? 'rounded ring-2 ring-indigo-400' : ''}
+                    className={selectedUnits.includes(u.iid) ? 'rounded ring-2 ring-sky-400' : ''}
                   >
                     <BoardCard
                       ci={u}
@@ -1981,7 +1981,7 @@ function PlayerMat({
                   onClick={() => onToggleUnit(u.iid)}
                   className={`rounded px-2 py-0.5 text-[10px] font-semibold ${
                     selectedUnits.includes(u.iid)
-                      ? 'bg-indigo-500 text-white'
+                      ? 'bg-sky-500 text-white'
                       : 'bg-white/10 text-white/70 hover:bg-white/20'
                   }`}
                 >
@@ -2003,7 +2003,7 @@ function PlayerMat({
         {/* Main Deck */}
         <div className="pm-zone pm-maindeck flex flex-col items-center justify-center gap-1" {...dropTgt(dndOn, { toZone: 'mainDeck' }, onMoveOverride)} onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'deck') : undefined}>
           <div className="pm-zone-label self-start">Main Deck</div>
-          <button onClick={onRevealTop} title="Reveal top card" className="rounded transition hover:ring-2 hover:ring-indigo-400/50">
+          <button onClick={onRevealTop} title="Reveal top card" className="rounded transition hover:ring-2 hover:ring-sky-400/50">
             <CardBack size="sm" count={me.zones.mainDeck.length} />
           </button>
           {deckLow && (
@@ -2090,10 +2090,10 @@ function PlayerMat({
             })()}
             {me.banished.length > 0 && (
               <div className="flex flex-col items-center gap-0.5">
-                <div className="flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-fuchsia-400/30 text-sm text-fuchsia-300/60">
+                <div className="flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-amber-400/30 text-sm text-amber-300/60">
                   ⊗ {me.banished.length}
                 </div>
-                <span className="text-[8px] uppercase tracking-wide text-fuchsia-300/40">Banished</span>
+                <span className="text-[8px] uppercase tracking-wide text-amber-300/40">Banished</span>
               </div>
             )}
           </div>
@@ -2127,7 +2127,7 @@ function PlayerMat({
                 disabled={!check.valid}
                 title={check.reason}
                 onClick={() => onPlay(c)}
-                className="rounded bg-indigo-500/80 px-2 py-0.5 text-[10px] font-semibold hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-30"
+                className="rounded bg-sky-500/80 px-2 py-0.5 text-[10px] font-semibold hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-30"
               >
                 Play
               </button>
@@ -2139,7 +2139,7 @@ function PlayerMat({
       </div>
 
       {selectedUnits.length > 0 && myActionTurn && (
-        <p className="text-xs text-indigo-300">
+        <p className="text-xs text-sky-300">
           {selectedUnits.length} unit(s) selected — click a battlefield to move them together.
         </p>
       )}
