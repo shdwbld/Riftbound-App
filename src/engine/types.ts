@@ -321,6 +321,10 @@ export interface MatchState {
    *  OVERRIDE ops (stun / ready / kill / ±Might / move / …) to ANY card at any
    *  time, to fix or override the engine. Shared (synced) game state. */
   sandbox?: boolean
+  /** Cards banished by Ashe - Focused, pending return on the victim's next hold.
+   *  `owner` = the Ashe player; `victimId` = the opponent whose hold returns it
+   *  (returns even if Ashe has since left the board). */
+  asheBanishPending?: { banishedIid: string; owner: PlayerId; victimId: PlayerId }[]
 }
 
 /** Interactive pre-game setup (Core Rules §111–120): roll for turn order, the

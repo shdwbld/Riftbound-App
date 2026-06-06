@@ -71,6 +71,7 @@ function clone(s: MatchState): MatchState {
     battlefields: s.battlefields.map((b) => ({ ...b, units: b.units.map(copyCard) })),
     showdown: s.showdown ? { ...s.showdown } : null,
     chain: s.chain.map((c) => ({ ...c, instance: copyCard(c.instance) })),
+    asheBanishPending: s.asheBanishPending?.map((e) => ({ ...e })), // persists across actions; deep-copied for immutability
     log: s.log,
     seq: s.seq + 1,
   }
@@ -725,7 +726,17 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
         const [card] = foe.zones.hand.splice(i, 1)
         const nm = getCard(card.cardId)?.name ?? 'a card'
         if (to === 'deck') { foe.zones.mainDeck.push({ ...card, exhausted: false, damage: 0, attached: [] }); lines.push(`Opponent revealed hand — recycled ${nm}.`) }
-        else if (to === 'banish') { foe.banished.push(card); lines.push(`Opponent revealed hand — banished ${nm}.`) }
+        else if (to === 'banish') {
+          foe.banished.push(card)
+          lines.push(`Opponent revealed hand — banished ${nm}.`)
+          // Ashe - Focused: "When they hold, return it to their hand (even if I'm no
+          // longer on the board)." Record the banished card for return on the victim's hold.
+          const srcCard = sourceIid ? getCard(findUnitAnywhere(s, sourceIid)?.cardId ?? '') : undefined
+          if (/when they hold, return it/i.test(srcCard?.text ?? '')) {
+            s.asheBanishPending = s.asheBanishPending ?? []
+            s.asheBanishPending.push({ banishedIid: card.iid, owner: p.id, victimId: foe.id })
+          }
+        }
         else { sendToTrash(foe, card); foe.discardedThisTurn = true; lines.push(`Opponent revealed hand — discarded ${nm}.`); fireDiscard(s, foe.id, [card]) }
       } else {
         lines.push('Opponent revealed hand — nothing to take.')
@@ -3472,6 +3483,22 @@ function finishBeginning(s: MatchState): MatchState {
     s = fireTriggers(s, collectSelf(s, ap, 'hold', heldUnitIids))
   }
 
+  // Ashe - Focused: "When they hold, return it to their hand." When the now-holding
+  // active player (ap) is a victim with a card banished this way, return it (the entry
+  // persists across turns and fires even if Ashe has since left the board).
+  if (holdsAny && s.asheBanishPending?.length) {
+    for (const entry of s.asheBanishPending.filter((e) => e.victimId === ap)) {
+      const victim = s.players[entry.victimId]
+      const idx = victim.banished.findIndex((c) => c.iid === entry.banishedIid)
+      if (idx >= 0) {
+        const [returned] = victim.banished.splice(idx, 1)
+        victim.zones.hand.push({ ...returned, exhausted: false, damage: 0, attached: [] })
+        s = log(s, ap, `Ashe - Focused: returned ${getCard(returned.cardId)?.name} to ${victim.name}'s hand.`)
+      }
+    }
+    s.asheBanishPending = (s.asheBanishPending ?? []).filter((e) => e.victimId !== ap)
+  }
+
   // Battlefield "when you hold here" passives for the active player.
   for (const bf of s.battlefields) {
     if (bf.controller !== ap) continue
@@ -3663,6 +3690,8 @@ function eliminate(state: MatchState, player: PlayerId, reason: string): MatchSt
   const p = s.players[player]
   if (p.out) return s
   p.out = true
+  // Ashe - Focused: an eliminated victim will never hold again — drop their pending returns.
+  if (s.asheBanishPending?.length) s.asheBanishPending = s.asheBanishPending.filter((e) => e.victimId !== player)
   // Pull their units off every battlefield into their Trash.
   for (const bf of s.battlefields) {
     const leaving = bf.units.filter((u) => u.owner === player)

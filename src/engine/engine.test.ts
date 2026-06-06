@@ -6510,4 +6510,28 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     const r = beginTurn(s)
     expect(r.players[0].zones.trash.length).toBe(1) // 3 of the 4 recycled out of the trash
   })
+
+  it('Ashe - Focused: the banished card returns to the victim on their next hold', async () => {
+    const { onPlayEffect } = await import('./effects')
+    expect(onPlayEffect(CARD_INDEX['unl-169-219']).opponentHandStrip).toEqual({ to: 'banish', nonUnit: false })
+    // Functional via an injected clone carrying the "when they hold, return it" clause.
+    const aid = injectCard('a5-ashe', "When you play me, choose an opponent. They reveal their hand. Choose a card revealed this way and banish it. When they hold, return it to their hand (even if I'm no longer on the board).", { type: 'unit', energy: 0, might: 2 })
+    const s = baseState()
+    const ashe = mk(aid, 0)
+    s.players[0].zones.hand.push(ashe)
+    const victimCard = mk(injectCard('a5-ashe-v', 'x', { type: 'unit', energy: 5, might: 5 }), 1)
+    s.players[1].zones.hand.push(victimCard)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: ashe.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].banished.some((c) => c.iid === victimCard.iid)).toBe(true) // banished from hand
+    expect(r.state.asheBanishPending?.length).toBe(1) // pending return recorded
+    // Player 1's turn: they hold bf0 → the banished card returns to their hand.
+    const s2 = { ...r.state, activePlayer: 1, turn: r.state.turn + 1 }
+    for (let i = 0; i < 6; i++) s2.players[1].zones.mainDeck.push(mk(furyRune.id, 1))
+    s2.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 1)], controller: 1 }
+    const after = beginTurn(s2)
+    expect(after.players[1].zones.hand.some((c) => c.iid === victimCard.iid)).toBe(true) // returned to hand
+    expect(after.players[1].banished.some((c) => c.iid === victimCard.iid)).toBe(false)
+    expect(after.asheBanishPending?.length ?? 0).toBe(0) // drained
+  })
 })
