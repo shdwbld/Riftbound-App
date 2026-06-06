@@ -6018,4 +6018,31 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.state.players[1].zones.base.some((u) => u.iid === e1.iid)).toBe(true) // moved to base
     expect(r.state.players[0].zones.mainDeck.length).toBe(before - 1) // e2 left alone → drew 1
   })
+
+  it('Irresistible Faefolk: when it moves to a battlefield, pulls an enemy there', () => {
+    const id = injectCard('a3-faefolk', 'When I move to a battlefield, you may move an enemy unit to that battlefield.', { name: 'Irresistible Faefolk', might: 1 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const faefolk = mk(id, 0) // ready, at base
+    s.players[0].zones.base.push(faefolk)
+    const r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: faefolk.iid, toBattlefield: 0 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(true) // pulled to Faefolk's new battlefield
+  })
+
+  it('Evelynn - Entrancing: revealing from face down pulls an enemy from elsewhere to its battlefield', () => {
+    const id = injectCard('a3-evelynn', '[Hidden][Backline]When you play me from face down on your turn, you may move an enemy unit at a different location to my battlefield.', { name: 'Evelynn - Entrancing', type: 'unit', might: 2, energy: 0, power: {} })
+    const s = baseState()
+    s.turn = 6
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    const evel = mk(id, 0, { facedown: true, hiddenTurn: 5 })
+    s.battlefields[0].facedown = evel
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = reduce(s, { type: 'REVEAL', player: 0, iid: evel.iid })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(true) // pulled to Evelynn's battlefield
+  })
 })

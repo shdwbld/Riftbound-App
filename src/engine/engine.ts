@@ -1381,11 +1381,17 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       handled = true
     }
     // Blitzcrank - Impassive: "When I hold, return me to my owner's hand." (Its
-    // "play me to a battlefield → pull an enemy" half needs battlefield-play support
-    // the engine lacks for non-Ambush units, so only the self-recall is modeled.)
+    // "play me to a battlefield → pull an enemy" half is handled in the PLAY_UNIT path.)
     if (ability.event === 'hold' && srcName === 'Blitzcrank - Impassive' && sourceIid) {
       s = bounceUnitToHand(s, sourceIid, player, 'Blitzcrank - Impassive', 0)
       s = log(s, player, `${label}: Blitzcrank returned to hand (held).`)
+      handled = true
+    }
+    // Irresistible Faefolk: "When I move to a battlefield, you may move an enemy unit
+    // to here." Auto-pulls the strongest enemy from elsewhere to Faefolk's new home.
+    if (ability.event === 'move' && srcName === 'Irresistible Faefolk' && sourceIid) {
+      const destBf = battlefieldOf(s, sourceIid)
+      if (destBf >= 0) s = pullEnemyToBf(s, player, destBf, 'Irresistible Faefolk')
       handled = true
     }
     // Sivir - Battle Mistress: "When you recycle a rune, you may exhaust me to play
@@ -2081,6 +2087,27 @@ function enemyWardenAtBf(s: MatchState, player: PlayerId): boolean {
 function friendlyUnitsEnterReadyAura(s: MatchState, player: PlayerId): boolean {
   return [...s.battlefields.flatMap((b) => b.units), ...s.players[player].zones.base]
     .some((u) => u.owner === player && /other friendly units enter ready/i.test(getCard(u.cardId)?.text ?? ''))
+}
+
+/** Auto-pull the strongest enemy unit from *another* location to battlefield
+ *  `destBf` (Blitzcrank, Irresistible Faefolk, Evelynn, Iascylla). "You may move
+ *  an enemy unit to here" — the destination is fixed, so the only choice is which
+ *  enemy; per the auto-resolve preference we pick the strongest. Triggers a
+ *  showdown/conquer if the pull contests the destination. Returns threaded state. */
+function pullEnemyToBf(s: MatchState, player: PlayerId, destBf: number, label: string): MatchState {
+  if (destBf < 0 || destBf >= s.battlefields.length) return s
+  const enemies = s.battlefields.flatMap((b, bi) =>
+    bi === destBf ? [] : b.units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit'),
+  )
+  if (!enemies.length) return s
+  const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
+  const pulled = pluckCardAnywhere(s, target.iid)
+  if (!pulled) return s
+  const priorCtrl = s.battlefields[destBf].controller
+  s.battlefields[destBf].units.push(pulled)
+  recomputeControllers(s)
+  s = log(s, player, `${label}: pulled ${getCard(pulled.cardId)?.name} to battlefield ${destBf + 1}.`)
+  return showdownOrConquerAfterEffectMove(s, destBf, pulled.iid, priorCtrl)
 }
 
 /** Record a conquered battlefield for the turn (Perched Grimwyrm's placement
@@ -5291,19 +5318,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // opponent's base; the passive above makes that 1 damage lethal.
         if (card.name === 'Blitzcrank - Impassive' && playToBf != null) {
           // "When you play me to a battlefield, you may move an enemy unit to here."
-          // Auto-pull the strongest enemy unit from another battlefield.
-          const enemies = s1.battlefields.flatMap((b, bi) => (bi === playToBf ? [] : b.units.filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit')))
-          if (enemies.length) {
-            const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
-            const pulled = pluckCardAnywhere(s1, target.iid)
-            if (pulled) {
-              const priorCtrl = s1.battlefields[playToBf].controller
-              s1.battlefields[playToBf].units.push(pulled)
-              recomputeControllers(s1)
-              s1 = log(s1, action.player, `Blitzcrank - Impassive: pulled ${getCard(pulled.cardId)?.name} to its battlefield.`)
-              s1 = showdownOrConquerAfterEffectMove(s1, playToBf, pulled.iid, priorCtrl)
-            }
-          }
+          s1 = pullEnemyToBf(s1, action.player, playToBf, 'Blitzcrank - Impassive')
         }
         if (card.name === 'Baron Nashor') {
           // "As you play me, add the Baron Pit battlefield token to the board if it's
@@ -5621,6 +5636,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         s = log(s, action.player, `Revealed ${card.name} — entered play.`)
         for (const line of applyParsed(s, s.players[action.player], onPlayEffect(card), bfi, ci.iid)) s = log(s, action.player, line)
         s = firePlayTriggers(s, action.player, ci.iid, card, 0, true) // played from [Hidden]
+        // Evelynn - Entrancing: "When you play me from face down on your turn, you may
+        // move an enemy unit at a different location to my battlefield." (Reveal-only.)
+        if (card.name === 'Evelynn - Entrancing') s = pullEnemyToBf(s, action.player, bfi, 'Evelynn - Entrancing')
       } else if (card.type === 'gear') {
         // Edge of Night: "When you play this from face down, attach it to a unit
         // you control (here)." Auto-attach to a friendly unit at this battlefield.
