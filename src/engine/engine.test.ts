@@ -5705,3 +5705,15 @@ describe('A1 trigger events — globalDefend, killWithSpell, once-per-turn', () 
     expect(pup.some((a) => a.event === 'defend' && a.scope === 'global' && a.effect.moveSourceToBf)).toBe(true)
   })
 })
+
+describe('A1.5 follow-up cards — first-move / first-win-combat self triggers', () => {
+  it('Miss Fortune - Captain: first move each turn parses to once-per-turn ready-another', () => {
+    const mf = parseTriggers({ id: 'a15-mf', text: "The first time I move each turn, you may ready something else that's exhausted." } as never)
+    expect(mf.some((a) => a.event === 'move' && a.scope === 'self' && a.oncePerTurn === true && a.effect.readyUnits === 1 && a.effect.readyExcludesSelf === true)).toBe(true)
+  })
+
+  it('Draven - Audacious: first win-combat each turn parses to once-per-turn score 1', () => {
+    const draven = parseTriggers({ id: 'a15-draven', text: 'The first time I win a combat each turn, you score 1 point.' } as never)
+    expect(draven.some((a) => a.event === 'winCombat' && a.scope === 'self' && a.oncePerTurn === true && a.effect.score === 1)).toBe(true)
+  })
+})

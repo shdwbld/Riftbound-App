@@ -491,6 +491,13 @@ function parse(text: string): ParsedEffect {
     if (w === 'another') eff.readyExcludesSelf = true // "ready ANOTHER unit" (First Mate)
     hit = true
   }
+  // "ready something else (that's exhausted)" — ready ANOTHER exhausted unit, no unit
+  // noun (Miss Fortune - Captain). The readyChoice prompt already filters to exhausted.
+  else if (/\bready something else\b/i.test(t)) {
+    eff.readyUnits += 1
+    eff.readyExcludesSelf = true
+    hit = true
+  }
 
   // Ready your RUNES: "ready up to N (friendly) runes" (Sona - Harmonious, Annie -
   // Dark Child). Distinct from readyUnits (needs the "runes" noun).

@@ -128,6 +128,10 @@ const PATTERNS: Pattern[] = [
   { event: 'death', scope: 'global', re: /the first time (?:a|an)\s+(?:friendly\s+)?units?\s+(?:you\s+control\s+)?(?:dies|is\s+defeated)\s+each\s+turn/i },
   // "The first time I conquer each turn" (Lucian - Merciless) — self conquer, once/turn.
   { event: 'conquer', scope: 'self', re: /the first time (?:i|this(?:\s+unit)?)\s+conquers?\s+each\s+turn/i },
+  // "The first time I move each turn" (Miss Fortune - Captain) — self move, once/turn.
+  { event: 'move', scope: 'self', re: /the first time (?:i|this(?:\s+unit)?)\s+moves?\s+each\s+turn/i },
+  // "The first time I win a combat each turn" (Draven - Audacious) — self winCombat, once/turn.
+  { event: 'winCombat', scope: 'self', re: /the first time (?:i|this(?:\s+unit)?)\s+wins?(?:\s+a)?\s+combat\s+each\s+turn/i },
 ]
 
 /** The effect clause following a trigger phrase: from the phrase's end to the
