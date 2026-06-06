@@ -6614,4 +6614,33 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     expect(r3.error).toBeFalsy()
     expect(r3.state.battlefields[0].units.find((u) => u.iid === other.iid)?.tempMight ?? 0).toBe(0)
   })
+
+  it('Sumpworks Map: an opponent scoring makes its controller draw 1', () => {
+    const s = baseState()
+    s.players[1].zones.base.push(mk('unl-085-219', 1)) // real Sumpworks Map (gear)
+    for (let i = 0; i < 4; i++) s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1)) // cards to draw
+    // Player 0 holds bf0 → scores on their Beginning Phase.
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 0)], controller: 0 }
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyRune.id, 0)) // avoid deck-out
+    const handBefore = s.players[1].zones.hand.length
+    const r = beginTurn(s)
+    expect(r.players[0].points).toBeGreaterThan(0) // player 0 scored by holding
+    expect(r.players[1].zones.hand.length).toBe(handBefore + 1) // Sumpworks Map drew 1
+  })
+
+  it("Ripper's Bay: returning a unit here to hand lets its owner pay 1 to channel a rune exhausted", () => {
+    const s = baseState()
+    s.battlefields[0] = { cardId: 'unl-214-219', units: [mk(furyUnit.id, 0)], controller: 0 } // bf0 IS Ripper's Bay
+    const unit = s.battlefields[0].units[0]
+    s.players[0].pool = { energy: 1, power: {} } // affords the optional 1
+    s.players[0].zones.runeDeck.push(mk(furyRune.id, 0)) // a rune to channel
+    const bounce = mk(injectCard('a5-bounce', "Return a unit to its owner's hand.", { type: 'spell', energy: 0, power: {} }), 0)
+    s.players[0].zones.hand.push(bounce)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: bounce.iid, targets: [unit.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === unit.iid)).toBe(true) // returned to hand
+    expect(r.state.players[0].zones.runePool.some((x) => x.exhausted)).toBe(true) // channeled a rune exhausted
+  })
 })

@@ -611,6 +611,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.score) {
     p.points += e.score
     emit({ kind: 'score', player: p.id, amount: e.score })
+    fireOpponentScore(s, p.id) // Sumpworks Map: opponents draw when you score
     lines.push(`Scored ${e.score} point(s).`)
     if (s.winner == null && p.points >= s.pointsToWin) { s.winner = p.id; s.phase = 'gameover' }
   }
@@ -1814,6 +1815,22 @@ function fireOpponentUnitPlay(s: MatchState, player: PlayerId, playedIid: string
   return s
 }
 
+/** Fire OPPONENTS' "when an opponent scores, draw N" gear as `scorer` scores
+ *  (Sumpworks Map). Mutates `s` in place (draws + logs), so it can be called right
+ *  after each score emit without the caller reassigning its state. */
+function fireOpponentScore(s: MatchState, scorer: PlayerId): void {
+  for (let pid = 0; pid < s.players.length; pid++) {
+    if (pid === scorer || s.players[pid]?.out) continue
+    for (const g of allGearInPlay(s).filter((x) => x.owner === pid)) {
+      const m = (getCard(g.cardId)?.text ?? '').toLowerCase().match(/when an opponent scores,?\s*draw (\d+)/)
+      if (!m) continue
+      const n = parseInt(m[1], 10) || 1
+      drawN(s.players[pid], n)
+      s.log.push({ turn: s.turn, player: pid, text: `${getCard(g.cardId)?.name}: drew ${n} (an opponent scored).` })
+    }
+  }
+}
+
 /** Fire "when you stun an enemy unit" global triggers (Eclipse Herald — ready me
  *  + give me +1 Might; Leona - Radiant Dawn — buff a friendly unit). Invoked once
  *  per stun resolution in which the controller stunned ≥1 enemy unit (so a
@@ -2161,6 +2178,7 @@ function makeBfApi(s: MatchState): BfApi {
     score(player, n) {
       s.players[player].points += n
       emit({ kind: 'score', player, amount: n })
+      fireOpponentScore(s, player) // Sumpworks Map
       note(player, `Scored ${n} point(s).`)
     },
     predict(player) {
@@ -3463,6 +3481,7 @@ function finishBeginning(s: MatchState): MatchState {
     if (scorable > 0) {
       p.points += scorable * RULES.pointsPerBattlefield
       emit({ kind: 'score', player: ap, amount: scorable * RULES.pointsPerBattlefield })
+      fireOpponentScore(s, ap) // Sumpworks Map
       s = log(s, ap, `Scored ${scorable} point(s) (holding ${scorable} battlefield(s)).`)
     }
   }
@@ -3745,6 +3764,7 @@ function awardPoints(
   p.points += amount
   if (kind === 'hold') p.holdPointsThisTurn = (p.holdPointsThisTurn ?? 0) + amount // Needlessly Large Yordle
   emit({ kind: 'score', player, amount })
+  fireOpponentScore(s, player) // Sumpworks Map: opponents draw when this player scores
   if (kind === 'conquer') emit({ kind: 'conquer', player })
   let next = log(s, player, `${p.name} ${reason} (+${amount}).`)
   if (next.players[player].points >= next.pointsToWin) next = endGame(next, player)
