@@ -6683,4 +6683,19 @@ describe('Phase B — card wiring (conditional Might)', () => {
     s.battlefields[0].units.push(mk(furyUnit.id, 0)) // another friendly unit here
     expect(combatMightAt(s, 0, r, 'attacker') - alone).toBe(1)
   })
+
+  it('Darius - Trifarian: playing your second card gives him +2 Might this turn and readies him', () => {
+    const s = baseState()
+    const dar = mk('ogn-027-298', 0, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [dar], controller: 0 }
+    s.players[0].cardsPlayedThisTurn = 1 // already played one card this turn
+    const spell = mk(injectCard('b-darius-spell', 'Draw 1.', { type: 'spell', energy: 0, power: {} }), 0)
+    s.players[0].zones.hand.push(spell)
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [], payment: emptyPayment() }) // the 2nd card
+    expect(r.error).toBeFalsy()
+    const d = r.state.battlefields[0].units.find((u) => u.iid === dar.iid)
+    expect(d?.tempMight).toBe(2) // +2 Might this turn
+    expect(d?.exhausted).toBe(false) // readied
+  })
 })

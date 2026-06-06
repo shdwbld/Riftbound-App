@@ -1831,6 +1831,22 @@ function fireOpponentScore(s: MatchState, scorer: PlayerId): void {
   }
 }
 
+/** Darius - Trifarian: "When you play your second card in a turn, give me +N Might
+ *  this turn and ready me." Call right after `cardsPlayedThisTurn` is incremented;
+ *  fires only on the transition to the 2nd card. Mutates `s` in place. */
+function fireSecondCardPlayed(s: MatchState, player: PlayerId): void {
+  if (s.players[player]?.cardsPlayedThisTurn !== 2) return
+  for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
+    if (u.owner !== player) continue
+    const tx = (getCard(u.cardId)?.text ?? '').toLowerCase()
+    if (!/when you play your second card in a turn/.test(tx)) continue
+    const bm = tx.match(/give me \+(\d+)\s*(?::rb_might:|might) this turn/)
+    if (bm) u.tempMight = (u.tempMight ?? 0) + parseInt(bm[1], 10)
+    if (/ready me/.test(tx)) u.exhausted = false
+    emit({ kind: 'buff', iid: u.iid, player })
+  }
+}
+
 /** Fire "when you stun an enemy unit" global triggers (Eclipse Herald — ready me
  *  + give me +1 Might; Leona - Radiant Dawn — buff a friendly unit). Invoked once
  *  per stun resolution in which the controller stunned ≥1 enemy unit (so a
@@ -5540,6 +5556,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // LEGION is "on" if you already played another Main Deck card this turn.
       const legionActive = (p.cardsPlayedThisTurn ?? 0) >= 1
       p.cardsPlayedThisTurn = (p.cardsPlayedThisTurn ?? 0) + 1
+      fireSecondCardPlayed(s, action.player) // Darius - Trifarian
       // The Academy grant applies to one spell, consumed when that spell is played.
       if (card.type === 'spell') p.grantRepeatNextSpell = false
 
@@ -7080,6 +7097,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (err) return fail(state, err)
       removeFromZone(p, 'hand', action.iid)
       p.cardsPlayedThisTurn = (p.cardsPlayedThisTurn ?? 0) + 1
+      fireSecondCardPlayed(s, action.player) // Darius - Trifarian
       s.chain.push({
         id: makeChainId(),
         kind: 'counter',
