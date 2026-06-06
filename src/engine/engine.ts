@@ -5614,7 +5614,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // A non-Ambush unit whose rules let it be played straight to a battlefield
         // (Blitzcrank - Impassive, Mischievous Marai, Shadow). Honoured only when the
         // player chose a destination. Shadow "enters ready" when played to a battlefield.
-        const canPlayToBf = !kw.ambush && /play (?:me|this) (?:only )?to (?:a|an|any|its)?\s*(?:open |occupied enemy )?battlefield/i.test(card.text ?? '')
+        // Miss Fortune - Buccaneer aura: "Friendly units may be played to open battlefields
+        // while I'm here." When the player controls her AT a battlefield, any friendly unit
+        // may be played to an EMPTY (open) battlefield, even without its own play-to-bf text.
+        const mfOpenBfAura = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
+          (u) => u.owner === action.player && battlefieldOf(s, u.iid) >= 0 && /friendly units may be played to open battlefields/i.test(getCard(u.cardId)?.text ?? ''),
+        )
+        const canPlayToBf = (!kw.ambush && /play (?:me|this) (?:only )?to (?:a|an|any|its)?\s*(?:open |occupied enemy )?battlefield/i.test(card.text ?? ''))
+          || (mfOpenBfAura && action.toBattlefield != null && (s.battlefields[action.toBattlefield]?.units.length ?? 0) === 0)
         // Placement predicates — which battlefield is a legal destination.
         const wantsOpenBf = canPlayToBf && /open battlefield/i.test(card.text ?? '')
         const wantsEnemyOccupiedBf = canPlayToBf && /occupied enemy battlefield/i.test(card.text ?? '')
@@ -5744,6 +5751,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             const cap = parseInt(allM[1], 10)
             for (const v of s1.battlefields.flatMap((b) => b.units).filter((u) => u.iid !== ci.iid && isUnit(u) && mightOf(u) <= cap).map((u) => u.iid))
               s1 = bounceUnitToHand(s1, v, action.player, card.name, 0)
+          }
+          // Dropboarder: "When you play me, if you control two or more gear, ready me."
+          const gearReadyM = txt.match(/if you control (two or more|\d+ or more|\d+\+) gear, ready me/)
+          if (gearReadyM) {
+            const need = /two/.test(gearReadyM[1]) ? 2 : parseInt(gearReadyM[1], 10) || 2
+            if (allGearInPlay(s1).filter((g) => g.owner === action.player).length >= need) {
+              const self = findUnitAnywhere(s1, ci.iid)
+              if (self) { self.exhausted = false; emit({ kind: 'buff', iid: self.iid, player: action.player }) }
+            }
           }
         }
         // Keeper of Masks: when played, play two Reflection copies of itself here.

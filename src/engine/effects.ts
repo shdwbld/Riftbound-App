@@ -859,7 +859,9 @@ function parse(text: string): ParsedEffect {
 
   // "ready me/myself/this" — un-exhaust the source unit (vs. `readyUnits`, a
   // choose-which-to-ready effect that needs a unit noun).
-  if (/\bready (?:me|myself|this)\b/.test(t)) { eff.readySelf = true; hit = true }
+  // "ready me" — but NOT when gated on an unparseable "if you control N gear" condition
+  // (Dropboarder), which a bespoke PLAY_UNIT handler resolves so it doesn't ready unconditionally.
+  if (/\bready (?:me|myself|this)\b/.test(t) && !/if you control [^.]*gear, ready me/.test(t)) { eff.readySelf = true; hit = true }
 
   // "spend a/its/my/N buff(s)" — a cost paid by removing buff counters (Wildclaw
   // Shaman, Monastery of Hirana, Call to Glory, Kraken Hunter, …). The actual

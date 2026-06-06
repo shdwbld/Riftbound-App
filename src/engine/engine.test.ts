@@ -6742,4 +6742,42 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.players[1].zones.hand.some((c) => c.iid === enemySmall.iid)).toBe(true) // enemy ≤2 returned
     expect(r.state.battlefields[0].units.some((u) => u.iid === enemyBig.iid)).toBe(true) // >2 stays
   })
+
+  it('Dropboarder: enters ready only if you control 2+ gear', () => {
+    const did = injectCard('b-dropboarder', 'When you play me, if you control two or more gear, ready me.', { type: 'unit', energy: 0, might: 2 })
+    // 2 gear → readied.
+    const s = baseState()
+    for (let i = 0; i < 2; i++) s.players[0].zones.base.push(mk(injectCard(`b-drop-g${i}`, '[Equip]', { type: 'gear', energy: 1 }), 0))
+    const d = mk(did, 0)
+    s.players[0].zones.hand.push(d)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === d.iid)?.exhausted).toBe(false)
+    // Only 1 gear → stays exhausted.
+    const s2 = baseState()
+    s2.players[0].zones.base.push(mk(injectCard('b-drop-solo', '[Equip]', { type: 'gear', energy: 1 }), 0))
+    const d2 = mk(did, 0)
+    s2.players[0].zones.hand.push(d2)
+    const r2 = reduce(s2, { type: 'PLAY_UNIT', player: 0, iid: d2.iid, payment: emptyPayment() })
+    expect(r2.state.players[0].zones.base.find((u) => u.iid === d2.iid)?.exhausted).toBe(true)
+  })
+
+  it('Miss Fortune - Buccaneer: friendly units may be played to open battlefields while she is in play', () => {
+    const plainId = injectCard('b-mf-plain', 'x', { type: 'unit', energy: 0, might: 2 }) // no own play-to-bf text
+    // Without MF: a plain unit can't go straight to a battlefield — it lands in base.
+    const s0 = baseState()
+    const p0 = mk(plainId, 0)
+    s0.players[0].zones.hand.push(p0)
+    const r0 = reduce(s0, { type: 'PLAY_UNIT', player: 0, iid: p0.iid, payment: emptyPayment(), toBattlefield: 1 })
+    expect(r0.state.battlefields[1].units.some((u) => u.iid === p0.iid)).toBe(false)
+    expect(r0.state.players[0].zones.base.some((u) => u.iid === p0.iid)).toBe(true)
+    // With MF in play (at bf0): the same plain unit may be played to the open bf1.
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk('ogn-193-298', 0)], controller: 0 }
+    const p1 = mk(plainId, 0)
+    s.players[0].zones.hand.push(p1)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: p1.iid, payment: emptyPayment(), toBattlefield: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.some((u) => u.iid === p1.iid)).toBe(true) // played to the open battlefield
+  })
 })
