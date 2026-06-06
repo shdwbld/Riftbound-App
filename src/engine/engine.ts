@@ -1163,6 +1163,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     const skipGenericApply = srcName === 'Twisted Fate - Gambler' || srcName === 'Teemo - Strategist'
       || (srcName === 'Sivir - Battle Mistress' && ability.event === 'recycleRune')
       || (srcName === 'Ivern - Green Father' && (ability.event === 'conquer' || ability.event === 'hold'))
+      || srcName === 'Volibear - Furious' || srcName === 'Sivir - Ambitious'
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1335,6 +1336,36 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // Adaptatron: "When I conquer, you may kill a gear. If you do, buff me." The
     // generic apply already placed the self-buff; keep it only if a (detached, lowest-
     // cost) gear is sacrificed, otherwise revert it.
+    // Volibear - Furious: "When I attack, deal 5 damage split among any number of
+    // enemy units here." Auto-split greedily, killing the weakest enemies first.
+    if (ability.event === 'attack' && srcName === 'Volibear - Furious' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      if (bi >= 0) {
+        let remaining = 5
+        const enemies = s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit').sort((a, b) => mightOf(a) - mightOf(b))
+        const dead: EngineCard[] = []
+        for (const en of enemies) {
+          if (remaining <= 0) break
+          const dmg = Math.min(remaining, Math.max(1, mightOf(en)))
+          remaining -= dmg
+          dead.push(...applyTargetDamage(s, en.iid, dmg, true, player))
+        }
+        if (remaining < 5) s = log(s, player, `${label}: Volibear - Furious dealt 5 split among enemies here.`)
+        s = fireDeaths(s, dead, player)
+      }
+      handled = true
+    }
+    // Sivir - Ambitious: "When I conquer after an attack, if you assigned 5+ excess
+    // damage to enemy units, you may deal that much to an enemy unit." (auto: strongest.)
+    if (ability.event === 'conquer' && srcName === 'Sivir - Ambitious' && excess >= 5) {
+      const enemies = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)].filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit')
+      if (enemies.length) {
+        const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
+        s = log(s, player, `${label}: Sivir - Ambitious dealt ${excess} to ${getCard(target.cardId)?.name}.`)
+        s = fireDeaths(s, applyTargetDamage(s, target.iid, excess, true, player), player)
+      }
+      handled = true
+    }
     if (ability.event === 'conquer' && srcName === 'Adaptatron' && sourceIid) {
       const self = findUnitAnywhere(s, sourceIid)
       const gear = p.zones.base.filter((g) => getCard(g.cardId)?.type === 'gear').sort((a, b) => cardCost(a) - cardCost(b))[0]

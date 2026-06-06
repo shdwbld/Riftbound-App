@@ -5813,4 +5813,37 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(r.error).toBeUndefined()
     expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)).toBe(false)
   })
+
+  it('Volibear - Furious: on attack, deals 5 split among enemy units here', () => {
+    const voli = injectCard('a2-voli', 'When I attack, deal 5 damage split among any number of enemy units here.', { name: 'Volibear - Furious', might: 9 })
+    const s = baseState()
+    const w1 = mk(injectCard('a2-vw1', 'A unit.', { might: 2 }), 1, { exhausted: true })
+    const w2 = mk(injectCard('a2-vw2', 'A unit.', { might: 2 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [w1, w2], controller: 1 }
+    const attacker = mk(voli, 0, { stunned: true } as Partial<EngineCard>) // stunned → no combat dmg, isolates the split
+    s.players[0].zones.base.push(attacker)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    const enemyIids = r.state.battlefields[0].units.filter((u) => u.owner === 1).map((u) => u.iid)
+    expect(enemyIids).not.toContain(w1.iid) // killed by the split
+    expect(enemyIids).not.toContain(w2.iid)
+  })
+
+  it('Sivir - Ambitious: on conquer with 5+ excess, deals that much to the strongest enemy', () => {
+    const sivir = injectCard('a2-sivir', 'When I conquer after an attack, if you assigned 5 or more excess damage to enemy units, you may deal that much to an enemy unit.', { name: 'Sivir - Ambitious', might: 7 })
+    const s = baseState()
+    const weakDef = mk(injectCard('a2-wd', 'A unit.', { might: 1 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [weakDef], controller: 1 }
+    const bigElsewhere = mk(injectCard('a2-big2', 'A unit.', { might: 4 }), 1)
+    s.battlefields[1].units.push(bigElsewhere)
+    const attacker = mk(sivir, 0)
+    s.players[0].zones.base.push(attacker)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === bigElsewhere.iid)).toBe(false) // dealt 6 excess → killed
+  })
 })
