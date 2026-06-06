@@ -7289,6 +7289,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             }
           break
         }
+        // Gear removal fail-safes (sandbox): trash or bounce an attached/unattached
+        // gear by its iid (reuses the real killGear/bounceGear effect plumbing).
+        case 'killGear': if (action.iid) killGearByIid(s, action.iid); break
+        case 'bounceGear': if (action.iid) bounceGearByIid(s, action.iid); break
         case 'draw': drawN(s.players[action.player], action.amount ?? 1); break
         case 'channel': channelN(s.players[action.player], action.amount ?? 1); break
         case 'channelExhausted': channelN(s.players[action.player], action.amount ?? 1, true); break
@@ -7337,6 +7341,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (!u) break
           switch (action.flag) {
             case 'assault': u.grantAssault = Math.max(0, (u.grantAssault ?? 0) + (action.amount ?? 1)); break
+            case 'shield': u.grantShield = Math.max(0, (u.grantShield ?? 0) + (action.amount ?? 1)); break
+            case 'tank': u.grantTank = !u.grantTank; break
+            case 'deflect': u.grantDeflect = Math.max(0, (u.grantDeflect ?? 0) + (action.amount ?? 1)); break
             case 'ganking': u.grantGanking = !u.grantGanking; break
             case 'temporary': u.temporary = !u.temporary; break
             case 'deathShield': u.deathShield = !u.deathShield; break

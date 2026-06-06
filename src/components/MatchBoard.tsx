@@ -557,7 +557,7 @@ export default function MatchBoard({
         ({ type: 'OVERRIDE', player: owner, op, iid: ci.iid, ...extra }) as Action
       const mv = (toZone: OverrideZone | undefined, toBattlefield: number | undefined, bottom?: boolean): Action =>
         ({ type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone, toBattlefield, bottom }) as Action
-      const cc = ci as { stunned?: boolean; grantGanking?: boolean; temporary?: boolean; deathShield?: boolean; banishShield?: boolean; token?: boolean; grantAssault?: number; buffs?: number }
+      const cc = ci as { stunned?: boolean; grantGanking?: boolean; temporary?: boolean; deathShield?: boolean; banishShield?: boolean; token?: boolean; grantAssault?: number; buffs?: number; grantShield?: number; grantTank?: boolean; grantDeflect?: number }
       const mark = (on?: boolean) => (on ? '✓ ' : '○ ')
       if (card?.type === 'unit') {
         statuses.push(
@@ -571,6 +571,11 @@ export default function MatchBoard({
           { label: `${mark(cc.token)}Token`, action: ov('grant', { flag: 'token' }) },
           { label: `[Assault] ${cc.grantAssault ?? 0}　+1`, action: ov('grant', { flag: 'assault', amount: 1 }) },
           { label: `[Assault] ${cc.grantAssault ?? 0}　−1`, action: ov('grant', { flag: 'assault', amount: -1 }) },
+          { label: `[Shield] ${cc.grantShield ?? 0}　+1`, action: ov('grant', { flag: 'shield', amount: 1 }) },
+          { label: `[Shield] ${cc.grantShield ?? 0}　−1`, action: ov('grant', { flag: 'shield', amount: -1 }) },
+          { label: `${mark(cc.grantTank)}[Tank]`, action: ov('grant', { flag: 'tank' }) },
+          { label: `[Deflect] ${cc.grantDeflect ?? 0}　+1`, action: ov('grant', { flag: 'deflect', amount: 1 }) },
+          { label: `[Deflect] ${cc.grantDeflect ?? 0}　−1`, action: ov('grant', { flag: 'deflect', amount: -1 }) },
           { label: `Buff ${cc.buffs ?? 0}　+1`, action: ov('buff') },
           { label: `Buff ${cc.buffs ?? 0}　−1`, action: ov('unbuff') },
           { label: 'Clear summoning sickness', action: ov('grant', { flag: 'sickness' }) },
@@ -579,7 +584,11 @@ export default function MatchBoard({
           { label: '◍ Cycle marker', action: ov('marker') },
           { label: '○ Clear marker', action: ov('marker', { value: -1 }) },
         )
-        if (zone === 'battlefield') statuses.push({ label: '↩ Recall to base (exhaust)', action: ov('toBase') })
+        if (zone === 'battlefield') {
+          statuses.push({ label: '↩ Recall to base (exhaust)', action: ov('toBase') })
+          statuses.push({ label: `${mark((cc.buffs ?? 0) >= 1)}[Mighty] (buff)`, action: ov((cc.buffs ?? 0) >= 1 ? 'unbuff' : 'buff') })
+        }
+        if (zone !== 'hand') statuses.push({ label: '↩ Bounce to hand', action: mv('hand', undefined) })
         groups.push({ label: 'Might & damage', items: [
           { label: 'Might +1', action: ov('mightUp') },
           { label: 'Might +5', action: ov('mightUp', { amount: 5 }) },
@@ -590,6 +599,7 @@ export default function MatchBoard({
           { label: 'Set damage 2', action: ov('setDamage', { value: 2 }) },
           { label: 'Set damage 4', action: ov('setDamage', { value: 4 }) },
           { label: 'Set damage 6', action: ov('setDamage', { value: 6 }) },
+          { label: '♥ Heal (clear damage)', action: ov('setDamage', { value: 0 }) },
           { label: 'Buff (net)… ⇄', stepper: { title: 'Net buff counters', make: (n: number) => (n >= 0 ? ov('buff', { amount: n }) : ov('unbuff', { amount: -n })) } },
           { label: 'Might (net, this turn)… ⇄', stepper: { title: 'Net temp Might (this turn)', make: (n: number) => (n >= 0 ? ov('mightUp', { amount: n }) : ov('mightDown', { amount: -n })) } },
           { label: 'Set temp Might (exact)… ⇄', stepper: { title: 'Set temp Might to (this turn)', make: (n: number) => ov('setTempMight', { value: n }) } },
@@ -646,6 +656,24 @@ export default function MatchBoard({
           { label: '⊗ Remove (banish)', action: ov('removeFacedown', { flag: 'banish' }) },
         ] })
       }
+      // Gear removal: an unattached gear card → kill/bounce itself; a unit → kill or
+      // bounce each gear attached to it (reuses the real killGear/bounceGear plumbing).
+      if (card?.type === 'gear') {
+        groups.push({ label: 'Gear', items: [
+          { label: '⊗ Kill (send to trash)', action: ov('killGear') },
+          { label: '↩ Bounce to hand', action: ov('bounceGear') },
+        ] })
+      }
+      if (card?.type === 'unit' && ci.attached.length) {
+        const gearItems: MenuItem[] = []
+        for (const ref of ci.attached) {
+          const [gid, giid] = ref.split('|')
+          const gn = getCard(gid)?.name ?? 'gear'
+          gearItems.push({ label: `⊗ Kill ${gn}`, action: ov('killGear', { iid: giid }) })
+          gearItems.push({ label: `↩ Bounce ${gn} to hand`, action: ov('bounceGear', { iid: giid }) })
+        }
+        groups.push({ label: 'Attached gear', items: gearItems })
+      }
       const moveItems: MenuItem[] = []
       if (zone !== 'hand') moveItems.push({ label: 'Hand', action: mv('hand', undefined) })
       if (zone !== 'base') moveItems.push({ label: 'Base', action: mv('base', undefined) })
@@ -696,6 +724,7 @@ export default function MatchBoard({
       items.push({ label: '🛠 Draw 3', action: O('draw', { amount: 3 }) })
       items.push({ label: '🛠 Mill 1', action: O('mill', { amount: 1 }) })
       items.push({ label: '🛠 Shuffle deck', action: O('shuffle') })
+      items.push({ label: '👁 Reveal top card (Vision)', action: { type: 'REVEAL_TOP', player: owner } as Action })
     } else if (kind === 'runeDeck') {
       items.push({ label: '🔎 Search rune deck…', openSearch: { source: 'runeDeck', owner } })
       items.push({ label: '🛠 Channel 1', action: O('channel') })

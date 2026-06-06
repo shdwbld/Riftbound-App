@@ -25,6 +25,7 @@ export type OverrideOp =
   | 'points' | 'xp' | 'energy' | 'power' | 'shuffle' | 'mill' | 'damage' | 'spawn'
   | 'setDamage' | 'grant' | 'readyAll' | 'marker'
   | 'channelExhausted' | 'setTempMight' | 'sacrifice' | 'tutorShuffle'
+  | 'killGear' | 'bounceGear'
   | 'revealFacedown' | 'removeFacedown' | 'bulkMove' | 'swapZone'
   // Advanced game-state overrides (can break a game — that's the point).
   | 'setActive' | 'setTurn' | 'setPointsToWin' | 'setWinner' | 'setPhase'

@@ -207,6 +207,7 @@ export default function ControlHUD({
                 <button className={BTN} onClick={() => setBrowse((b) => !b)}>{browse ? 'Hide deck' : 'Browse / tutor'}</button>
                 <button className={BTN} onClick={() => pov('shuffle')}>Shuffle</button>
                 <button className={BTN} onClick={() => pov('mill', { amount: 1 })}>Mill 1</button>
+                <button className={BTN} title="Peek the top card (opens the keep/recycle Vision choice)" onClick={() => onAct({ type: 'REVEAL_TOP', player: target } as Action)}>👁 Reveal top</button>
                 <button className={BTN} onClick={() => pov('readyAll')}>Ready all</button>
               </div>
               {browse && (
@@ -225,13 +226,15 @@ export default function ControlHUD({
               )}
               {p.zones.trash.length > 0 && (
                 <>
-                  <div className={LABEL}>Trash ({p.zones.trash.length}) — click to take back</div>
+                  <div className={LABEL}>Trash ({p.zones.trash.length}) — {query.trim() ? 'filtered, click to retrieve' : 'click to take back'}</div>
                   <div className="max-h-24 space-y-0.5 overflow-y-auto">
-                    {p.zones.trash.map((c) => (
-                      <button key={c.iid} onClick={() => pov('move', { iid: c.iid, toZone: 'hand' })} className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px] text-white/70 hover:bg-white/10">
-                        ↩ {bare(getCard(c.cardId)?.name) || c.cardId}
-                      </button>
-                    ))}
+                    {p.zones.trash
+                      .filter((c) => !query.trim() || (getCard(c.cardId)?.name ?? '').toLowerCase().includes(query.trim().toLowerCase()))
+                      .map((c) => (
+                        <button key={c.iid} onClick={() => pov('move', { iid: c.iid, toZone: 'hand' })} className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px] text-white/70 hover:bg-white/10">
+                          ↩ {bare(getCard(c.cardId)?.name) || c.cardId}
+                        </button>
+                      ))}
                   </div>
                 </>
               )}
@@ -397,6 +400,8 @@ function SelectedTab({
               <button className={BTN} onClick={() => ov('marker')}>◍ Marker</button>
               <button className={BTN} onClick={() => ov('marker', { value: -1 })}>○ Clear</button>
               {zone === 'battlefield' && <button className={BTN} onClick={() => ov('toBase')}>↩ Recall to base</button>}
+              {zone !== 'hand' && <button className={BTN} title="Return this card to its owner's hand" onClick={() => mv('hand', undefined)}>↩ To hand</button>}
+              {zone === 'battlefield' && <button className={BTN} title="[Mighty] = at a battlefield with ≥1 buff; toggles a buff counter" onClick={() => ov((cc.buffs ?? 0) >= 1 ? 'unbuff' : 'buff')}>{mark((cc.buffs ?? 0) >= 1)}[Mighty]</button>}
             </div>
           </div>
         )}
@@ -420,6 +425,25 @@ function SelectedTab({
               <button className={BTN} onClick={() => ov('setDamage', { value: 2 })}>2</button>
               <button className={BTN} onClick={() => ov('setDamage', { value: 4 })}>4</button>
               <button className={BTN} onClick={() => ov('setDamage', { value: 6 })}>6</button>
+              <button className={BTN} title="Clear all damage" onClick={() => ov('setDamage', { value: 0 })}>♥ Heal</button>
+            </div>
+            {/* Combat keywords granted for this turn (wear off at end of turn). */}
+            <div className="flex flex-wrap gap-1">
+              <button className={BTN} onClick={() => ov('grant', { flag: 'shield', amount: 1 })}>[Shield] +1 ({cc.grantShield ?? 0})</button>
+              <button className={BTN} onClick={() => ov('grant', { flag: 'shield', amount: -1 })}>−1</button>
+              <button className={BTN} onClick={() => ov('grant', { flag: 'tank' })}>{mark(cc.grantTank)}[Tank]</button>
+              <button className={BTN} onClick={() => ov('grant', { flag: 'deflect', amount: 1 })}>[Deflect] +1 ({cc.grantDeflect ?? 0})</button>
+              <button className={BTN} onClick={() => ov('grant', { flag: 'deflect', amount: -1 })}>−1</button>
+            </div>
+          </div>
+        )}
+
+        {card?.type === 'gear' && (
+          <div className={SECTION}>
+            <div className={LABEL}>Gear</div>
+            <div className="flex flex-wrap gap-1">
+              <button className={BTN} title="Send this gear to its owner's trash" onClick={() => ov('killGear')}>⊗ Kill (trash)</button>
+              <button className={BTN} title="Return this gear to its owner's hand" onClick={() => ov('bounceGear')}>↩ Bounce to hand</button>
             </div>
           </div>
         )}
