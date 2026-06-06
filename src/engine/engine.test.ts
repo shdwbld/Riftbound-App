@@ -4069,6 +4069,28 @@ describe('Viktor deck — minor faithfulness', () => {
     expect(r.state.players[1].zones.hand.length - before).toBe(2) // controller drew 2
   })
 
+  it('Hidden Blade: an unrestricted "kill a unit" can target your OWN unit at a battlefield', () => {
+    const spellId = injectCard('hb-own', 'Kill a unit at a battlefield. Its controller draws 2.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const mine = mk(furyUnit.id, 0)
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0] = { cardId: battlefield.id, units: [mine], controller: 0 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const tgts = getLegalTargets(s, CARD_INDEX[spellId], 0)
+    expect(tgts).toContain(mine.iid) // killing your own (to draw 2) is legal
+    expect(tgts).toContain(enemy.iid)
+  })
+
+  it('Eye of the Herald: an attached gear plays a Recruit token when its host moves', () => {
+    const s = baseState()
+    const host = mk(furyUnit.id, 0, { attached: ['sfd-153-221|eoth-1'] }) // Eye of the Herald attached
+    s.players[0].zones.base.push(host)
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [host.iid], toBattlefield: 0 })
+    expect(r.error).toBeFalsy()
+    const tokens = r.state.battlefields[0].units.filter((u) => u.iid !== host.iid)
+    expect(tokens.length).toBeGreaterThan(0) // the gear's "When I move, play a Recruit token here" fired
+  })
+
   it('a -Might debuff respects "to a minimum of 1 Might"', () => {
     const targetId = injectCard('floor-target', 'A unit.', { might: 3 })
     const spellId = injectCard('floor-spell', 'Give a unit -4 :rb_might: this turn, to a minimum of 1 :rb_might:.', { type: 'spell', energy: 0, power: {} })

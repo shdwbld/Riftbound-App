@@ -890,7 +890,9 @@ function parse(text: string): ParsedEffect {
               ? 'friendly' // buffs / keyword grants help your own units
               : eff.bounce || eff.moveToBase || eff.moveUnit
                 ? 'any' // a generic "return / move a unit" can hit either side
-                : 'enemy' // damage / kill / debuff default to enemies
+                : eff.kill && !/damage|deal /.test(t)
+                  ? 'any' // an unrestricted "kill a unit" may target either side — e.g. Hidden Blade, where killing YOUR OWN unit is how you draw 2
+                  : 'enemy' // damage / debuff default to enemies
   }
 
   // [Level N][>] activated gate (Wuju Apprentice — "[Level 6][>] … draw 1"): a
