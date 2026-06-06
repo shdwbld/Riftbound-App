@@ -29,6 +29,7 @@ import ChainResponsePopup from './ChainResponsePopup'
 import ControlHUD from './ControlHUD'
 import PingLayer, { type PingData } from './PingLayer'
 import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
+import { useFitToViewport } from '../lib/useFitToViewport'
 
 /** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
 type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; moveGearIid?: { gearIid: string; fromUnitIid: string; owner: PlayerId }; stepper?: { title: string; make: (n: number) => Action }; openSearch?: { source: SearchSource; owner: PlayerId } }
@@ -330,6 +331,10 @@ export default function MatchBoard({
   const prevActiveRef = useRef(match.activePlayer)
   const firstBloodRef = useRef(false)
   const winnerAnnouncedRef = useRef(false)
+  // Auto-fit the board to the viewport (shrink-only) so the whole play area stays
+  // visible at any browser zoom. See useFitToViewport for the measure/scale logic.
+  const fitWrapRef = useRef<HTMLDivElement>(null)
+  const fitScalerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     // A turn just started for a new active player → the begin-turn draw gets the
     // "breath" pause + flip-zoom reveal (vs an immediate reveal for mid-turn draws).
@@ -872,6 +877,12 @@ export default function MatchBoard({
               ? { text: '✦ Your turn — play cards and move units', cls: 'border-emerald-400/40 bg-emerald-500/10 text-emerald-100' }
               : { text: `${activeName}'s turn`, cls: 'border-white/15 bg-white/5 text-white/60' }
 
+  // Recompute the fit on layout shifts that don't fire a window resize: the left
+  // rail appearing/collapsing (sandbox) and the opponent count changing both alter
+  // the center column's available width. Content-height changes are caught by the
+  // ResizeObserver inside the hook.
+  useFitToViewport(fitScalerRef, fitWrapRef, [match.sandbox, hudOpen, opponents.length])
+
   return (
     <div
       className="flex flex-col gap-3 xl:flex-row xl:items-start"
@@ -894,7 +905,12 @@ export default function MatchBoard({
         --mat-max so zones can't sprawl on wide screens (cap on a block child, not
         the flex-1 element, so flex-grow and auto-margins don't fight). */}
     <div ref={rootRef} className={`min-w-0 flex-1 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
-    <div className="mx-auto w-full max-w-[var(--mat-max)] space-y-3">
+    {/* Board content auto-scales to fit the viewport. fitWrap reserves the SCALED
+        height; fitScaler carries the transform. The overlay tail below stays
+        OUTSIDE this wrapper so its position:fixed elements aren't re-anchored by
+        the transform. */}
+    <div ref={fitWrapRef} className="mx-auto w-full max-w-[var(--mat-max)]">
+    <div ref={fitScalerRef} className="space-y-3">
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
         {opponents.map((opp) => (
@@ -1055,6 +1071,8 @@ export default function MatchBoard({
             : undefined
         }
       />
+    </div>{/* /fitScaler */}
+    </div>{/* /fitWrap */}
 
       {/* Right-click context menu — categorized drill-down (click a category to
           expand just its items; ‹ Back returns; click anywhere else closes). */}
@@ -1202,8 +1220,7 @@ export default function MatchBoard({
 
       {/* Alt+click ping markers (local + peers). */}
       <PingLayer pings={pings ?? []} />
-    </div>
-    </div>
+    </div>{/* /rootRef center column */}
 
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
         panel lands here in Stage 2. On < xl this stacks below the board. */}
