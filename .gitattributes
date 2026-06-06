@@ -1,0 +1,5 @@
+# Bundled champion-select audio (and other binary audio) — treat as binary so git
+# never tries to diff/normalize line endings on them.
+public/sfx/champions/**/*.mp3 binary
+*.mp3 binary
+*.ogg binary

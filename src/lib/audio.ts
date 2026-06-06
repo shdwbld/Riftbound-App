@@ -31,6 +31,17 @@ export const MUSIC_URLS = {
 } as const
 export type MusicName = keyof typeof MUSIC_URLS
 
+/** Normalize a champion display name to its bundled-audio directory key. MUST
+ *  match scripts/ingest-champion-audio.mjs: drop ' and ., spaces→-, lowercase.
+ *  e.g. Kai'Sa→kaisa, Lee Sin→lee-sin, Dr. Mundo→dr-mundo, Kha'Zix→khazix. */
+export function toChampionKey(name: string): string {
+  return name
+    .replace(/['.]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .toLowerCase()
+}
+
 interface Segment {
   offset: number
   duration: number
@@ -192,6 +203,70 @@ class AudioManager {
     } catch {
       /* start may throw if offset/duration invalid — ignore */
     }
+  }
+
+  // ---- Champion select audio (bundled per champion, string-URL keyed) -------
+  private champSfx = new Map<string, LoadedSfx>()
+  private champLoading = new Map<string, Promise<void>>()
+  private champLastPlayed = new Map<string, number>()
+
+  /** Like ensureLoaded but keyed on an arbitrary URL (champion MP3s aren't in
+   *  SfxName). A missing/undecodable file is swallowed so the app never breaks. */
+  private async ensureLoadedUrl(url: string): Promise<void> {
+    if (this.champSfx.has(url) || !this.ctx) return
+    let p = this.champLoading.get(url)
+    if (!p) {
+      p = (async () => {
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const buf = await res.arrayBuffer()
+        const buffer = await this.ctx!.decodeAudioData(buf)
+        this.champSfx.set(url, { buffer, segments: detectSegments(buffer) })
+      })().catch(() => {
+        /* champion audio is optional — ignore failures */
+      })
+      this.champLoading.set(url, p)
+    }
+    await p
+  }
+
+  /** Schedule a loaded buffer to start `whenSec` from now on the SFX bus, so the
+   *  layered voiceline is locked to the audio clock (no setTimeout drift). */
+  private playBufferAt(loaded: LoadedSfx, whenSec: number, volume = 1): void {
+    if (!this.ctx || !this.sfxBus) return
+    const seg = loaded.segments[0] ?? { offset: 0, duration: loaded.buffer.duration }
+    const src = this.ctx.createBufferSource()
+    src.buffer = loaded.buffer
+    const g = this.ctx.createGain()
+    g.gain.value = volume
+    src.connect(g).connect(this.sfxBus)
+    try {
+      src.start(this.ctx.currentTime + Math.max(0, whenSec), seg.offset, seg.duration)
+    } catch {
+      /* invalid offset/duration — ignore */
+    }
+  }
+
+  /** When a champion is played: its Select SFX immediately, then its Select
+   *  voiceline ~1s later (layered). Bundled MP3s at /sfx/champions/<key>/.
+   *  Either file may be absent — each plays only if it loaded. Routed through
+   *  sfxBus so the SFX volume slider + mute govern it. */
+  async playChampionSelect(championName: string): Promise<void> {
+    if (!this.ctx || this.settings.muted) return
+    const key = toChampionKey(championName)
+    const now = Date.now()
+    if (now - (this.champLastPlayed.get(key) ?? 0) < 1500) return // de-dupe play-event batches
+    this.champLastPlayed.set(key, now)
+    const VOICE_DELAY = 1.0
+    const SFX_VOL = 0.8
+    const VOICE_VOL = 1.0
+    const sfxUrl = `/sfx/champions/${key}/select-sfx.mp3`
+    const voiceUrl = `/sfx/champions/${key}/select-voice.mp3`
+    await Promise.all([this.ensureLoadedUrl(sfxUrl), this.ensureLoadedUrl(voiceUrl)])
+    const sfxLoaded = this.champSfx.get(sfxUrl)
+    const voiceLoaded = this.champSfx.get(voiceUrl)
+    if (sfxLoaded) this.playBufferAt(sfxLoaded, 0, SFX_VOL)
+    if (voiceLoaded) this.playBufferAt(voiceLoaded, VOICE_DELAY, VOICE_VOL)
   }
 
   /** Loop a music/ambience track on the music bus (low volume). */

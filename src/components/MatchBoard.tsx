@@ -390,7 +390,12 @@ export default function MatchBoard({
     if (playEvt?.cardId) {
       const c = getCard(playEvt.cardId)
       if (c && c.type === 'spell') audio.play((c.energy ?? 0) >= 5 ? 'spellBig' : 'spell')
-      else if (c) audio.play('playCard')
+      else if (c && c.supertype === 'champion') {
+        // Champion played → its Select SFX + voiceline ~1s later (layered), while
+        // the 80% reveal is on screen for everyone. Keep the thud underneath.
+        void audio.playChampionSelect(c.name.split(' - ')[0].replace(/\s*\([^)]*\)\s*$/, '').trim())
+        audio.play('playCard')
+      } else if (c) audio.play('playCard')
     }
     // The drawer's own draw plays cardFlip via the reveal (delayed for turn start);
     // here we only chirp for OTHER players' draws (a soft "they drew" cue).
@@ -412,7 +417,7 @@ export default function MatchBoard({
     // Always enable sound at match start so every player hears SFX (music +
     // ambience default to 0% via the music bus, so they stay silent unless raised).
     audio.setSettings({ muted: false })
-    audio.playMusic(Math.random() < 0.5 ? 'battle' : 'battle2', { volume: 0.9 })
+    audio.playMusic('battle', { volume: 0.9 })
     audio.playMusic('ambience', { volume: 0.5 })
     return () => audio.stopMusic()
   }, [])
