@@ -7140,6 +7140,29 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.players[0].zones.hand.length - before).toBe(2) // host draw 1 + Svellsongur copy draw 1
   })
 
+  it('Void Hatchling: a type-seeking reveal digs past a non-matching top card', () => {
+    const diggerId = injectCard('b-hatch-digger', "When you play me, reveal the top card of your Main Deck. If it's a unit, draw it.", { type: 'unit', energy: 0, might: 1 })
+    const spellId = injectCard('b-hatch-spell', 'x', { type: 'spell', energy: 0, power: {} })
+    // Without Void Hatchling: the spell on top blocks the unit-seeking reveal → no draw.
+    const s0 = baseState()
+    const d0 = mk(diggerId, 0)
+    s0.players[0].zones.hand.push(d0)
+    const unit0 = mk(furyUnit.id, 0)
+    s0.players[0].zones.mainDeck.push(mk(spellId, 0), unit0) // spell on top, unit second
+    const r0 = reduce(s0, { type: 'PLAY_UNIT', player: 0, iid: d0.iid, payment: emptyPayment() })
+    expect(r0.state.players[0].zones.hand.some((c) => c.iid === unit0.iid)).toBe(false)
+    // With Void Hatchling: it recycles the non-unit top, so the unit is found + drawn.
+    const s = baseState()
+    s.players[0].zones.base.push(mk(injectCard('b-voidhatch', 'If you would reveal cards from a deck, look at the top card first. You may recycle it. Then reveal those cards.', { name: 'Void Hatchling', type: 'unit', might: 2 }), 0))
+    const d = mk(diggerId, 0)
+    s.players[0].zones.hand.push(d)
+    const unit1 = mk(furyUnit.id, 0)
+    s.players[0].zones.mainDeck.push(mk(spellId, 0), unit1) // spell on top, unit second
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === unit1.iid)).toBe(true) // dug past the spell
+  })
+
   it('Zaun Punk: declining the additional cost kills no gear', () => {
     const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
     const s = baseState()

@@ -823,6 +823,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // Reveal from the top until a unit; play it free (base, exhausted); recycle
     // the non-units passed over to the bottom of the deck (Dazzling Aurora).
     const deck = p.zones.mainDeck
+    for (const l of hatchlingPrePeek(s, p.id, deck, 'unit')) lines.push(l) // Void Hatchling
     const passed: EngineCard[] = []
     let unit: EngineCard | undefined
     while (deck.length) {
@@ -842,6 +843,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // Ivern, Rift Herald, Fate Weaver, Apprentice Smith).
     const { n, type, energyMin, thenBuffIfTribe } = e.peekDraw
     const deck = p.zones.mainDeck
+    for (const l of hatchlingPrePeek(s, p.id, deck, type !== 'card' ? type : undefined)) lines.push(l) // Void Hatchling
     const top = deck.splice(0, Math.min(n, deck.length))
     const matches = top.filter((c) => {
       const d = getCard(c.cardId)
@@ -910,6 +912,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       if (!chosen && revealed.length) lines.push(`Revealed ${revealed.length} opponent card(s); none playable — recycled.`)
     } else {
       const deck = p.zones.mainDeck
+      for (const l of hatchlingPrePeek(s, p.id, deck, 'unit')) lines.push(l) // Void Hatchling (self-reveal only)
       const top = deck.splice(0, Math.min(n, deck.length))
       const units = top.filter(playable)
       const chosen = units.length ? units.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b)) : undefined
@@ -2514,6 +2517,26 @@ function tideturnerSwap(s: MatchState, player: PlayerId, tideIid: string): Match
   if (partnerBf >= 0) s = showdownOrConquerAfterEffectMove(s, partnerBf, tide.iid, partnerPriorCtrl)
   if (tideBf >= 0) s = showdownOrConquerAfterEffectMove(s, tideBf, partner.iid, tidePriorCtrl)
   return s
+}
+
+/** Whether `player` controls a Void Hatchling (its pre-reveal peek is active). */
+function hatchlingActive(s: MatchState, player: PlayerId): boolean {
+  return controlledPermanents(s, player).some((u) => (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Void Hatchling')
+}
+
+/** Void Hatchling: "If you would reveal cards from a deck, look at the top card first.
+ *  You may recycle it. Then reveal those cards." Mutates `deck` in place. Auto-recycles
+ *  the top card ONLY when it cannot satisfy a type-seeking reveal (so the reveal digs one
+ *  card deeper for a match — never losing a card it would have used). No-op for untyped
+ *  reveals, where recycling would be a blind gamble. Returns log lines. (The recycleCard
+ *  trigger, e.g. Karma - Channeler, is not fired from this pre-peek — minor, flagged.) */
+function hatchlingPrePeek(s: MatchState, player: PlayerId, deck: EngineCard[], seeksType: string | undefined): string[] {
+  if (!seeksType || !deck.length || !hatchlingActive(s, player)) return []
+  const top = deck[0]
+  if (getCard(top.cardId)?.type === seeksType) return [] // top already matches — keep it
+  deck.shift()
+  deck.push(top) // recycle to the bottom
+  return [`Void Hatchling: looked at the top and recycled ${getCard(top.cardId)?.name ?? 'a card'} before revealing.`]
 }
 
 /** Return a gear by iid to its owner's hand (Legion Quartermaster). Mirrors
