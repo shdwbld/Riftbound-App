@@ -5760,3 +5760,26 @@ describe('A1.5 follow-up cards — first-move / first-win-combat self triggers',
     expect(r.state.pendingChoice).toBeUndefined() // queue drained, Beginning Phase resumed
   })
 })
+
+describe('A2 — Baron Nashor aura + targeting immunity', () => {
+  it('Baron Nashor: other friendly units get +2 Might (Baron itself excluded)', () => {
+    const s = baseState()
+    const baron = mk(injectCard('a2-baron', 'Other friendly units have +2 :rb_might:.', { name: 'Baron Nashor', might: 12 }), 0)
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [baron, ally], controller: 0 }
+    const base = (furyUnit as Extract<typeof furyUnit, { type: 'unit' }>).might
+    expect(combatMightAt(s, 0, ally, 'attacker')).toBe(base + 2)
+    expect(combatMightAt(s, 0, baron, 'attacker')).toBe(12)
+  })
+
+  it('targetingImmune: an enemy spell cannot choose an immune unit, but a normal one is fine', () => {
+    const s = baseState()
+    const immune = mk(injectCard('a2-immune', "I can't be chosen by enemy spells and abilities.", { might: 5 }), 1)
+    const normal = mk(furyUnit.id, 1)
+    s.battlefields[0].units.push(immune, normal)
+    const spell = CARD_INDEX[injectCard('a2-kill', 'Kill a unit.', { type: 'spell', energy: 0, power: {} })]
+    const legal = getLegalTargets(s, spell, 0)
+    expect(legal.includes(immune.iid)).toBe(false) // enemy immune unit excluded
+    expect(legal.includes(normal.iid)).toBe(true) // enemy normal unit targetable
+  })
+})

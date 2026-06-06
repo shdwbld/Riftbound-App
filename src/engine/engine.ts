@@ -2218,6 +2218,8 @@ function auraMightBonus(s: MatchState, u: EngineCard): number {
   if (getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Soul Shepherd')) b += 1
   // Rumble - Scrapper: "Your Mechs have +1 Might (including me)."
   if ((getCard(u.cardId)?.tags ?? []).includes('Mech') && controlsUnitNamed(s, u.owner, 'Rumble - Scrapper')) b += 1
+  // Baron Nashor: "Other friendly units have +2 Might." (global friendly aura.)
+  if (getCard(u.cardId)?.name !== 'Baron Nashor' && controlsUnitNamed(s, u.owner, 'Baron Nashor')) b += 2
   // (Master Yi - Wuju Master's "[Level 6] Your units have +1" is already handled in
   // conditionalMight's legend-granted-buffs block — no duplicate here.)
   // Self-scaling champions whose Might tracks a game value (state-aware, so the
@@ -4324,7 +4326,11 @@ function resolveSpellEffects(
   // Targeted parts: damage / kill / Â±Might-this-turn, applied to each chosen
   // target that's still in play.
   if (hasTargetedPart(e)) {
-    const tgts = (targets ?? []).filter((t) => isValidTarget(s, t))
+    const tgts = (targets ?? []).filter((t) => {
+      if (!isValidTarget(s, t)) return false
+      const tu = findUnitAnywhere(s, t) // can't choose an enemy unit that's targeting-immune
+      return !(tu && tu.owner !== controller && untargetableByEnemy(s, tu))
+    })
     if (tgts.length === 0 && !hasUntargetedPart(e))
       s = log(s, controller, `${card.name} fizzled — no valid target.`)
     let stunnedEnemy = false
@@ -5915,6 +5921,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // Teemo - Swift Scout may target a Teemo in your Champion Zone (not "in play").
           const championTarget = /champion zone/i.test(ab.effectText) && s1.players.some((pl) => pl.champion?.iid === t)
           if (!isValidTarget(s1, t) && !championTarget) continue
+          const immuneTo = findUnitAnywhere(s1, t) // enemy can't choose a targeting-immune unit
+          if (immuneTo && immuneTo.owner !== action.player && untargetableByEnemy(s1, immuneTo)) continue
           if (ab.effect.damage) s1 = fireDeaths(s1, applyTargetDamage(s1, t, ab.effect.damage, true, action.player))
           if (ab.effect.tempMight) s1 = fireDeaths(s1, applyTempMight(s1, t, ab.effect.tempMight, ab.effect.tempMightFloor))
           // "Buff a friendly unit" (Lee Sin) — a permanent +1 Might counter, capped
@@ -6572,8 +6580,13 @@ export function isValidTarget(state: MatchState, iid: string): boolean {
  *  e.g. Master Yi - Unstoppable "[Level 16] I can't be chosen by enemy spells
  *  and abilities" while its controller has 16+ XP. */
 function untargetableByEnemy(state: MatchState, u: EngineCard): boolean {
-  const m = (getCard(u.cardId)?.text ?? '').toLowerCase().match(/\[level\s*(\d+)\][^.]*?can'?t be chosen by enemy spells/)
-  return !!m && (state.players[u.owner]?.xp ?? 0) >= parseInt(m[1], 10)
+  const text = (getCard(u.cardId)?.text ?? '').toLowerCase()
+  if (!/can'?t be chosen by enemy spells/.test(text)) return false
+  // [Level N]-gated immunity (Master Yi - Unstoppable): only while XP >= N.
+  const m = text.match(/\[level\s*(\d+)\][^.]*?can'?t be chosen by enemy spells/)
+  if (m) return (state.players[u.owner]?.xp ?? 0) >= parseInt(m[1], 10)
+  // Unconditional immunity (Baron Nashor, Ruin Runner): no level gate.
+  return true
 }
 
 /** The unit iids a card may legally target right now, honoring the effect's
