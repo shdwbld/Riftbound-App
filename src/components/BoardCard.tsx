@@ -202,6 +202,17 @@ export default function BoardCard({
                   Lv{lvlThreshold}
                 </span>
               )}
+              {/* Token instance number — distinguishes identical tokens (Sand Soldiers,
+                  Recruits, …). Derived from the unique iid suffix so it is stable. */}
+              {(def as { supertype?: string }).supertype === 'token' && (() => {
+                const m = String((ci as { iid?: string }).iid ?? '').match(/#([0-9a-z]+)$/i)
+                if (!m) return null
+                return (
+                  <span className="rounded-br bg-black/75 px-0.5 font-bold text-amber-200" title={`Token #${parseInt(m[1], 36)}`}>
+                    #{parseInt(m[1], 36)}
+                  </span>
+                )
+              })()}
             </span>
             {/* combat keyword badges along the bottom-left */}
             {badges.length > 0 && (
