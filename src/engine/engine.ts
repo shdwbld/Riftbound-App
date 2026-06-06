@@ -619,7 +619,22 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     if (recBf >= 0) recomputeControllers(s)
     lines.push(`Created ${madeR} Recruit(s)${recBf >= 0 ? ' here' : ''}.`)
   }
-  if (e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
+  if (e.killGear) {
+    const res = applyKillGear(s, p.id, e.killGear, e.gearKillControllerDraw)
+    for (const ln of res.lines) lines.push(ln)
+    // Pickpocket: "If you do, play a Gold gear token exhausted." Gate the gold on the kill.
+    if (res.killed && e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, false)} Gold token(s).`)
+  }
+  if (e.bounceGear) {
+    const gears = allGearInPlay(s).filter((g) => g.owner === p.id)
+    if (gears.length) {
+      const pick = gears.reduce((lo, g) => (gearEnergyOf(g) <= gearEnergyOf(lo) ? g : lo))
+      const nm = getCard(pick.cardId)?.name ?? 'a gear'
+      bounceGearByIid(s, pick.iid)
+      lines.push(`Returned ${nm} to its owner's hand.`)
+    }
+  }
+  if (e.goldTokens && !e.killGear) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
   if (e.namedToken) {
     // "choose an opponent. They play a … token" (Walking Roost) → spawn into the
     // chosen opponent's Base (auto-pick the first opponent still in the match).
@@ -1173,6 +1188,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       || (srcName === 'Sivir - Battle Mistress' && ability.event === 'recycleRune')
       || (srcName === 'Ivern - Green Father' && (ability.event === 'conquer' || ability.event === 'hold'))
       || srcName === 'Volibear - Furious' || srcName === 'Sivir - Ambitious'
+      || srcName === 'Adaptatron' // its bespoke conquer handler owns the gear-kill + buff
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -2203,6 +2219,90 @@ function blastConeOnEnemyMove(s: MatchState, mover: PlayerId, enemyIid: string):
   emit({ kind: 'stun', iid: enemy.iid, player: mover })
   s = log(s, mover, `Blast Cone: exhausted to Stun ${getCard(enemy.cardId)?.name}.`)
   return fireStun(s, mover)
+}
+
+/** A gear card's printed Energy cost (the Card union's BattlefieldCard arm has no
+ *  `energy`, so narrow via cast). */
+function gearEnergyOf(c: EngineCard): number {
+  return (getCard(c.cardId) as { energy?: number } | undefined)?.energy ?? 0
+}
+
+/** Every gear currently in play: unattached gear in all bases, plus attached gear
+ *  reconstructed from `unit.attached` "cardId|iid" refs (Disarming Rake, Detonate,
+ *  Legion Quartermaster, etc.). */
+function allGearInPlay(s: MatchState): EngineCard[] {
+  const out: EngineCard[] = []
+  for (const pl of s.players) {
+    for (const c of pl.zones.base) if (getCard(c.cardId)?.type === 'gear') out.push(c)
+    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit')
+    for (const u of units)
+      for (const ref of u.attached ?? []) {
+        const [cid, iid] = ref.split('|')
+        if (cid && getCard(cid)?.type === 'gear')
+          out.push({ iid: iid || `${pl.id}:gear:${cid}`, cardId: cid, owner: pl.id, exhausted: false, damage: 0, attached: [] })
+      }
+  }
+  return out
+}
+
+/** Kill a gear by iid — removes it from wherever it lives (unattached base gear or
+ *  attached to a unit) and sends it to the gear's OWNER's trash (Rule 107.1.d). Gold
+ *  gear tokens cease to exist (sendToTrash drops tokens). Returns the owner whose
+ *  gear was killed, or null if not found. */
+function killGearByIid(s: MatchState, gearIid: string): PlayerId | null {
+  for (const pl of s.players) {
+    const bi = pl.zones.base.findIndex((c) => c.iid === gearIid && getCard(c.cardId)?.type === 'gear')
+    if (bi >= 0) { const [g] = pl.zones.base.splice(bi, 1); sendToTrash(pl, g); return pl.id }
+    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id)
+    for (const u of units) {
+      const ri = (u.attached ?? []).findIndex((ref) => ref.split('|')[1] === gearIid)
+      if (ri >= 0) {
+        const [ref] = u.attached.splice(ri, 1)
+        const [cid, iid] = ref.split('|')
+        sendToTrash(s.players[u.owner], { iid: iid || `${u.owner}:gear:${cid}`, cardId: cid, owner: u.owner, exhausted: false, damage: 0, attached: [] })
+        return u.owner
+      }
+    }
+  }
+  return null
+}
+
+/** Return a gear by iid to its owner's hand (Legion Quartermaster). Mirrors
+ *  killGearByIid but routes to the hand. Returns the owner, or null. */
+function bounceGearByIid(s: MatchState, gearIid: string): PlayerId | null {
+  for (const pl of s.players) {
+    const bi = pl.zones.base.findIndex((c) => c.iid === gearIid && getCard(c.cardId)?.type === 'gear')
+    if (bi >= 0) { const [g] = pl.zones.base.splice(bi, 1); pl.zones.hand.push({ ...g, exhausted: false, damage: 0, attached: [] }); return pl.id }
+    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id)
+    for (const u of units) {
+      const ri = (u.attached ?? []).findIndex((ref) => ref.split('|')[1] === gearIid)
+      if (ri >= 0) {
+        const [ref] = u.attached.splice(ri, 1)
+        const [cid, iid] = ref.split('|')
+        s.players[u.owner].zones.hand.push({ iid: iid || `${u.owner}:gear:${cid}`, cardId: cid, owner: u.owner, exhausted: false, damage: 0, attached: [] })
+        return u.owner
+      }
+    }
+  }
+  return null
+}
+
+/** Auto-pick + kill the lowest-cost gear matching a killGear spec (scope + maxEnergy),
+ *  applying "its controller draws N" if set. Returns log lines. */
+function applyKillGear(s: MatchState, player: PlayerId, spec: { scope: 'friendly' | 'enemy' | 'any'; maxEnergy: number | null }, controllerDraw = 0): { killed: boolean; lines: string[] } {
+  const gears = allGearInPlay(s).filter((g) => {
+    if (spec.scope === 'friendly' && g.owner !== player) return false
+    if (spec.scope === 'enemy' && g.owner === player) return false
+    if (spec.maxEnergy != null && gearEnergyOf(g) > spec.maxEnergy) return false
+    return true
+  })
+  if (!gears.length) return { killed: false, lines: ['No valid gear to kill.'] }
+  const pick = gears.reduce((lo, g) => (gearEnergyOf(g) <= gearEnergyOf(lo) ? g : lo))
+  const nm = getCard(pick.cardId)?.name ?? 'a gear'
+  const owner = killGearByIid(s, pick.iid)
+  const lines = [`Killed ${nm}.`]
+  if (controllerDraw > 0 && owner != null) { drawN(s.players[owner], controllerDraw); lines.push(`Its controller drew ${controllerDraw}.`) }
+  return { killed: true, lines }
 }
 
 /** Record a conquered battlefield for the turn (Perched Grimwyrm's placement

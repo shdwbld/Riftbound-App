@@ -150,6 +150,14 @@ export interface ParsedEffect {
    *  to your hand" — Morbid Return, Cemetery Attendant). `type` filters the trash
    *  by card type ('card' = any). Resolves by returning the highest-cost match. */
   returnFromTrash: { type: 'unit' | 'spell' | 'gear' | 'card'; count: number } | null
+  /** Kill a chosen gear. `scope` = whose gear; `maxEnergy` = optional Energy cost cap
+   *  (Pickpocket: 1; others: null = any). Disarming Rake, Pickpocket, Zaun Punk bonus,
+   *  Detonate, Rocket Barrage. Auto-picks the lowest-cost matching gear (MVP). */
+  killGear: { scope: 'friendly' | 'enemy' | 'any'; maxEnergy: number | null } | null
+  /** Return a chosen friendly gear to its owner's hand (Legion Quartermaster). */
+  bounceGear: boolean
+  /** "Its controller draws N" after a gear kill (Detonate). 0 = none. */
+  gearKillControllerDraw: number
   /** Opponent hand disruption — "choose an opponent. They reveal their hand. Choose
    *  a [non-unit] card from it, and they discard / recycle / banish it." Mindsplitter
    *  (trash), Sabotage (deck/recycle, non-unit), Ashe - Focused (banish). Auto-picks
@@ -283,6 +291,9 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   deathShield: false,
   banishOnDeath: false,
   returnFromTrash: null,
+  killGear: null,
+  bounceGear: false,
+  gearKillControllerDraw: 0,
   opponentHandStrip: null,
   opponentDiscards: 0,
   playUnitFromTrash: null,
@@ -312,7 +323,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || e.grantShieldHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0 || e.moveSourceToBf
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || e.grantShieldHere > 0 || !!e.killGear || e.bounceGear || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0 || e.moveSourceToBf
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -882,6 +893,22 @@ function parse(text: string): ParsedEffect {
   // it doesn't apply unconditionally.
   if (eff.peekDraw?.thenBuffIfTribe) { eff.buff = 0; eff.buffSelf = false; eff.buffExcludesSelf = false; eff.buffAll = null }
 
+  // Kill a gear: "kill a gear" / "kill a friendly gear" / "kill a gear with Energy
+  // cost no more than :rb_energy_N:" (Disarming Rake, Pickpocket, Zaun Punk bonus,
+  // Detonate, Rocket Barrage). Auto-picks the lowest-cost matching gear.
+  const kgM = t.match(/kill (?:a|an) (friendly |enemy )?gear(?:[^.]*?:rb_energy_(\d+):)?/)
+  if (kgM) {
+    const scope = kgM[1]?.trim() === 'friendly' ? 'friendly' : kgM[1]?.trim() === 'enemy' ? 'enemy' : 'any'
+    eff.killGear = { scope, maxEnergy: kgM[2] ? parseInt(kgM[2], 10) : null }
+    hit = true
+    // "Its controller draws N" (Detonate).
+    const cdM = t.match(/its controller draws? (\d+)/)
+    if (cdM) eff.gearKillControllerDraw = parseInt(cdM[1], 10)
+  }
+  // Return a friendly gear to its owner's hand (Legion Quartermaster additional cost,
+  // modelled as a mandatory on-play return).
+  if (/return a friendly gear to (?:its owner'?s?|your) hand/.test(t)) { eff.bounceGear = true; hit = true }
+
   if (!hit && t.trim().length > 0) eff.manual = true
   return eff
 }
@@ -917,6 +944,14 @@ export function needsTarget(card: Card): boolean {
 export function onPlayEffect(card: Card): ParsedEffect {
   const full = card.text ?? ''
   const t = full.toLowerCase()
+  // "As an additional cost to play me, return a friendly gear to its owner's hand"
+  // (Legion Quartermaster) — modelled as a mandatory on-play return (MVP: the engine
+  // doesn't block the play when no gear exists).
+  if (/as an additional cost to play me[^.]*return a friendly gear/i.test(full)) {
+    const e = EMPTY_EFFECT()
+    e.bounceGear = true
+    return e
+  }
   if (!ON_PLAY.test(t)) return EMPTY_EFFECT()
   // Exclude a trailing [Deathknell] ability from the on-play clause (Scuttle Crab's
   // "Gain 1 XP" is a death effect, not on-play) — only when the on-play wording

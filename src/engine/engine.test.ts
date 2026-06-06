@@ -6255,4 +6255,76 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     expect(/play a unit from your trash/i.test(hold!.text)).toBe(true)
     expect(/still pay its costs/i.test(hold!.text)).toBe(true) // clauseAfter captured the parenthetical
   })
+
+  it('Disarming Rake: kills the lowest-cost gear on play (to owner trash)', () => {
+    const rid = injectCard('a4-rake', 'When you play me, you may kill a gear.', { type: 'unit', energy: 0 })
+    const gid = injectCard('a4-gear1', 'Equip.', { type: 'gear', energy: 2 })
+    const s = baseState()
+    const gear = mk(gid, 1) // opponent's gear at base
+    s.players[1].zones.base.push(gear)
+    const rake = mk(rid, 0)
+    s.players[0].zones.hand.push(rake)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: rake.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[1].zones.base.some((x) => x.iid === gear.iid)).toBe(false)
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true)
+  })
+
+  it('killGear removes an attached gear (spliced from unit.attached) to its owner trash', () => {
+    const rid = injectCard('a4-rake2', 'When you play me, you may kill a gear.', { type: 'unit', energy: 0 })
+    const gid = injectCard('a4-gear2', 'Equip.', { type: 'gear', energy: 1 })
+    const uid = injectCard('a4-host', 'host', { type: 'unit', energy: 2 })
+    const s = baseState()
+    const host = mk(uid, 1)
+    host.attached = [`${gid}|g-iid-1`]
+    s.battlefields[0] = { cardId: battlefield.id, units: [host], controller: 1 }
+    const rake = mk(rid, 0)
+    s.players[0].zones.hand.push(rake)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: rake.iid, payment: emptyPayment() })
+    expect(r.state.battlefields[0].units[0].attached).toHaveLength(0)
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === 'g-iid-1')).toBe(true)
+  })
+
+  it('Detonate: kills a gear and its controller draws 2', () => {
+    const did = injectCard('a4-detonate', 'Kill a gear. Its controller draws 2.', { type: 'spell', energy: 0, power: {} })
+    const gid = injectCard('a4-gear3', 'Equip.', { type: 'gear', energy: 2 })
+    const s = baseState()
+    const gear = mk(gid, 1)
+    s.players[1].zones.base.push(gear)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1), mk(furyUnit.id, 1))
+    const before = s.players[1].zones.hand.length
+    const spell = mk(did, 0)
+    s.players[0].zones.hand.push(spell)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true) // gear killed
+    expect(r.state.players[1].zones.hand.length).toBe(before + 2) // its controller drew 2
+  })
+
+  it("Legion Quartermaster: returns a friendly gear to its owner's hand on play", () => {
+    const qid = injectCard('a4-qm', "As an additional cost to play me, return a friendly gear to its owner's hand.", { type: 'unit', energy: 0 })
+    const gid = injectCard('a4-gear4', 'Equip.', { type: 'gear', energy: 2 })
+    const s = baseState()
+    const gear = mk(gid, 0)
+    s.players[0].zones.base.push(gear)
+    const qm = mk(qid, 0)
+    s.players[0].zones.hand.push(qm)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: qm.iid, payment: emptyPayment() })
+    expect(r.state.players[0].zones.base.some((x) => x.iid === gear.iid)).toBe(false)
+    expect(r.state.players[0].zones.hand.some((x) => x.iid === gear.iid)).toBe(true)
+  })
+
+  it('Pickpocket: kills a cheap gear (≤1) and plays a Gold token only because a gear died', () => {
+    const pid = injectCard('a4-pickpocket', 'When you play me, you may kill a gear with Energy cost no more than :rb_energy_1:. If you do, play a Gold gear token exhausted.', { type: 'unit', energy: 0 })
+    const gid = injectCard('a4-gear5', 'Equip.', { type: 'gear', energy: 1 })
+    const s = baseState()
+    const gear = mk(gid, 1)
+    s.players[1].zones.base.push(gear)
+    const pp = mk(pid, 0)
+    s.players[0].zones.hand.push(pp)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: pp.iid, payment: emptyPayment() })
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true) // killed
+    expect(r.state.players[0].zones.base.some((c) => c.cardId === GOLD_TOKEN_ID)).toBe(true) // gold made
+  })
 })
