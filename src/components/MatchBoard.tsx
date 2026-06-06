@@ -87,6 +87,9 @@ export interface MatchBoardProps {
   onPing?: (x: number, y: number) => void
   /** Active ping markers to render (local + received from peers). */
   pings?: PingData[]
+  /** True while the end-turn recap is on screen — the turn-start draw reveal waits
+   *  until this goes false (recap dismissed), then pauses, then flips in. */
+  recapOpen?: boolean
 }
 
 /** Per-card flash kind that survives on a card still in play. */
@@ -204,6 +207,7 @@ export default function MatchBoard({
   events,
   onPing,
   pings,
+  recapOpen,
 }: MatchBoardProps) {
   // Multi-select for group moves.
   const [selectedUnits, setSelectedUnits] = useState<string[]>([])
@@ -320,6 +324,8 @@ export default function MatchBoard({
   //    are chain-related and use ChainResponsePopup instead (mutually exclusive).
   //  • One of MY draws → reveal the drawn card(s), shorter, private to me.
   const [announce, setAnnounce] = useState<{ seq: number; cards: string[]; heading: string; sub?: string; durationMs: number; flip?: boolean; delayMs?: number; sfx?: 'cardFlip' } | null>(null)
+  // A turn-start draw waits here until the end-turn recap is dismissed, then flips in.
+  const [pendingDraw, setPendingDraw] = useState<{ seq: number; cards: string[]; heading: string } | null>(null)
   const prevActiveRef = useRef(match.activePlayer)
   useEffect(() => {
     // A turn just started for a new active player → the begin-turn draw gets the
@@ -359,13 +365,22 @@ export default function MatchBoard({
       const drawn = hand.slice(Math.max(0, hand.length - myDraw)).map((c) => c.cardId).slice(0, 2)
       const heading = myDraw > 1 ? `You drew ${myDraw}` : 'You drew'
       if (drawn.length && turnStarted)
-        // Turn start: 1s pause → flip+zoom (cardFlip SFX) → hold ~2s → slide to hand.
-        setAnnounce({ seq: match.seq, cards: drawn, heading, durationMs: 2900, flip: true, delayMs: 1000, sfx: 'cardFlip' })
+        // Turn start: defer until the end-turn recap is dismissed (see effect below).
+        setPendingDraw({ seq: match.seq, cards: drawn, heading })
       else if (drawn.length)
         setAnnounce({ seq: match.seq, cards: drawn, heading, durationMs: 3500, sfx: 'cardFlip' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
+
+  // Once the end-turn recap is gone (or there was none), the turn-start draw plays:
+  // a 2–3s pause, then the card flips + zooms into the 80% reveal (cardFlip SFX).
+  useEffect(() => {
+    if (!pendingDraw || recapOpen) return
+    setAnnounce({ seq: pendingDraw.seq, cards: pendingDraw.cards, heading: pendingDraw.heading, durationMs: 2900, flip: true, delayMs: 2500, sfx: 'cardFlip' })
+    setPendingDraw(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recapOpen, pendingDraw])
 
   // Sound effects for this action's events (deduped per batch).
   useEffect(() => {

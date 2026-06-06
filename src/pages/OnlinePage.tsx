@@ -90,6 +90,7 @@ export default function OnlinePage() {
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
   // End-of-turn recap banner + per-turn event buffer (keyed by match.turn).
   const [recap, setRecap] = useState<TurnRecapData | null>(null)
+  const [recapOpen, setRecapOpen] = useState(false) // true while the end-turn recap is on screen (gates the draw reveal)
   const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending "Equip to a unit" choice for an unattached gear in base.
@@ -235,7 +236,7 @@ export default function OnlinePage() {
     const m = matchRef.current
     if (m) {
       const r = accumulateTurnRecap(recapBufRef.current, m, lastEvents)
-      if (r) setRecap(r)
+      if (r) { setRecap(r); setRecapOpen(true) }
     }
   }, [lastEvents])
 
@@ -825,6 +826,7 @@ export default function OnlinePage() {
           transportRef.current?.send({ kind: 'ping', x, y, name })
         }}
         pings={pings}
+        recapOpen={recapOpen}
       />
       {inspect && <CardDetailModal card={inspect} onClose={() => setInspect(null)} />}
       {accelPrompt && (
@@ -891,7 +893,7 @@ export default function OnlinePage() {
       {summary && (
         <BattleSummary match={match} events={summary.events} token={summary.token} onClose={() => setSummary(null)} />
       )}
-      <TurnRecapBanner data={recap} />
+      <TurnRecapBanner data={recap} onDismiss={() => setRecapOpen(false)} />
       {match.vision && match.vision.player === seat && (
         <VisionPrompt
           cardId={match.vision.cardId}

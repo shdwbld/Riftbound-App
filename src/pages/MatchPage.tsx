@@ -140,6 +140,7 @@ export default function MatchPage() {
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
   // End-of-turn recap banner + per-turn event buffer (keyed by match.turn).
   const [recap, setRecap] = useState<TurnRecapData | null>(null)
+  const [recapOpen, setRecapOpen] = useState(false) // true while the end-turn recap is on screen (gates the draw reveal)
   const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
   // Pixel-art entrance VFX for Baron Nashor / the Baron Pit (token = seq, replays).
   const [baronVfx, setBaronVfx] = useState<{ token: number; label: string } | null>(null)
@@ -189,7 +190,7 @@ export default function MatchPage() {
       // Baron Nashor played → Baron Pit opens: play the pixel-art entrance VFX.
       if (events?.some((e) => e.cardId === 'unl-147-219')) setBaronVfx({ token: state.seq, label: 'Baron Nashor' })
       const r = accumulateTurnRecap(recapBufRef.current, state, events)
-      if (r) setRecap(r)
+      if (r) { setRecap(r); setRecapOpen(true) }
       setMatch(state)
     },
     [flash],
@@ -591,6 +592,7 @@ export default function MatchPage() {
         events={lastEvents}
         onPing={(x, y) => addPing(x, y, match.players[controlling]?.name?.replace(/\s*\([^)]*\)\s*$/, ''))}
         pings={pings}
+        recapOpen={recapOpen}
       />
       <div className="flex justify-end gap-2">
         <button
@@ -675,7 +677,7 @@ export default function MatchPage() {
       {baronVfx && (
         <BaronEntranceVfx token={baronVfx.token} label={baronVfx.label} onDone={() => setBaronVfx(null)} />
       )}
-      <TurnRecapBanner data={recap} />
+      <TurnRecapBanner data={recap} onDismiss={() => setRecapOpen(false)} />
       {match.vision && match.vision.player === controlling && (
         <VisionPrompt
           cardId={match.vision.cardId}

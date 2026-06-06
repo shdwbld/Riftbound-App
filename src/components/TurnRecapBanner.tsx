@@ -25,13 +25,19 @@ export interface TurnRecapData {
   scorers: { name: string; amount: number }[]
 }
 
-export default function TurnRecapBanner({ data }: { data: TurnRecapData | null }) {
+export default function TurnRecapBanner({ data, onDismiss }: { data: TurnRecapData | null; onDismiss?: () => void }) {
   const [show, setShow] = useState(false)
   useEffect(() => {
     if (!data) return
     setShow(true)
   }, [data?.key, data])
   if (!data || !show) return null
+
+  // Dismiss = hide + tell the parent (so the turn-start draw reveal can begin).
+  const close = () => {
+    setShow(false)
+    onDismiss?.()
+  }
 
   const stats: { label: string; value: number }[] = [
     { label: 'Units', value: data.units },
@@ -49,7 +55,7 @@ export default function TurnRecapBanner({ data }: { data: TurnRecapData | null }
   return (
     <div
       className="fixed inset-0 z-[59] flex items-center justify-center bg-black/80 p-4"
-      onClick={() => setShow(false)}
+      onClick={close}
     >
       <div
         className="fx-play flex flex-col gap-4 overflow-hidden rounded-3xl border-2 border-indigo-400/50 bg-[#0d0f1c] p-6 text-indigo-50 shadow-2xl"
@@ -65,7 +71,7 @@ export default function TurnRecapBanner({ data }: { data: TurnRecapData | null }
             </span>
           )}
           <button
-            onClick={() => setShow(false)}
+            onClick={close}
             className="ml-auto rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/20"
           >
             Dismiss
