@@ -1221,7 +1221,11 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const bi = battlefieldOf(s, sourceIid ?? '')
       return bi >= 0 && s.battlefields[bi].units.filter((u) => u.owner !== player).length === 1
     })()
-    if (!skipGenericApply && enemyAloneOk) for (const line of applyParsed(s, p, e, (isConquer || isGlobalDefend) ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
+    // Vex - Mocking: a stun trigger's "you may move me to that battlefield" needs the
+    // stunned enemy's bfIndex threaded into applyParsed (moveSourceToBf) — the same way
+    // conquer / global-defend triggers receive their battlefield.
+    const passBfToApply = isConquer || isGlobalDefend || (ability.event === 'stun' && !!e.moveSourceToBf)
+    if (!skipGenericApply && enemyAloneOk) for (const line of applyParsed(s, p, e, passBfToApply ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
       s = log(s, player, `${label}: ${line}`)
       did = true
     }
@@ -1242,7 +1246,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         target.stunned = true
         emit({ kind: 'stun', iid: target.iid, player })
         s = log(s, player, `${label}: stunned ${getCard(target.cardId)?.name}.`)
-        s = fireStun(s, player) // "when you stun an enemy unit" (Eclipse Herald, Leona)
+        s = fireStun(s, player, bi) // "when you stun an enemy unit" (Eclipse Herald, Leona); bi = stunned enemy's bf (Vex - Mocking move)
         did = true
       }
     }
@@ -1341,7 +1345,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
           if (tgt && !tgt.stunned) {
             tgt.stunned = true
             emit({ kind: 'stun', iid: tgt.iid, player })
-            s = fireStun(s, player)
+            s = fireStun(s, player, bi)
             s = log(s, player, `${label}: Twisted Fate (Order) stunned ${getCard(tgt.cardId)?.name}.`)
           }
         }
@@ -1798,8 +1802,8 @@ function fireOpponentUnitPlay(s: MatchState, player: PlayerId, playedIid: string
  *  "one or more" trigger fires exactly once). No-op unless such a trigger is in
  *  play. Triggers that pay by moving/exhausting their own source (Vex - Mocking,
  *  "you may move me") are left for manual resolution by fireTriggers. */
-function fireStun(s: MatchState, player: PlayerId): MatchState {
-  return fireTriggers(s, collectGlobal(s, player, 'stun'))
+function fireStun(s: MatchState, player: PlayerId, bfIndex?: number): MatchState {
+  return fireTriggers(s, collectGlobal(s, player, 'stun'), bfIndex)
 }
 
 /** Fire "when a unit becomes [<state>]" triggers (self + global) for the unit that
@@ -2239,7 +2243,7 @@ function blastConeOnEnemyMove(s: MatchState, mover: PlayerId, enemyIid: string):
   enemy.stunned = true
   emit({ kind: 'stun', iid: enemy.iid, player: mover })
   s = log(s, mover, `Blast Cone: exhausted to Stun ${getCard(enemy.cardId)?.name}.`)
-  return fireStun(s, mover)
+  return fireStun(s, mover, battlefieldOf(s, enemyIid))
 }
 
 /** A gear card's printed Energy cost (the Card union's BattlefieldCard arm has no
@@ -4717,6 +4721,7 @@ function resolveSpellEffects(
     if (tgts.length === 0 && !hasUntargetedPart(e))
       s = log(s, controller, `${card.name} fizzled — no valid target.`)
     let stunnedEnemy = false
+    let stunnedEnemyBf = -1 // Vex - Mocking: the battlefield where the stun happened (for "move me there")
     for (const t of tgts) {
       s = fireTargetedSelf(s, controller, t) // Jae Medarda / Irelia - Fervent "when you choose me"
       {
@@ -4771,7 +4776,7 @@ function resolveSpellEffects(
             s = fireDeaths(s, killTarget(s, t))
           } else {
             u.stunned = true
-            if (u.owner !== controller) stunnedEnemy = true
+            if (u.owner !== controller) { stunnedEnemy = true; stunnedEnemyBf = battlefieldOf(s, t) }
             emit({ kind: 'stun', iid: t, player: controller })
             s = log(s, controller, `${card.name} stunned ${getCard(u.cardId)?.name}.`)
           }
@@ -4848,7 +4853,7 @@ function resolveSpellEffects(
     }
     // "When you stun an enemy unit / one or more enemy units" — fire once per
     // resolution (Eclipse Herald, Leona - Radiant Dawn).
-    if (stunnedEnemy) s = fireStun(s, controller)
+    if (stunnedEnemy) s = fireStun(s, controller, stunnedEnemyBf)
   }
 
   // Vision / Predict spells: peek the top of your Main Deck; the controller may
@@ -5782,7 +5787,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       emit({ kind: 'stun', iid: target.iid, player: action.player })
       let sStun = log(s, action.player, `Stunned ${getCard(target.cardId)?.name}.`)
       // "When you stun an enemy unit" (Eclipse Herald, Leona - Radiant Dawn).
-      if (target.owner !== action.player) sStun = fireStun(sStun, action.player)
+      if (target.owner !== action.player) sStun = fireStun(sStun, action.player, battlefieldOf(sStun, target.iid))
       return ok(sStun)
     }
 
@@ -6457,7 +6462,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (ab.effect.readyUnits) { const tu = findUnitAnywhere(s1, t); if (tu && !unitCantBeReadied(tu) && !enemyWardenAtBf(s1, action.player)) tu.exhausted = false }
         }
       }
-      if (ab.effect.stun) s1 = fireStun(s1, action.player) // "when you stun" payoffs
+      if (ab.effect.stun) {
+        // Vex - Mocking: relocate to the stunned enemy's battlefield. Pick a stunned
+        // enemy among the chosen targets and pass its bf into the stun trigger.
+        const st = (action.targets ?? []).map((t) => findUnitAnywhere(s1, t)).find((tu) => !!tu && tu.owner !== action.player && tu.stunned)
+        s1 = fireStun(s1, action.player, st ? battlefieldOf(s1, st.iid) : undefined) // "when you stun" payoffs
+      }
       // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)

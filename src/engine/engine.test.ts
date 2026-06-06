@@ -6413,3 +6413,24 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     expect(r.state.players[1].zones.trash.some((x) => x.iid === enemy.iid)).toBe(true)
   })
 })
+
+describe('A5 — persistent / cascading + bespoke singles', () => {
+  it('Vex - Mocking: stunning an enemy at a battlefield moves her to that battlefield', () => {
+    // Parse: a global stun trigger whose effect relocates the source ("move me there").
+    const vexCard = CARD_INDEX['unl-055-219']
+    const trig = parseTriggers(vexCard).find((t: { event: string }) => t.event === 'stun') as
+      | { scope?: string; effect: { moveSourceToBf?: boolean } }
+      | undefined
+    expect(trig?.effect.moveSourceToBf).toBe(true)
+    // Functional: Vex at bf0; an enemy at bf1; player 0 stuns the enemy → Vex relocates to bf1.
+    const s = baseState()
+    const v = mk('unl-055-219', 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [v], controller: 0 }
+    const enemy = mk(injectCard('a5-vex-e', 'enemy', { might: 2 }), 1)
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const r = reduce(s, { type: 'STUN_UNIT', player: 0, iid: enemy.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[1].units.some((x) => x.iid === v.iid)).toBe(true) // moved to the stun's battlefield
+    expect(r.state.battlefields[0].units.some((x) => x.iid === v.iid)).toBe(false)
+  })
+})
