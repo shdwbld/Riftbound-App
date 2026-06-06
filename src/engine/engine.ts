@@ -899,7 +899,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // "ready your units" (Shurelya's Requiem) — pure benefit, auto-ready them all.
     let n = 0
     for (const u of [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)])
-      if (u.owner === p.id && u.exhausted && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
+      if (u.owner === p.id && u.exhausted && !unitCantBeReadied(u) && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
     if (n > 0) lines.push(`Readied ${n} unit(s).`)
   }
   if (e.readyOrExhaustLegend) {
@@ -914,7 +914,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // ANOTHER unit" (First Mate) excludes the source unit from the choices.
     const excludeIid = e.readyExcludesSelf ? sourceIid : undefined
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => u.owner === p.id && u.exhausted && getCard(u.cardId)?.type === 'unit' && u.iid !== excludeIid,
+      (u) => u.owner === p.id && u.exhausted && !unitCantBeReadied(u) && getCard(u.cardId)?.type === 'unit' && u.iid !== excludeIid,
     )
     const cnt = Math.min(e.readyUnits, exhausted.length)
     if (cnt > 0) {
@@ -958,7 +958,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (costPaid && e.readySelf && sourceIid) {
     // The source may be a legend (Sivir - Battle Mistress: "… ready me").
     const u = findUnitAnywhere(s, sourceIid) ?? (p.legend?.iid === sourceIid ? p.legend : undefined)
-    if (u && u.owner === p.id && u.exhausted) {
+    if (u && u.owner === p.id && u.exhausted && !unitCantBeReadied(u)) {
       u.exhausted = false
       emit({ kind: 'buff', iid: u.iid, player: p.id })
       lines.push(`Readied ${getCard(u.cardId)?.name}.`)
@@ -2061,6 +2061,11 @@ function unitCantMoveToBase(u: EngineCard): boolean {
   return /\bi can'?t move to base/i.test(getCard(u.cardId)?.text ?? '')
 }
 
+/** Maduli the Gatekeeper: "I can't be readied." — skipped by every ready path. */
+function unitCantBeReadied(u: EngineCard): boolean {
+  return /\bi can'?t be readied/i.test(getCard(u.cardId)?.text ?? '')
+}
+
 /** Record a conquered battlefield for the turn (Perched Grimwyrm's placement
  *  predicate). Deduped; cleared at turn start. */
 function markConquered(s: MatchState, player: PlayerId, bfIndex: number): void {
@@ -3018,12 +3023,12 @@ export function beginTurn(state: MatchState): MatchState {
   p.grantRepeatNextSpell = false
   s.unitDiedThisTurn = false // reset the "a unit died this turn" gate
 
-  // Awaken: ready everything the active player controls.
-  if (p.legend) p.legend.exhausted = false
+  // Awaken: ready everything the active player controls (Maduli "I can't be readied" is skipped).
+  if (p.legend && !unitCantBeReadied(p.legend)) p.legend.exhausted = false
   for (const z of Object.keys(p.zones) as ZoneId[])
-    p.zones[z] = p.zones[z].map((c) => ({ ...c, exhausted: false }))
+    p.zones[z] = p.zones[z].map((c) => (unitCantBeReadied(c) ? c : { ...c, exhausted: false }))
   for (const bf of s.battlefields)
-    bf.units = bf.units.map((u) => (u.owner === ap ? { ...u, exhausted: false } : u))
+    bf.units = bf.units.map((u) => (u.owner === ap && !unitCantBeReadied(u) ? { ...u, exhausted: false } : u))
   s = log(s, ap, `— Turn ${s.turn}: ${p.name} · Awaken —`)
 
   // Start-of-turn triggered abilities (card text "at the start of your turn â€¦").
@@ -5632,7 +5637,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return fail(state, 'That unit can\'t be readied by this effect (ready another unit).')
       const s = clone(state)
       const u = findUnitAnywhere(s, action.iid)
-      if (!u || u.owner !== action.player || !u.exhausted)
+      if (!u || u.owner !== action.player || !u.exhausted || unitCantBeReadied(u))
         return fail(state, 'Choose one of your exhausted units.')
       u.exhausted = false
       emit({ kind: 'buff', iid: u.iid, player: action.player })
@@ -6039,7 +6044,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (ab.effect.kill) s1 = fireDeaths(s1, killTarget(s1, t))
           if (ab.effect.grantAssault) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantAssault = (tu.grantAssault ?? 0) + ab.effect.grantAssault }
           if (ab.effect.grantGanking) { const tu = findUnitAnywhere(s1, t); if (tu) tu.grantGanking = true }
-          if (ab.effect.readyUnits) { const tu = findUnitAnywhere(s1, t); if (tu) tu.exhausted = false }
+          if (ab.effect.readyUnits) { const tu = findUnitAnywhere(s1, t); if (tu && !unitCantBeReadied(tu)) tu.exhausted = false }
         }
       }
       if (ab.effect.stun) s1 = fireStun(s1, action.player) // "when you stun" payoffs
@@ -6047,8 +6052,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)
       if (ab.effect.channelExhausted) channelN(p, ab.effect.channelExhausted, true)
-      if (ab.effect.readyAllUnits) for (const unit of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)]) { if (unit.owner === action.player) unit.exhausted = false }
-      if (ab.effect.readySelf) u.exhausted = false
+      if (ab.effect.readyAllUnits) for (const unit of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)]) { if (unit.owner === action.player && !unitCantBeReadied(unit)) unit.exhausted = false }
+      if (ab.effect.readySelf && !unitCantBeReadied(u)) u.exhausted = false
       if (ab.effect.readyRunes) { let n = ab.effect.readyRunes; for (const r of p.zones.runePool) { if (n <= 0) break; if (r.exhausted) { r.exhausted = false; n-- } } }
       if (ab.effect.grantAssaultHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (unit.owner === action.player && unit.iid !== u.iid) unit.grantAssault = (unit.grantAssault ?? 0) + ab.effect.grantAssaultHere }
       // "[Add] <resource>" — rune-ramp gear (Seals, Energy Conduit) add Power/Energy

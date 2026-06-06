@@ -5910,4 +5910,17 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r2.error).toBeUndefined()
     expect(r2.state.players[0].zones.base.some((x) => x.iid === normal.iid)).toBe(true)
   })
+
+  it('Maduli the Gatekeeper: not readied by Awaken (stays exhausted; others ready)', () => {
+    const s = baseState()
+    const maduli = mk(injectCard('a3-maduli', "I can't be readied.", { might: 6 }), 0, { exhausted: true })
+    const normal = mk(furyUnit.id, 0, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [maduli, normal], controller: 0 }
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    const after = beginTurn(s)
+    const bf = after.battlefields[0]
+    expect(bf.units.find((u) => u.iid === maduli.iid)?.exhausted).toBe(true) // skipped by Awaken
+    expect(bf.units.find((u) => u.iid === normal.iid)?.exhausted).toBe(false) // readied normally
+  })
 })
