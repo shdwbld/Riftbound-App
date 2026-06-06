@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { GameEvent } from '../engine/types'
+import { getCard } from '../data/cards'
 
 // Consumes the structured GameEvents from the latest reduce() call and spawns
 // short-lived, coordinate-free toasts near the top-center of the board (points
@@ -53,9 +54,11 @@ export default function FeedbackLayer({
           queued.push({ text: `+${n} point${n > 1 ? 's' : ''}${who ? ` · ${who}` : ''}`, tone: 'emerald' })
           break
         }
-        case 'counter':
-          queued.push({ text: 'Countered!', tone: 'amber' })
+        case 'counter': {
+          const nm = e.cardId ? getCard(e.cardId)?.name?.replace(/\s*\([^)]*\)\s*$/, '') : undefined
+          queued.push({ text: nm ? `${nm} countered — fizzles!` : 'Countered — fizzles!', tone: 'amber' })
           break
+        }
         case 'defeat':
           defeats++
           break

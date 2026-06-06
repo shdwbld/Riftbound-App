@@ -53,7 +53,7 @@ export default function BoardCard({
   size?: 'sm' | 'md'
   faceDown?: boolean
   /** One-shot feedback animation, replayed by remounting (key includes a seq). */
-  flash?: 'damage' | 'defeat' | 'play' | 'buff' | 'stun' | 'move' | 'equip'
+  flash?: 'damage' | 'damage-heavy' | 'defeat' | 'play' | 'buff' | 'stun' | 'move' | 'equip'
   /** Greyed + desaturated when the card is currently unplayable. */
   dim?: boolean
   /** Persistent affordance highlight. */
@@ -139,7 +139,6 @@ export default function BoardCard({
         const lvl = levelBonus(def, xp)
         const aura = auraBonus ?? 0
         const might = Math.max(0, base.might + lvl.might + aura)
-        const boosted = base.boosted || lvl.might > 0 || aura > 0
         const x = ci as CardInstance & { buffs?: number; attached?: string[]; stunned?: boolean; tempMight?: number }
         // Might breakdown for the tooltip: "2 + 1 = 3 (this turn)".
         let gear = 0
@@ -166,7 +165,11 @@ export default function BoardCard({
             <span
               title={mightTitle}
               className={`absolute bottom-0 right-0 rounded-tl px-1 text-[9px] font-bold ${
-                boosted ? 'bg-emerald-600/90 text-white' : 'bg-black/75 text-rose-300'
+                might > def.might
+                  ? 'bg-emerald-600/90 text-white' /* buffed above base */
+                  : ci.damage > 0
+                    ? 'bg-rose-800/85 text-rose-100' /* damaged */
+                    : 'bg-black/75 text-white' /* base */
               }`}
             >
               {might}⚔{ci.damage ? <span className="text-rose-200" title={`${ci.damage} damage marked`}>−{ci.damage}</span> : null}

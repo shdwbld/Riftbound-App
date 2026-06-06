@@ -95,7 +95,7 @@ export interface MatchBoardProps {
 }
 
 /** Per-card flash kind that survives on a card still in play. */
-type FlashKind = 'damage' | 'play' | 'buff' | 'stun' | 'move' | 'equip'
+type FlashKind = 'damage' | 'damage-heavy' | 'play' | 'buff' | 'stun' | 'move' | 'equip'
 
 interface Fx {
   seq: number
@@ -279,10 +279,10 @@ export default function MatchBoard({
   const flashMap = useMemo(() => {
     const m = new Map<string, FlashKind>()
     for (const e of events ?? []) {
-      if (
-        e.iid &&
-        (e.kind === 'damage' || e.kind === 'play' || e.kind === 'buff' || e.kind === 'stun' || e.kind === 'move' || e.kind === 'equip')
-      )
+      if (!e.iid) continue
+      // Big hits (≥5) shake harder — encode magnitude in the flash kind.
+      if (e.kind === 'damage') m.set(e.iid, (e.amount ?? 0) >= 5 ? 'damage-heavy' : 'damage')
+      else if (e.kind === 'play' || e.kind === 'buff' || e.kind === 'stun' || e.kind === 'move' || e.kind === 'equip')
         m.set(e.iid, e.kind)
     }
     return m
@@ -1031,6 +1031,7 @@ export default function MatchBoard({
             <p className="mt-1 text-center text-[11px] text-white/55">
               {outcome} ·{' '}
               {myShowdown ? 'your priority' : `waiting for ${match.players[sd.priority].name}`}
+              {sd.passes ? ` · ${sd.passes} pass${sd.passes > 1 ? 'es' : ''}` : ''}
             </p>
           </div>
         )
@@ -1227,6 +1228,35 @@ export default function MatchBoard({
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
         panel lands here in Stage 2. On < xl this stacks below the board. */}
     <aside className="space-y-3 xl:w-[340px] xl:shrink-0">
+      {/* Phase ribbon — always-on step indicator for the structural turn phases. */}
+      {(() => {
+        const STEPS: { key: string; label: string }[] = [
+          { key: 'awaken', label: 'Awaken' },
+          { key: 'channel', label: 'Channel' },
+          { key: 'draw', label: 'Draw' },
+          { key: 'action', label: 'Action' },
+          { key: 'showdown', label: 'Showdown' },
+        ]
+        const curIdx = STEPS.findIndex((s) => s.key === match.phase)
+        return (
+          <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-[#0a1428] p-1.5 text-[9px] font-semibold uppercase tracking-wide">
+            {STEPS.map((s, i) => (
+              <span
+                key={s.key}
+                className={`flex-1 rounded px-1 py-1 text-center transition ${
+                  s.key === match.phase
+                    ? 'bg-amber-500/30 text-amber-100'
+                    : i < curIdx
+                      ? 'text-white/30'
+                      : 'text-white/50'
+                }`}
+              >
+                {s.label}
+              </span>
+            ))}
+          </div>
+        )
+      })()}
       {onUndo && (
         <button
           onClick={onUndo}
@@ -1287,6 +1317,7 @@ export default function MatchBoard({
               {myChainPriority
                 ? 'your priority'
                 : `waiting for ${match.priority != null ? match.players[match.priority].name : '…'}`}
+              {match.passes ? ` · ${match.passes} pass${match.passes > 1 ? 'es' : ''}` : ''}
             </span>
             {myChainPriority && onPassPriority && (
               <button
@@ -2135,8 +2166,18 @@ function PlayerMat({
           // (your action turn, or you hold a response window).
           const relevant = myActionTurn || canRespond
           const cf = cardFx(fx, c)
+          const handDef = getCard(c.cardId)
+          const isReaction = !!handDef && parseKeywords(handDef).reaction
           return (
             <div key={cf.key} className="flex flex-col items-center gap-0.5">
+              {isReaction && (
+                <span
+                  className="rounded bg-sky-500/30 px-1 text-[8px] font-bold uppercase tracking-wide text-sky-200"
+                  title="Reaction — can be played during a chain / response window"
+                >
+                  ⚡ React
+                </span>
+              )}
               <CardPreview cardId={c.cardId} center>
                 <button className="card-lift" onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')} {...dragSrc(dndOn, c.iid)}>
                   <BoardCard

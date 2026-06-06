@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { getCard } from '../data/cards'
+import { totalCost } from '../types/cards'
 import type { EngineCard } from '../engine/types'
 import BoardCard from './BoardCard'
 
@@ -23,6 +24,7 @@ export default function MulliganHand({
   const previewId = hover ?? hand[0]?.cardId
   const preview = previewId ? getCard(previewId) : null
   return (
+    <div className="flex flex-col items-center gap-4">
     <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start sm:justify-center">
       {/* Hover preview area */}
       <div className="hidden w-56 shrink-0 sm:block">
@@ -65,6 +67,38 @@ export default function MulliganHand({
           </div>
         ))}
       </div>
+    </div>
+
+      {/* Redraw preview — what the kept hand looks like (count + energy-cost curve). */}
+      {(() => {
+        const kept = hand.filter((c) => !aside.includes(c.iid))
+        const MAXB = 6
+        const buckets = new Array(MAXB + 1).fill(0)
+        for (const c of kept) {
+          const d = getCard(c.cardId)
+          if (d) buckets[Math.min(MAXB, totalCost(d))]++
+        }
+        const peak = Math.max(1, ...buckets)
+        return (
+          <div className="flex flex-col items-center gap-1 rounded-xl border border-white/10 bg-[#0a1428] px-4 py-2">
+            <div className="text-[11px] text-white/60">
+              Keeping <b className="text-white/90">{kept.length}</b> · replacing <b className="text-rose-300">{aside.length}</b>
+            </div>
+            <div className="flex h-10 items-end gap-1">
+              {buckets.map((n, i) => (
+                <div key={i} className="flex w-5 flex-col items-center gap-0.5">
+                  <div
+                    className="w-full rounded-t bg-amber-400/70"
+                    style={{ height: `${(n / peak) * 28 + 2}px` }}
+                    title={`${n} card${n === 1 ? '' : 's'} at cost ${i}${i === MAXB ? '+' : ''}`}
+                  />
+                  <span className="text-[8px] text-white/40">{i}{i === MAXB ? '+' : ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
