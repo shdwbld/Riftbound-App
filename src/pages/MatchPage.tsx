@@ -24,6 +24,7 @@ import VisionPrompt from '../components/VisionPrompt'
 import SetupScreen from '../components/SetupScreen'
 import DamageAssignModal from '../components/DamageAssignModal'
 import BattleSummary, { worthSummarizing } from '../components/BattleSummary'
+import BaronEntranceVfx from '../components/BaronEntranceVfx'
 import TurnRecapBanner, { type TurnRecapData } from '../components/TurnRecapBanner'
 import HotkeyHelp from '../components/HotkeyHelp'
 
@@ -130,6 +131,8 @@ export default function MatchPage() {
   // End-of-turn recap banner + per-turn event buffer (keyed by match.turn).
   const [recap, setRecap] = useState<TurnRecapData | null>(null)
   const recapBufRef = useRef<{ turn: number; events: GameEvent[] }>({ turn: -1, events: [] })
+  // Pixel-art entrance VFX for Baron Nashor / the Baron Pit (token = seq, replays).
+  const [baronVfx, setBaronVfx] = useState<{ token: number; label: string } | null>(null)
   // Pending Ambush battlefield choice.
   const [ambushPick, setAmbushPick] = useState<{ iid: string; payment: Payment; accelerate: boolean; payAdditionalCost?: boolean; options: { label: string; value: number }[] } | null>(null)
   // Pending "Equip to a unit" choice for an unattached gear in base.
@@ -173,6 +176,8 @@ export default function MatchPage() {
       if (import.meta.env.DEV) { const viol = checkInvariants(state); if (viol.length) console.warn('[invariants]', action.type, viol) }
       setLastEvents(events)
       if (worthSummarizing(events)) setSummary({ events: events!, token: state.seq })
+      // Baron Nashor played → Baron Pit opens: play the pixel-art entrance VFX.
+      if (events?.some((e) => e.cardId === 'unl-147-219')) setBaronVfx({ token: state.seq, label: 'Baron Nashor' })
       const r = accumulateTurnRecap(recapBufRef.current, state, events)
       if (r) setRecap(r)
       setMatch(state)
@@ -650,6 +655,9 @@ export default function MatchPage() {
       })()}
       {summary && (
         <BattleSummary match={match} events={summary.events} token={summary.token} onClose={() => setSummary(null)} />
+      )}
+      {baronVfx && (
+        <BaronEntranceVfx token={baronVfx.token} label={baronVfx.label} onDone={() => setBaronVfx(null)} />
       )}
       <TurnRecapBanner data={recap} />
       {match.vision && match.vision.player === controlling && (

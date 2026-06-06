@@ -571,6 +571,39 @@ body {
   animation: boardShake 0.4s ease-in-out;
 }
 
+/* ---- Baron Nashor / Baron Pit entrance VFX (pixel-art, stepped frames) ---- */
+@keyframes baronFlash {
+  0%, 100% { opacity: 0; }
+  8% { opacity: 0.6; }
+  28% { opacity: 0.15; }
+  46% { opacity: 0.45; }
+  72% { opacity: 0.12; }
+}
+@keyframes baronPortal {
+  0% { transform: translate(-50%, -50%) scale(0.15) rotate(0deg); opacity: 0; }
+  18% { opacity: 1; }
+  60% { transform: translate(-50%, -50%) scale(1.1) rotate(10deg); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1.35) rotate(14deg); opacity: 0; }
+}
+@keyframes baronEye {
+  0%, 18% { opacity: 0; }
+  26% { opacity: 1; }
+  55% { opacity: 1; }
+  68% { opacity: 0.2; }
+  78% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes baronRise {
+  0% { transform: translate(-50%, 40px); opacity: 0; }
+  30% { transform: translate(-50%, 0); opacity: 1; }
+  80% { transform: translate(-50%, -8px); opacity: 1; }
+  100% { transform: translate(-50%, -22px); opacity: 0; }
+}
+.fx-baron-flash { animation: baronFlash 1.6s steps(7) both; }
+.fx-baron-portal { animation: baronPortal 1.6s steps(9) both; image-rendering: pixelated; }
+.fx-baron-eye { animation: baronEye 1.6s steps(6) both; }
+.fx-baron-rise { animation: baronRise 1.6s steps(8) both; }
+
 /* Ready (unexhausted, can act) units get a soft emerald breathing ring. */
 @keyframes readyPulse {
   0%,
@@ -612,6 +645,10 @@ body {
   .fx-toast,
   .fx-slidein,
   .fx-board-shake,
+  .fx-baron-flash,
+  .fx-baron-portal,
+  .fx-baron-eye,
+  .fx-baron-rise,
   .fx-ready {
     animation: none;
   }
