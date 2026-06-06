@@ -140,8 +140,6 @@ const GENERIC = {
   'triple-kill': ['Announcer_OnChampionTripleKill_0_old2.ogg'],
   'quadra-kill': ['Announcer_OnChampionQuadraKill_0_old2.ogg'],
   'penta-kill': ['Announcer_OnChampionPentaKill_0_old2.ogg'],
-  turret: ['Announcer_OnTurretDieEnemyTeam_0_old2.ogg'],
-  inhibitor: ['Announcer_OnDampenerDieEnemyTeam_0_old2.ogg'],
   recall: ['Recall_SFX.ogg'],
 }
 async function ingestGeneric() {

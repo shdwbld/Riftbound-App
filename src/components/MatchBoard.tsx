@@ -442,7 +442,6 @@ export default function MatchBoard({
     if (kinds.has('counter')) audio.play('spell')
     if (kinds.has('conquer')) {
       audio.play('sword')
-      void audio.playGeneric('turret', { delay: 0.3 })
       // The conquering player's legend champion taunts.
       const conq = events.find((e) => e.kind === 'conquer')
       const lg = conq?.player != null ? match.players[conq.player]?.legend : null
