@@ -2253,6 +2253,7 @@ function makeBfApi(s: MatchState): BfApi {
 function bfSpellPlayed(s: MatchState, player: PlayerId, spentEnergy = 0): MatchState {
   // Running tally of Energy spent on spells this turn (Prepared Neophyte, Jhin).
   s.players[player].energySpentOnSpellsThisTurn = (s.players[player].energySpentOnSpellsThisTurn ?? 0) + spentEnergy
+  s.players[player].spellPlayedThisTurn = true // Crescent Guardian gate (0-cost spells count too)
   for (let i = 0; i < s.battlefields.length; i++) {
     const script = bfScriptAt(s, i)
     if (script?.onSpellPlayed) script.onSpellPlayed(makeBfApi(s), player, i, spentEnergy)
@@ -3377,6 +3378,7 @@ export function beginTurn(state: MatchState): MatchState {
   p.apheliosModesThisTurn = 0
   p.azirSwappedThisTurn = false
   p.energySpentOnSpellsThisTurn = 0
+  p.spellPlayedThisTurn = false
   p.conqueredThisTurn = []
   p.oncePerTurnUsed = {}
   p.pool = { energy: 0, power: {} }
@@ -5585,8 +5587,28 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Blast Corps Cadet, Frostcoat Cub, Sea Monkey, Akshan). Opt-in via the action;
       // fold the cost in now and gate the "if you paid" bonus on `paidAdditional`.
       const optPlayCost = action.type === 'PLAY_UNIT' ? optionalPlayCost(card) : null
-      const paidAdditional = action.type === 'PLAY_UNIT' && !!action.payAdditionalCost && !!optPlayCost
+      // Crescent Guardian: the optional Chaos cost is only OFFERED if you've already
+      // played a spell this turn — gate the opt-in on spellPlayedThisTurn so a bogus
+      // payAdditionalCost can't fold the cost or grant enter-ready when the gate is unmet.
+      const crescentGate = action.type === 'PLAY_UNIT' && /if you've played a spell this turn, you may pay/i.test(card.text ?? '')
+      const paidAdditional = action.type === 'PLAY_UNIT' && !!action.payAdditionalCost && !!optPlayCost && (!crescentGate || !!p.spellPlayedThisTurn)
       if (paidAdditional) effCost = addCost(effCost, optPlayCost!)
+      // Brazen Buccaneer: "you may discard 1 as an additional cost. If you do, reduce my
+      // cost by N Energy." The discount must land before payment; the discard itself is
+      // deferred to after placement (where s1 exists). Opting in with an empty hand is
+      // illegal (can't pay the cost). Auto-discards the cheapest other hand card.
+      const brazenM = action.type === 'PLAY_UNIT'
+        ? (card.text ?? '').match(/you may discard \d+ as an additional cost\.?\s*if you do,?\s*reduce my cost by :rb_energy_(\d+):/i)
+        : null
+      let brazenDiscardIid: string | null = null
+      if (brazenM && action.type === 'PLAY_UNIT' && action.payAdditionalCost) {
+        const energyOf = (cid: string) => (getCard(cid) as { energy?: number } | undefined)?.energy ?? 0
+        const cand = p.zones.hand.filter((c) => c.iid !== action.iid)
+        if (!cand.length) return fail(state, `Can't play ${card.name}: no card to discard for its additional cost.`)
+        const pick = cand.reduce((lo, c) => (energyOf(c.cardId) <= energyOf(lo.cardId) ? c : lo))
+        brazenDiscardIid = pick.iid
+        effCost = { ...effCost, energy: Math.max(0, effCost.energy - parseInt(brazenM[1], 10)) }
+      }
       const err = applyPayment(p, effCost, action.payment)
       if (err) return fail(state, err)
       // Recap signal: how this play was paid (runes exhausted / recycled). Emitted
@@ -5640,7 +5662,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Towering Pairofant, Dunebreaker, Xin Zhao, Shadow Watcher, Shadow).
         const guardReady = readyGuarded && enterReadyConditionMet(s, p, readyClause, action.toBattlefield ?? null)
         const condReady = monchReady || leonaReady || guardReady
-        const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady || friendlyUnitsEnterReadyAura(s, action.player)
+        // "you may pay X as an additional cost … If you do, I enter ready" (Crescent
+        // Guardian) — entering ready is the paid-bonus, granted only when the cost was paid.
+        const paidEnterReady = paidAdditional && /if you do,?\s*i enters? ready/i.test(card.text ?? '')
+        const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady || paidEnterReady || friendlyUnitsEnterReadyAura(s, action.player)
         // Required additional cost "As an additional cost to play me, kill a <X>
         // you control" (Stalking Wolf → Bird/Cat/Dog/Poro; Cruel Patron → any
         // friendly unit). Pick the lowest-Might qualifier now (the kill resolves
@@ -5720,6 +5745,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // not the cost was paid; the paid branch (zaunPunk) resolves both kills bespoke.
         const isZaunPunk = /you may kill a friendly gear as an additional cost to play (?:me|this)/i.test(ctext)
         const zaunPunk = !!action.payAdditionalCost && isZaunPunk
+        // Safety Inspector: optional 3-XP cost; on play EACH player kills their weakest
+        // unit, but the controller is exempt if they paid the XP. Suppress generic apply
+        // (the parser shouldn't mis-handle "each player must kill one of their units").
+        const isSafetyInspector = /you may spend \d+ xp as an additional cost to play me/i.test(ctext) && /each player must kill one of their units/i.test(ctext)
         if (zaunPunk) {
           const friendlyGear = allGearInPlay(s1).filter((g) => g.owner === action.player)
           if (!friendlyGear.length) return fail(state, `Can't play ${card.name}: no friendly gear to kill for its additional cost.`)
@@ -5731,6 +5760,42 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (!bonus.killed) bonus = applyKillGear(s1, action.player, { scope: 'any', maxEnergy: null })
           for (const ln of bonus.lines) s1 = log(s1, action.player, ln)
         }
+        // Brazen Buccaneer: pay the deferred discard cost now (the −Energy discount was
+        // already folded into the cost above). Fires the controller's discard triggers.
+        if (brazenDiscardIid) {
+          const disc = p.zones.hand.find((c) => c.iid === brazenDiscardIid)
+          if (disc) {
+            removeFromZone(p, 'hand', disc.iid)
+            sendToTrash(p, disc)
+            s1 = log(s1, action.player, `${card.name}: discarded ${getCard(disc.cardId)?.name ?? 'a card'} as an additional cost.`)
+            s1 = fireDiscard(s1, action.player, [disc])
+          }
+        }
+        // Safety Inspector: pay the optional XP cost, then each player culls their
+        // weakest unit (the controller skips it if they paid). Opting in without enough
+        // XP is illegal. Auto-picks the lowest-Might unit per player (auto-resolve).
+        if (isSafetyInspector) {
+          const xpM = ctext.match(/you may spend (\d+) xp as an additional cost/)
+          const xpCost = xpM ? parseInt(xpM[1], 10) : 3
+          let paidXp = false
+          if (action.payAdditionalCost) {
+            if (p.xp < xpCost) return fail(state, `Can't play ${card.name}: not enough XP (need ${xpCost}).`)
+            p.xp -= xpCost
+            paidXp = true
+            s1 = log(s1, action.player, `${card.name}: spent ${xpCost} XP (you won't kill a unit).`)
+          }
+          const dead: EngineCard[] = []
+          for (const pl of s1.players) {
+            if (pl.out) continue
+            if (pl.id === action.player && paidXp) continue
+            const units = [...pl.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit')
+            if (!units.length) continue
+            const victim = units.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+            s1 = log(s1, action.player, `${card.name}: ${pl.name} killed ${getCard(victim.cardId)?.name ?? 'a unit'}.`)
+            dead.push(...killTarget(s1, victim.iid))
+          }
+          if (dead.length) s1 = fireDeaths(s1, dead, action.player)
+        }
         const e = onPlayEffect(card)
         const legionGated = kw.legion && !legionActive
         // Insightful Investigator: the parser reads "You may pay 2 XP to choose a card
@@ -5739,7 +5804,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // generic effect and gate it behind an optional N-XP prompt instead (below).
         const xpStripM = (card.text ?? '').toLowerCase().match(/you may pay (\d+) xp/)
         const insightfulXp = !!xpStripM && (!!e.opponentHandStrip || !!e.opponentDiscards)
-        if (!legionGated && !insightfulXp && !isZaunPunk) {
+        if (!legionGated && !insightfulXp && !isZaunPunk && !isSafetyInspector) {
           for (const line of applyParsed(s1, p, e, undefined, ci.iid)) s1 = log(s1, action.player, line)
           s1 = fireTokenPlay(s1, action.player, tokenUnitsIn(e)) // Lillia: token-unit play synergy
           // Fizz - Trickster: "When you play me, you may play a spell from your trash…"
@@ -7088,6 +7153,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             p.apheliosModesThisTurn = 0
             p.azirSwappedThisTurn = false
             p.energySpentOnSpellsThisTurn = 0
+            p.spellPlayedThisTurn = false
             p.conqueredThisTurn = []
             p.oncePerTurnUsed = {}
             p.grantRepeatNextSpell = false

@@ -149,6 +149,10 @@ export interface PlayerState {
   /** Energy spent on spells this turn (Prepared Neophyte's 4+ threshold, Jhin -
    *  Meticulous Killer's alt cost). Cleared at turn start. */
   energySpentOnSpellsThisTurn?: number
+  /** Whether this player has played any spell this turn (Crescent Guardian's
+   *  "if you've played a spell this turn" optional-cost gate — distinct from
+   *  energySpentOnSpellsThisTurn since a 0-cost spell still counts). Cleared at turn start. */
+  spellPlayedThisTurn?: boolean
   /** Battlefield indices this player conquered this turn (Perched Grimwyrm's
    *  "play me only to a battlefield you conquered this turn"). Cleared at turn start. */
   conqueredThisTurn?: number[]

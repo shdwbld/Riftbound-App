@@ -6899,6 +6899,79 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.players[1].zones.trash.some((g) => g.iid === foeGear.iid)).toBe(true)
   })
 
+  it('Brazen Buccaneer: discarding 1 reduces the cost by 2 Energy', () => {
+    const bid = injectCard('b-brazen', 'As you play me, you may discard 1 as an additional cost. If you do, reduce my cost by :rb_energy_2:.', { name: 'Brazen Buccaneer', type: 'unit', energy: 2, might: 5 })
+    // Without the discount, the 2-Energy cost can't be paid (no runes) → play rejected.
+    const s0 = baseState()
+    const junk0 = mk(injectCard('b-brazen-junk0', 'x', { type: 'unit' }), 0)
+    const b0 = mk(bid, 0)
+    s0.players[0].zones.hand.push(b0, junk0)
+    const r0 = reduce(s0, { type: 'PLAY_UNIT', player: 0, iid: b0.iid, payment: emptyPayment() })
+    expect(r0.error).toBeTruthy()
+    // With the discard, the cost drops to 0 and the cheapest other hand card is binned.
+    const s = baseState()
+    const junk = mk(injectCard('b-brazen-junk', 'x', { type: 'unit' }), 0)
+    const b = mk(bid, 0)
+    s.players[0].zones.hand.push(b, junk)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: b.iid, payment: emptyPayment(), payAdditionalCost: true })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((u) => u.iid === b.iid)).toBe(true) // cost reduced to 0 → played
+    expect(r.state.players[0].zones.trash.some((c) => c.iid === junk.iid)).toBe(true) // discarded as the cost
+  })
+
+  it('Crescent Guardian: pays Chaos to enter ready, but only after a spell this turn', () => {
+    const cid = injectCard('b-crescent', "If you've played a spell this turn, you may pay :rb_rune_chaos: as an additional cost to play me. If you do, I enter ready.", { name: 'Crescent Guardian', type: 'unit', energy: 0, might: 4 })
+    const chaosRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('chaos'))!
+    // No spell played yet → opting in is ignored; the unit enters exhausted.
+    const s0 = baseState()
+    const c0 = mk(cid, 0)
+    s0.players[0].zones.hand.push(c0)
+    s0.players[0].zones.runePool.push(mk(chaosRune.id, 0))
+    const r0 = reduce(s0, { type: 'PLAY_UNIT', player: 0, iid: c0.iid, payment: emptyPayment(), payAdditionalCost: true })
+    expect(r0.error).toBeFalsy()
+    expect(r0.state.players[0].zones.base.find((u) => u.iid === c0.iid)?.exhausted).toBe(true) // gate unmet → not ready
+    // After a spell this turn → paying Chaos makes it enter ready.
+    const s = baseState()
+    s.players[0].spellPlayedThisTurn = true
+    const c = mk(cid, 0)
+    s.players[0].zones.hand.push(c)
+    const cr = mk(chaosRune.id, 0)
+    s.players[0].zones.runePool.push(cr)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: c.iid, payment: { exhaust: [], recycle: [cr.iid] }, payAdditionalCost: true })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((u) => u.iid === c.iid)?.exhausted).toBe(false) // paid Chaos → enters ready
+  })
+
+  it('Safety Inspector: each player culls a unit; paying 3 XP exempts you', () => {
+    const sid = injectCard('b-safety', "You may spend 3 XP as an additional cost to play me. When you play me, each player must kill one of their units. If you paid my additional cost, you don't kill a unit this way.", { name: 'Safety Inspector', type: 'unit', energy: 0, might: 3 })
+    // Case A: no XP paid → both players cull their weakest.
+    const s = baseState()
+    const mine = mk(injectCard('b-safety-mine', 'x', { type: 'unit', might: 1 }), 0)
+    const foe = mk(injectCard('b-safety-foe', 'x', { type: 'unit', might: 2 }), 1)
+    s.players[0].zones.base.push(mine)
+    s.players[1].zones.base.push(foe)
+    const si = mk(sid, 0)
+    s.players[0].zones.hand.push(si)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: si.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((u) => u.iid === mine.iid)).toBe(false) // my weakest culled
+    expect(r.state.players[1].zones.base.some((u) => u.iid === foe.iid)).toBe(false) // opponent culled
+    // Case B: pay 3 XP → only the opponent culls.
+    const s2 = baseState()
+    s2.players[0].xp = 3
+    const mine2 = mk(injectCard('b-safety-mine2', 'x', { type: 'unit', might: 1 }), 0)
+    const foe2 = mk(injectCard('b-safety-foe2', 'x', { type: 'unit', might: 2 }), 1)
+    s2.players[0].zones.base.push(mine2)
+    s2.players[1].zones.base.push(foe2)
+    const si2 = mk(sid, 0)
+    s2.players[0].zones.hand.push(si2)
+    const r2 = reduce(s2, { type: 'PLAY_UNIT', player: 0, iid: si2.iid, payment: emptyPayment(), payAdditionalCost: true })
+    expect(r2.error).toBeFalsy()
+    expect(r2.state.players[0].xp).toBe(0) // 3 XP spent
+    expect(r2.state.players[0].zones.base.some((u) => u.iid === mine2.iid)).toBe(true) // exempt — survives
+    expect(r2.state.players[1].zones.base.some((u) => u.iid === foe2.iid)).toBe(false) // opponent still culls
+  })
+
   it('Zaun Punk: declining the additional cost kills no gear', () => {
     const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
     const s = baseState()
