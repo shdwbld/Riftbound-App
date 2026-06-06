@@ -909,8 +909,8 @@ export default function MatchBoard({
         height; fitScaler carries the transform. The overlay tail below stays
         OUTSIDE this wrapper so its position:fixed elements aren't re-anchored by
         the transform. */}
-    <div ref={fitWrapRef} className="mx-auto w-full max-w-[var(--mat-max)]">
-    <div ref={fitScalerRef} className="space-y-3">
+    <div ref={fitWrapRef} className="w-full">
+    <div ref={fitScalerRef} className="w-[var(--mat-max)] space-y-3">
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
         {opponents.map((opp) => (
