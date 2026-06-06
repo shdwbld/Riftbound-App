@@ -7036,6 +7036,49 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.players[0].zones.base.some((u) => u.iid === ally.iid)).toBe(true) // ally swapped to base
   })
 
+  it('Mageseeker Investigator: opponents pay rainbow per extra unit moved to her battlefield', () => {
+    const invId = injectCard('b-mageseeker', 'Opponents must pay :rb_rune_rainbow: for each unit beyond the first to move multiple units to my battlefield at the same time.', { name: 'Mageseeker Investigator', type: 'unit', might: 4 })
+    // 1 ready rune covers the surcharge for a 2-unit group move → succeeds, rune recycled.
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(invId, 1)], controller: 1 }
+    const u1 = mk(furyUnit.id, 0)
+    const u2 = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u1, u2)
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [u1.iid, u2.iid], toBattlefield: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === u1.iid)).toBe(true) // moved
+    expect(r.state.players[0].zones.runePool.length).toBe(0) // 1 rainbow Power paid
+    // No ready rune → the group move is rejected.
+    const s2 = baseState()
+    s2.battlefields[0] = { cardId: battlefield.id, units: [mk(invId, 1)], controller: 1 }
+    const a = mk(furyUnit.id, 0)
+    const b = mk(furyUnit.id, 0)
+    s2.players[0].zones.base.push(a, b)
+    expect(reduce(s2, { type: 'MOVE_UNITS', player: 0, iids: [a.iid, b.iid], toBattlefield: 0 }).error).toBeTruthy()
+  })
+
+  it('Ava Achiever: on attack, pays 1 Mind to play a [Hidden] card from hand for free', () => {
+    const avaId = injectCard('b-ava', "When I attack, you may pay :rb_rune_mind: to play a card with [Hidden] from your hand, ignoring its cost. If it's a unit, play it here.", { name: 'Ava Achiever', type: 'unit', might: 4 })
+    const hiddenUnitId = injectCard('b-ava-hidden', '[Hidden] A scout.', { type: 'unit', energy: 5, might: 3 })
+    const mindRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('mind'))!
+    const s = baseState()
+    const ava = mk(avaId, 0)
+    s.players[0].zones.base.push(ava)
+    const hiddenCard = mk(hiddenUnitId, 0)
+    s.players[0].zones.hand.push(hiddenCard)
+    s.players[0].zones.runePool.push(mk(mindRune.id, 0))
+    const enemy = mk(injectCard('b-ava-enemy', 'x', { type: 'unit', might: 1 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [ava.iid], toBattlefield: 0 }) // attack
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === hiddenCard.iid)).toBe(false) // played from hand
+    expect([...r.state.battlefields.flatMap((b) => b.units)].some((u) => u.iid === hiddenCard.iid)).toBe(true) // entered play here (free)
+    expect(r.state.players[0].zones.runePool.length).toBe(0) // 1 Mind Power paid
+  })
+
   it('Zaun Punk: declining the additional cost kills no gear', () => {
     const zid = injectCard('b-zaunpunk2', 'You may kill a friendly gear as an additional cost to play me. When you play me, if you paid the additional cost, kill a gear.', { name: 'Zaun Punk', type: 'unit', energy: 0, might: 3 })
     const s = baseState()

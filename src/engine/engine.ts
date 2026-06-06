@@ -1231,6 +1231,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       || srcName === 'Adaptatron' // its bespoke conquer handler owns the gear-kill + buff
       || (srcName === 'Draven - Vanquisher' && (ability.event === 'attack' || ability.event === 'defend')) // pay-gated +2, handled bespoke
       || (srcName === 'Atakhan' && ability.event === 'attack') // defender-must-kill, handled bespoke
+      || (srcName === 'Ava Achiever' && ability.event === 'attack') // pay-Mind play-Hidden, handled bespoke
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1620,6 +1621,43 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
           dead.push(...killTarget(s, victim.iid))
         }
         if (dead.length) s = fireDeaths(s, dead, player)
+      }
+      handled = true
+    }
+    // Ava Achiever: "When I attack, you may pay :rb_rune_mind: to play a card with
+    // [Hidden] from your hand, ignoring its cost. If it's a unit, play it here." Auto-pays
+    // 1 Mind Power when available and a [Hidden] card is in hand; auto-picks the strongest
+    // [Hidden] unit (else the first [Hidden] card). Plays from hand directly (not hidden).
+    if (ability.event === 'attack' && srcName === 'Ava Achiever' && sourceIid) {
+      const bi = battlefieldOf(s, sourceIid)
+      const hidden = p.zones.hand.filter((c) => parseKeywords(getCard(c.cardId)).hidden)
+      const mindRune = p.zones.runePool.find((r) => !r.exhausted && (def(r) as { produces?: string[] } | undefined)?.produces?.includes('mind'))
+      if (bi >= 0 && hidden.length && mindRune) {
+        const ri = p.zones.runePool.findIndex((r) => r.iid === mindRune.iid)
+        const [recycled] = p.zones.runePool.splice(ri, 1)
+        p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
+        const units = hidden.filter((c) => getCard(c.cardId)?.type === 'unit')
+        const pick = units.length ? units.reduce((hi, c) => (mightOf(c) >= mightOf(hi) ? c : hi)) : hidden[0]
+        const pickDef = getCard(pick.cardId)
+        removeFromZone(p, 'hand', pick.iid)
+        const newCi: EngineCard = { ...pick, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn }
+        emit({ kind: 'play', iid: newCi.iid, player, cardId: newCi.cardId })
+        if (pickDef?.type === 'unit') {
+          s.battlefields[bi].units.push(newCi)
+          recomputeControllers(s)
+          s = log(s, player, `${label}: Ava played ${pickDef.name} from hand (free, here).`)
+          for (const line of applyParsed(s, p, onPlayEffect(pickDef), bi, newCi.iid)) s = log(s, player, line)
+          s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
+        } else if (pickDef?.type === 'gear') {
+          p.zones.base.push({ ...newCi, exhausted: false })
+          s = log(s, player, `${label}: Ava played ${pickDef.name} from hand (free).`)
+          s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
+        } else if (pickDef) {
+          s = log(s, player, `${label}: Ava played ${pickDef.name} from hand (free).`)
+          s = resolveSpellEffects(s, player, pickDef, [])
+          s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
+          sendToTrash(p, newCi)
+        }
       }
       handled = true
     }
@@ -3297,6 +3335,16 @@ function moveUnits(
   const prevController = state.battlefields[toBattlefield].controller
   const s = clone(state)
   const p = s.players[player]
+  // Mageseeker Investigator: "Opponents must pay :rb_rune_rainbow: for each unit beyond
+  // the first to move multiple units to my battlefield at the same time." Each opposing
+  // Investigator at the destination stacks the surcharge (1 rainbow per extra unit each).
+  if (iids.length > 1) {
+    const invCount = s.battlefields[toBattlefield].units.filter(
+      (u) => u.owner !== player && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator',
+    ).length
+    if (invCount > 0 && !makeBfApi(s).payPowerAny(player, (iids.length - 1) * invCount))
+      return fail(state, `Mageseeker Investigator: must pay ${(iids.length - 1) * invCount} rainbow Power to move ${iids.length} units there.`)
+  }
   const moved: EngineCard[] = []
   const sourceBfs = new Set<number>() // battlefields a moved unit left (Stealthy Pursuer follow)
   for (const iid of iids) {
