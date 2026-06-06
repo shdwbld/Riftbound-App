@@ -16,6 +16,7 @@ import { validateDeck } from '../lib/deckValidation'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import { FEATURED_DECKS, type FeaturedDeck } from '../data/featuredDecks'
 import PromptModal from '../components/PromptModal'
+import { LegendBanner } from '../components/DeckTile'
 
 export default function DecksPage() {
   const navigate = useNavigate()
@@ -165,8 +166,10 @@ export default function DecksPage() {
               <Link
                 key={deck.id}
                 to={`/decks/${deck.id}`}
-                className="group relative overflow-hidden rounded-xl border border-white/10 bg-[#0a1428] p-4 transition hover:border-white/25 hover:bg-[#0a1e33]"
+                className="group relative overflow-hidden rounded-xl border border-white/10 bg-[#0a1428] transition hover:border-white/25 hover:bg-[#0a1e33]"
               >
+                <LegendBanner legend={legend} identity={v.identity} />
+                <div className="p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate font-semibold">{deck.name}</div>
@@ -221,6 +224,7 @@ export default function DecksPage() {
                   >
                     Delete
                   </button>
+                </div>
                 </div>
               </Link>
             )

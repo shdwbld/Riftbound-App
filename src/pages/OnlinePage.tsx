@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { listDecks, getDeck } from '../lib/deckStorage'
 import { getCard } from '../data/cards'
 import type { Deck } from '../types/deck'
+import { DeckPicker } from '../components/DeckTile'
 import type { Card } from '../types/cards'
 import {
   type MatchState,
@@ -1050,20 +1051,7 @@ function Lobby({
         </p>
       </div>
 
-      <label className="block rounded-xl border border-white/10 bg-[#0a1428] p-4">
-        <span className="text-xs uppercase tracking-wide text-white/40">Your deck</span>
-        <select
-          value={deckId}
-          onChange={(e) => setDeckId(e.target.value)}
-          className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-sky-400"
-        >
-          {decks.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <DeckPicker label="Your deck" decks={decks} value={deckId} onChange={setDeckId} />
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-sky-400/40 bg-sky-500/10 p-5">

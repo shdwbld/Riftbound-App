@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { listDecks, getDeck } from '../lib/deckStorage'
 import { getCard } from '../data/cards'
 import type { Deck } from '../types/deck'
+import { DeckPicker } from '../components/DeckTile'
 import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
@@ -1014,9 +1015,9 @@ function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: M
         ))}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 xl:grid-cols-2">
         {Array.from({ length: count }).map((_, i) => (
-          <DeckSelect key={i} label={`Player ${i + 1}`} decks={decks} value={seats[i]} onChange={(v) => setSeat(i, v)} />
+          <DeckPicker key={i} label={`Player ${i + 1}`} decks={decks} value={seats[i]} onChange={(v) => setSeat(i, v)} />
         ))}
       </div>
 
@@ -1031,31 +1032,3 @@ function MatchSetup({ preDeckId, onStart }: { preDeckId?: string; onStart: (m: M
   )
 }
 
-function DeckSelect({
-  label,
-  decks,
-  value,
-  onChange,
-}: {
-  label: string
-  decks: Deck[]
-  value: string
-  onChange: (v: string) => void
-}) {
-  return (
-    <label className="block rounded-xl border border-white/10 bg-[#0a1428] p-4">
-      <span className="text-xs uppercase tracking-wide text-white/40">{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-sky-400"
-      >
-        {decks.map((d) => (
-          <option key={d.id} value={d.id}>
-            {d.name}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
-}
