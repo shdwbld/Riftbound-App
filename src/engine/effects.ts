@@ -130,6 +130,8 @@ export interface ParsedEffect {
    *  Charm, Skyward Strike). Distinct from moveToBase (which has a fixed base
    *  destination); the destination is picked via a pendingChoice. */
   moveUnit: boolean
+  /** "you may move me there" — move the SOURCE unit to the trigger's battlefield (Loyal Pup). */
+  moveSourceToBf: boolean
   /** Grant a chosen friendly unit a one-shot death shield ("the next time it
    *  would die this turn, heal it, exhaust it, and recall it instead" —
    *  Highlander, Tactical Retreat). */
@@ -267,6 +269,7 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   bounce: null,
   moveToBase: false,
   moveUnit: false,
+  moveSourceToBf: false,
   deathShield: false,
   banishOnDeath: false,
   returnFromTrash: null,
@@ -299,7 +302,7 @@ export function hasTargetedPart(e: ParsedEffect): boolean {
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0 || e.moveSourceToBf
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -564,6 +567,12 @@ function parse(text: string): ParsedEffect {
   // Move a chosen unit to a chosen battlefield ("Move an enemy unit" — Charm,
   // Skyward Strike). Only when it's NOT a move-to-base; the destination is picked
   // via a pendingChoice. Excludes the "move me/self" forms (no unit noun).
+  // "you may move me there" (Loyal Pup, on a globalDefend trigger) — relocate the
+  // SOURCE unit to the trigger's battlefield. Must precede the unit-noun move below.
+  else if (/\bmove (?:me|myself|this)\b/.test(t)) {
+    eff.moveSourceToBf = true
+    hit = true
+  }
   else if (/\bmove (?:a|an|target|up to \w+) (?:friendly |enemy )?units?\b/.test(t)) {
     eff.moveUnit = true
     hit = true

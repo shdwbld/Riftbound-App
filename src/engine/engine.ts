@@ -964,6 +964,23 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Readied ${getCard(u.cardId)?.name}.`)
     }
   }
+  if (e.moveSourceToBf && sourceIid && bfIndex != null && bfIndex >= 0) {
+    // "you may move me there" (Loyal Pup): relocate the source unit to bfIndex.
+    const src = findUnitAnywhere(s, sourceIid)
+    if (src && src.owner === p.id && battlefieldOf(s, sourceIid) !== bfIndex) {
+      const fromBf = battlefieldOf(s, sourceIid)
+      if (fromBf >= 0) {
+        const fi = s.battlefields[fromBf].units.findIndex((u) => u.iid === sourceIid)
+        if (fi >= 0) s.battlefields[fromBf].units.splice(fi, 1)
+      } else {
+        const bi = p.zones.base.findIndex((c) => c.iid === sourceIid)
+        if (bi >= 0) p.zones.base.splice(bi, 1)
+      }
+      s.battlefields[bfIndex].units.push({ ...src, exhausted: true })
+      recomputeControllers(s)
+      lines.push(`Moved ${getCard(src.cardId)?.name} to battlefield ${bfIndex + 1}.`)
+    }
+  }
   // "give me +N Might this turn" — temporary Might on the source (Teemo - Scout's
   // on-play, Eclipse Herald's on-stun, …). Handled here so EVERY applyParsed site
   // (on-play, reveal, end-of-turn) applies it, not just fireTriggers/ACTIVATE_UNIT.
@@ -1129,7 +1146,16 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     const e = ability.effect
     let did = false
     const isConquer = ability.event === 'conquer'
+    const isGlobalDefend = ability.event === 'defend' && ability.scope === 'global'
     const srcName = (getCard(sourceCardId ?? '')?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+    // Once-per-turn gate ("The first time … each turn"): at most once per turn per
+    // source card. oncePerTurnUsed is cleared in beginTurn / sandbox clearTurnState.
+    if (ability.oncePerTurn) {
+      const otKey = sourceCardId ?? sourceIid ?? 'unknown'
+      if (!p.oncePerTurnUsed) p.oncePerTurnUsed = {}
+      if (p.oncePerTurnUsed[otKey]) continue
+      p.oncePerTurnUsed[otKey] = true
+    }
     // Fully hand-coded cards whose trigger CLAUSE contains parseable fragments the
     // generic parser would mis-fire (Twisted Fate's per-domain "Draw 1 / Deal 2 /
     // Stun"; Teemo - Strategist's "Deal 1 … for each [Hidden]"). Skip the generic
@@ -1148,7 +1174,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const bi = battlefieldOf(s, sourceIid ?? '')
       return bi >= 0 && s.battlefields[bi].units.filter((u) => u.owner !== player).length === 1
     })()
-    if (!skipGenericApply && enemyAloneOk) for (const line of applyParsed(s, p, e, isConquer ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
+    if (!skipGenericApply && enemyAloneOk) for (const line of applyParsed(s, p, e, (isConquer || isGlobalDefend) ? bfIndex : undefined, sourceIid, isConquer ? excess : 0)) {
       s = log(s, player, `${label}: ${line}`)
       did = true
     }
@@ -1450,7 +1476,7 @@ function deathknellMultiplier(s: MatchState, player: PlayerId): number {
  *  [Deathknell] (×N if its controller has Karthus - Eternal), the controller's
  *  global "when a unit you control dies" triggers (Viktor), and every OTHER
  *  player's "when an enemy unit dies" triggers (Pyke - Returned, Sivir). */
-function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
+function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): MatchState {
   if (defeated.length) s.unitDiedThisTurn = true // gates conditional enter-ready
   const isRecruit = (u: EngineCard) => (getCard(u.cardId)?.tags ?? []).includes('Recruit')
   // At-death snapshots for Deathknell state gates (the dying unit's stats are still
@@ -1504,6 +1530,12 @@ function fireDeaths(s: MatchState, defeated: EngineCard[]): MatchState {
         }
       }
     }
+  }
+  // Immortal Phoenix (ogn-037-298): "When you kill a unit with a spell, you may pay
+  // 1 Energy + Fury to play me from your trash." Auto-paid when the caster affords it.
+  if (caster != null && defeated.some((u) => u.killedBySpell)) {
+    const phoenix = s.players[caster].zones.trash.find((c) => c.cardId === 'ogn-037-298')
+    if (phoenix) s = playFromTrashPayingCost(s, caster, phoenix.iid, { energy: 1, power: { fury: 1 } })
   }
   return fireTriggers(s, fired)
 }
@@ -2735,6 +2767,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
         } else if (trashOrBanish(s, u)) {
           // Banished instead of dying — death replaced, no death trigger.
         } else {
+          if (spellLike && caster != null) u.killedBySpell = true
           emit({ kind: 'defeat', iid: targetIid, cardId: u.cardId })
           dead = [u]
         }
@@ -3945,7 +3978,19 @@ function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
   }
   for (const u of attackers) collectCombat(u, 'attack')
   for (const u of defenders) collectCombat(u, 'defend')
-  return fireTriggers(s, combatFired)
+  // "When you defend at a battlefield, …" global triggers for the defending player's
+  // OTHER permanents (Loyal Pup → move me there). Skip units already collected above.
+  const defenderPlayer = defenders[0]?.owner
+  if (defenderPlayer != null) {
+    const defIids = new Set(defenders.map((u) => u.iid))
+    for (const u of controlledPermanents(s, defenderPlayer)) {
+      if (defIids.has(u.iid)) continue
+      for (const ab of triggersFor(getCard(u.cardId), 'defend'))
+        if (ab.scope === 'global')
+          combatFired.push({ player: defenderPlayer, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex })
+    }
+  }
+  return fireTriggers(s, combatFired, bfIndex)
 }
 
 function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
@@ -4245,7 +4290,7 @@ function resolveSpellEffects(
         if (e.killMightMax != null && tu && mightOf(tu) > e.killMightMax) {
           s = log(s, controller, `${card.name}: ${getCard(tu.cardId)?.name} has too much Might to kill.`)
         } else {
-          dead = killTarget(s, t)
+          dead = killTarget(s, t, true)
           s = log(s, controller, `${card.name} killed a unit.`)
           // "Its controller draws N" (Hidden Blade): the killed unit's owner draws.
           if (e.controllerDrawOnKill && dead.length) {
@@ -4315,7 +4360,7 @@ function resolveSpellEffects(
         const drew = drawN(p, e.drawOnKill)
         s = log(s, controller, `${card.name}: drew ${drew} (a unit died).`)
       }
-      s = fireDeaths(s, dead)
+      s = fireDeaths(s, dead, controller)
     }
     // "When you stun an enemy unit / one or more enemy units" — fire once per
     // resolution (Eclipse Herald, Leona - Radiant Dawn).
@@ -4390,7 +4435,7 @@ function replaySpellFromTrash(
 
 /** Outright kill a unit anywhere by iid (no damage roll). Returns it for death
  *  triggers. */
-function killTarget(s: MatchState, iid: string): EngineCard[] {
+function killTarget(s: MatchState, iid: string, spellKill = false): EngineCard[] {
   for (let bi = 0; bi < s.battlefields.length; bi++) {
     const bf = s.battlefields[bi]
     const idx = bf.units.findIndex((u) => u.iid === iid)
@@ -4399,6 +4444,7 @@ function killTarget(s: MatchState, iid: string): EngineCard[] {
       u.diedAtBf = bi // for location-scoped death triggers (Kog'Maw)
       if (tryRecallInsteadOfDeath(s, u, bi)) { recallToBase(s, u); recomputeControllers(s); return [] }
       if (trashOrBanish(s, u)) { recomputeControllers(s); return [] }
+      if (spellKill) u.killedBySpell = true
       emit({ kind: 'defeat', iid, cardId: u.cardId })
       recomputeControllers(s)
       return [u]
@@ -4410,6 +4456,7 @@ function killTarget(s: MatchState, iid: string): EngineCard[] {
       const [u] = p.zones.base.splice(idx, 1)
       if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
       if (trashOrBanish(s, u)) return []
+      if (spellKill) u.killedBySpell = true
       emit({ kind: 'defeat', iid, cardId: u.cardId })
       return [u]
     }

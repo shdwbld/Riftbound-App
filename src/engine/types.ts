@@ -65,6 +65,9 @@ export interface EngineCard {
   /** A one-shot "if it would die this turn, banish it instead" replacement
    *  (Smite). Banished instead of trashed; the death is replaced (no Deathknell). */
   banishShield?: boolean
+  /** Stamped when this unit is killed by a spell during resolution — lets
+   *  "when you kill a unit with a spell" triggers fire (Immortal Phoenix). */
+  killedBySpell?: boolean
   /** State names active at the last refreshStates pass — for becomes-<state>
    *  transition detection. */
   stateSnapshot?: string[]

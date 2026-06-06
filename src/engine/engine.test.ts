@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility, canActivateUnit, combatMightAt } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
+import { parseTriggers } from './triggers'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME, GOLD_TOKEN_ID } from './setup'
 import type { Deck } from '../types/deck'
 import {
@@ -5657,5 +5658,50 @@ describe('A1 trigger events — buff & targeted self-triggers', () => {
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.state.players[0].zones.mainDeck.length).toBe(1) // drew 1 of 2 via the targeted trigger
     expect(r.state.players[0].zones.base.find((x) => x.iid === tu.iid)?.tempMight).toBe(1)
+  })
+})
+
+describe('A1 trigger events — globalDefend, killWithSpell, once-per-turn', () => {
+  it('once-per-turn: "The first time a friendly unit dies each turn" draws only once', () => {
+    const wraithId = injectCard('a1-wraith', 'The first time a friendly unit dies each turn, draw 1.')
+    const killId = injectCard('a1-kill', 'Kill a unit.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    s.players[1].zones.base.push(mk(wraithId, 1), mk(furyUnit.id, 1), mk(furyUnit.id, 1))
+    for (let i = 0; i < 3; i++) s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1)) // draw fuel
+    const victims = s.players[1].zones.base.filter((c) => c.cardId === furyUnit.id)
+    const sp1 = mk(killId, 0)
+    const sp2 = mk(killId, 0)
+    s.players[0].zones.hand.push(sp1, sp2)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp1.iid, targets: [victims[0].iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[1].zones.mainDeck.length).toBe(2) // first friendly death → drew 1
+    r = reduce(r.state, { type: 'PLAY_SPELL', player: 0, iid: sp2.iid, targets: [victims[1].iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[1].zones.mainDeck.length).toBe(2) // second death same turn → gated, no draw
+  })
+
+  it('killWithSpell: a spell-kill plays Immortal Phoenix from the caster trash', () => {
+    const killId = injectCard('a1-kill2', 'Kill a unit.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const victim = mk(furyUnit.id, 1)
+    s.players[1].zones.base.push(victim)
+    s.players[0].zones.trash.push(mk('ogn-037-298', 0)) // Immortal Phoenix in caster's trash
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0), mk(furyRune.id, 0)) // pay 1 Energy + 1 Fury
+    const sp = mk(killId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [victim.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.base.some((c) => c.cardId === 'ogn-037-298')).toBe(true)
+    expect(r.state.players[0].zones.trash.some((c) => c.cardId === 'ogn-037-298')).toBe(false)
+  })
+
+  it('parses Lucian - Merciless (conquer once-per-turn) and Loyal Pup (defend→move me)', () => {
+    const lucian = parseTriggers({ id: 'a1-lucian', text: 'The first time I conquer each turn, ready me.' } as never)
+    expect(lucian.some((a) => a.event === 'conquer' && a.scope === 'self' && a.oncePerTurn === true && a.effect.readySelf)).toBe(true)
+    const pup = parseTriggers({ id: 'a1-pup', text: 'When you defend at a battlefield, you may move me there.' } as never)
+    expect(pup.some((a) => a.event === 'defend' && a.scope === 'global' && a.effect.moveSourceToBf)).toBe(true)
   })
 })

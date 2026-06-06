@@ -54,6 +54,9 @@ export interface TriggeredAbility {
   /** For 'becomesState' triggers: the lowercased state word captured from
    *  'becomes [X]' (e.g. 'mighty'). Undefined for all other trigger types. */
   stateName?: string
+  /** "The first time … each turn" — fires at most once per turn per source card
+   *  (gated in fireTriggers via PlayerState.oncePerTurnUsed). */
+  oncePerTurn?: boolean
 }
 
 interface Pattern {
@@ -119,6 +122,12 @@ const PATTERNS: Pattern[] = [
   // "When you choose/target me with a spell …" (Jae Medarda), "choose or ready me"
   // (Irelia - Fervent) — self. "me"/"this" must follow choose/target within ~40 chars.
   { event: 'targeted', scope: 'self', re: /when(?:ever)?\s+(?:you|a player)\s+(?:choose|chooses|target|targets)\b[^.]{0,40}?\b(?:me|this(?:\s+unit)?)\b/i },
+  // "When you defend at a battlefield, …" (Loyal Pup) — global.
+  { event: 'defend', scope: 'global', re: /when(?:ever)?\s+you\s+defend/i },
+  // "The first time a friendly unit dies each turn" (Wraith of Echoes) — global death, once/turn.
+  { event: 'death', scope: 'global', re: /the first time (?:a|an)\s+(?:friendly\s+)?units?\s+(?:you\s+control\s+)?(?:dies|is\s+defeated)\s+each\s+turn/i },
+  // "The first time I conquer each turn" (Lucian - Merciless) — self conquer, once/turn.
+  { event: 'conquer', scope: 'self', re: /the first time (?:i|this(?:\s+unit)?)\s+conquers?\s+each\s+turn/i },
 ]
 
 /** The effect clause following a trigger phrase: from the phrase's end to the
@@ -162,6 +171,7 @@ export function parseTriggers(card: Card | undefined): TriggeredAbility[] {
         effect: parseEffectText(clause || text),
         text: clause || text,
         ...(p.event === 'becomesState' && { stateName: m[1]?.toLowerCase().replace(/[\[\]]/g, '') }),
+        oncePerTurn: /the first time\b/i.test(m[0]),
       })
     }
     // [Deathknell] keyword implies a death trigger even without explicit wording.
