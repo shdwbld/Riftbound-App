@@ -45,7 +45,9 @@ export interface AudioSettings {
   muted: boolean
 }
 const SETTINGS_KEY = 'riftbound.audio.v1'
-const DEFAULTS: AudioSettings = { sfxVolume: 0.7, musicVolume: 0.18, muted: false }
+// Music + ambience default to OFF (they share the music bus); SFX on. Players
+// can raise music in settings. Match start always force-unmutes so SFX are heard.
+const DEFAULTS: AudioSettings = { sfxVolume: 0.7, musicVolume: 0, muted: false }
 
 function loadSettings(): AudioSettings {
   try {
