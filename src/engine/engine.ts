@@ -598,6 +598,13 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
   // "Channel N rune(s) exhausted" (Soaring Scout) — the channeled runes enter exhausted.
   if (e.channelExhausted) lines.push(`Channeled ${channelN(p, e.channelExhausted, true)} (exhausted).`)
+  // "Recycle N from your trash" (Dr. Mundo - Expert, start of Beginning Phase): move
+  // N cards from trash to the bottom of the Main Deck (auto-picks the oldest N).
+  if (e.recycleFromTrash) {
+    const n = Math.min(e.recycleFromTrash, p.zones.trash.length)
+    for (let i = 0; i < n; i++) p.zones.mainDeck.push({ ...p.zones.trash.shift()!, exhausted: false, damage: 0, attached: [] })
+    if (n > 0) lines.push(`Recycled ${n} card(s) from trash to deck.`)
+  }
   // Direct scoring ("you score N point" — Ahri, Draven - Audacious). Mutates in
   // place (applyParsed can't reassign s), so the win is flagged inline.
   if (e.score) {

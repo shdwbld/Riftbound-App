@@ -6495,4 +6495,19 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     const snapNow = r.state.players[0].zones.base.find((x) => x.iid === snap.iid)
     expect(snapNow?.damage).toBe(5) // Snapvine took the enemy's 5 Might back, survives (6)
   })
+
+  it('Dr. Mundo - Expert: recycles 3 from trash at the start of the Beginning Phase', () => {
+    // Parse: the startOfTurn trigger now carries recycleFromTrash.
+    const mundoTrig = parseTriggers(CARD_INDEX['ogn-109-298']).find((t: { event: string }) => t.event === 'startOfTurn') as
+      | { effect: { recycleFromTrash?: number } }
+      | undefined
+    expect(mundoTrig?.effect.recycleFromTrash).toBe(3)
+    // Functional: Mundo in play; 4 cards in trash; beginTurn recycles 3.
+    const s = baseState()
+    s.players[0].zones.base.push(mk('ogn-109-298', 0))
+    for (let i = 0; i < 6; i++) s.players[0].zones.mainDeck.push(mk(furyRune.id, 0)) // avoid deck-out on any draw step
+    for (let i = 0; i < 4; i++) s.players[0].zones.trash.push(mk(furyUnit.id, 0))
+    const r = beginTurn(s)
+    expect(r.players[0].zones.trash.length).toBe(1) // 3 of the 4 recycled out of the trash
+  })
 })

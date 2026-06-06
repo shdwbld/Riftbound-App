@@ -170,6 +170,10 @@ export interface ParsedEffect {
   /** "Choose a player/opponent. They discard N." — the opponent loses N cards of
    *  THEIR choice (auto: their lowest-cost). Bewitching Spirit. */
   opponentDiscards: number
+  /** "Recycle N from your trash" as a triggered / on-play EFFECT (not a cost):
+   *  move N cards from your trash to the bottom of your Main Deck. Dr. Mundo - Expert
+   *  ("At the start of your Beginning Phase, recycle 3 from your trash"). */
+  recycleFromTrash: number
   /** Play a UNIT from your trash into play (base), ignoring its cost — Soulgorger,
    *  The Harrowing, Spectral Matron, Glasc Mixologist. Optional cost cap
    *  (≤maxEnergy Energy / ≤maxPower Power). Resolves to the highest-cost qualifier.
@@ -301,6 +305,7 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   playGearFromHand: null,
   opponentHandStrip: null,
   opponentDiscards: 0,
+  recycleFromTrash: 0,
   playUnitFromTrash: null,
   playUnitFromHand: null,
   playSpellFromTrash: null,
@@ -678,6 +683,12 @@ function parse(text: string): ParsedEffect {
     eff.playUnitFromTrash = { maxEnergy: null, maxPower: null, energyOnly: false, fullCost: true }
     hit = true
   }
+  // "Recycle N from your trash" as a triggered / on-play EFFECT (Dr. Mundo - Expert:
+  // "At the start of your Beginning Phase, recycle 3 from your trash"). Distinct from
+  // the activated-ability COST form, which is read separately (before the ability's
+  // ":") and never reaches this effect parser. Moves N cards trash → bottom of deck.
+  const rcftM = t.match(new RegExp(`recycle ${NUM} (?:cards? )?from your trash\\b`))
+  if (rcftM) { eff.recycleFromTrash += num(rcftM[1]); hit = true }
   // Play a unit from your HAND, ignoring its (Energy) cost — Rift Herald's
   // [Deathknell] ("Play a unit from your hand to your base, ignoring its Energy
   // cost"). "ignoring its ENERGY cost" still owes Power.
