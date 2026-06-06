@@ -1948,11 +1948,22 @@ function makeBfApi(s: MatchState): BfApi {
 /** Fire battlefield "when a player plays a spell" scripts (Abandoned Hall,
  *  Forgotten Library). `spentEnergy` is the Energy paid for the spell. */
 function bfSpellPlayed(s: MatchState, player: PlayerId, spentEnergy = 0): MatchState {
+  // Running tally of Energy spent on spells this turn (Prepared Neophyte, Jhin).
+  s.players[player].energySpentOnSpellsThisTurn = (s.players[player].energySpentOnSpellsThisTurn ?? 0) + spentEnergy
   for (let i = 0; i < s.battlefields.length; i++) {
     const script = bfScriptAt(s, i)
     if (script?.onSpellPlayed) script.onSpellPlayed(makeBfApi(s), player, i, spentEnergy)
   }
   return s
+}
+
+/** Record a conquered battlefield for the turn (Perched Grimwyrm's placement
+ *  predicate). Deduped; cleared at turn start. */
+function markConquered(s: MatchState, player: PlayerId, bfIndex: number): void {
+  const p = s.players[player]
+  if (!p) return
+  if (!p.conqueredThisTurn) p.conqueredThisTurn = []
+  if (!p.conqueredThisTurn.includes(bfIndex)) p.conqueredThisTurn.push(bfIndex)
 }
 
 /** Apply a battlefield's "when you conquer here" passive to the conqueror. A
@@ -2793,6 +2804,7 @@ function moveUnits(
     prevController !== player
   ) {
     s2 = awardPoints(s2, player, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    markConquered(s2, player, toBattlefield)
     s2 = grantHunt(s2, player, toBattlefield)
     s2 = applyConquerPassive(s2, player, toBattlefield)
     s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'), toBattlefield, 0, prevController == null)
@@ -2824,6 +2836,7 @@ function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedI
   // Uncontested: a conquer if the move flipped control to the moved unit's owner.
   if (bf.controller === movedOwner && priorController !== movedOwner) {
     s = awardPoints(s, movedOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    markConquered(s, movedOwner, bfIndex)
     s = grantHunt(s, movedOwner, bfIndex)
     s = applyConquerPassive(s, movedOwner, bfIndex)
     const here = bf.units.filter((u) => u.owner === movedOwner).map((u) => u.iid)
@@ -2878,6 +2891,9 @@ export function beginTurn(state: MatchState): MatchState {
   p.zileanDoubledThisTurn = false
   p.apheliosModesThisTurn = 0
   p.azirSwappedThisTurn = false
+  p.energySpentOnSpellsThisTurn = 0
+  p.conqueredThisTurn = []
+  p.oncePerTurnUsed = {}
   p.pool = { energy: 0, power: {} }
   p.unitCostBump = 0 // recomputed below by holding Vaults of Helia
   p.holdPointsThisTurn = 0 // Needlessly Large Yordle's per-hold-point discount
@@ -4040,6 +4056,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     const totalDefHp = defStep ? Object.values(defStep.hp).reduce((a, b) => a + b, 0) : 0
     const excess = Math.max(0, attackMight - totalDefHp)
     s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    markConquered(s, moverOwner, bfIndex)
     s = grantHunt(s, moverOwner, bfIndex)
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
     s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex, excess, prevController == null)
@@ -5982,6 +5999,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             p.zileanDoubledThisTurn = false
             p.apheliosModesThisTurn = 0
             p.azirSwappedThisTurn = false
+            p.energySpentOnSpellsThisTurn = 0
+            p.conqueredThisTurn = []
+            p.oncePerTurnUsed = {}
             p.grantRepeatNextSpell = false
           }
           break

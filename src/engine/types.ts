@@ -131,6 +131,15 @@ export interface PlayerState {
   /** Points scored from HOLDING battlefields this turn (Needlessly Large Yordle's
    *  per-point cost reduction). Cleared at turn start. */
   holdPointsThisTurn?: number
+  /** Energy spent on spells this turn (Prepared Neophyte's 4+ threshold, Jhin -
+   *  Meticulous Killer's alt cost). Cleared at turn start. */
+  energySpentOnSpellsThisTurn?: number
+  /** Battlefield indices this player conquered this turn (Perched Grimwyrm's
+   *  "play me only to a battlefield you conquered this turn"). Cleared at turn start. */
+  conqueredThisTurn?: number[]
+  /** Generic once-per-turn trigger gate, keyed by the source card id (Wraith of
+   *  Echoes, Lucian - Merciless). Cleared at turn start. */
+  oncePerTurnUsed?: Record<string, boolean>
   /** Energy discount on the NEXT spell played this turn (Raging Firebrand). Read by
    *  effectiveCostOf; reset to 0 after the next spell is played. */
   nextSpellCostDiscount?: number
