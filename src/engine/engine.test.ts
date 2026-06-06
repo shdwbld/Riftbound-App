@@ -5937,4 +5937,44 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.error).toBeUndefined() // unit to base allowed
     expect(r.state.players[0].zones.base.some((u) => u.iid === unit.iid)).toBe(true)
   })
+
+  it('Sneaky Deckhand: plays only to an OPEN battlefield', () => {
+    const id = injectCard('a3-sneaky', 'You may play me to an open battlefield.')
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(furyUnit.id, 1, { exhausted: true })], controller: 1 }
+    s.battlefields[1] = { cardId: battlefield.id, units: [], controller: null }
+    const u1 = mk(id, 0)
+    const u2 = mk(id, 0)
+    s.players[0].zones.hand.push(u1, u2)
+    expect(reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u1.iid, payment: emptyPayment(), toBattlefield: 0 }).error).toBeTruthy() // occupied → blocked
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u2.iid, payment: emptyPayment(), toBattlefield: 1 })
+    expect(r.error).toBeUndefined() // open → ok
+    expect(r.state.battlefields[1].units.some((x) => x.iid === u2.iid)).toBe(true)
+  })
+
+  it('Dauntless Vanguard: plays only to an OCCUPIED ENEMY battlefield', () => {
+    const id = injectCard('a3-dauntless', 'You may play me to an occupied enemy battlefield.')
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    s.battlefields[1] = { cardId: battlefield.id, units: [mk(furyUnit.id, 1, { exhausted: true })], controller: 1 }
+    const u1 = mk(id, 0)
+    const u2 = mk(id, 0)
+    s.players[0].zones.hand.push(u1, u2)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    expect(reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u1.iid, payment: emptyPayment(), toBattlefield: 0 }).error).toBeTruthy() // empty → blocked
+    expect(reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u2.iid, payment: emptyPayment(), toBattlefield: 1 }).error).toBeUndefined() // enemy-occupied → ok
+  })
+
+  it('Perched Grimwyrm: plays only to a battlefield you conquered this turn', () => {
+    const id = injectCard('a3-grimwyrm', "Play me only to a battlefield you conquered this turn. (You can't play me anywhere else.)")
+    const s = baseState()
+    s.players[0].conqueredThisTurn = [1]
+    const u1 = mk(id, 0)
+    const u2 = mk(id, 0)
+    s.players[0].zones.hand.push(u1, u2)
+    expect(reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u1.iid, payment: emptyPayment(), toBattlefield: 0 }).error).toBeTruthy() // not conquered → blocked
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u2.iid, payment: emptyPayment(), toBattlefield: 1 })
+    expect(r.error).toBeUndefined() // conquered bf 1 → ok
+    expect(r.state.battlefields[1].units.some((x) => x.iid === u2.iid)).toBe(true)
+  })
 })

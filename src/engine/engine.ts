@@ -5132,7 +5132,17 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // A non-Ambush unit whose rules let it be played straight to a battlefield
         // (Blitzcrank - Impassive, Mischievous Marai, Shadow). Honoured only when the
         // player chose a destination. Shadow "enters ready" when played to a battlefield.
-        const canPlayToBf = !kw.ambush && /play (?:me|this) to (?:a|an|any|its)?\s*battlefield/i.test(card.text ?? '')
+        const canPlayToBf = !kw.ambush && /play (?:me|this) (?:only )?to (?:a|an|any|its)?\s*(?:open |occupied enemy )?battlefield/i.test(card.text ?? '')
+        // Placement predicates — which battlefield is a legal destination.
+        const wantsOpenBf = canPlayToBf && /open battlefield/i.test(card.text ?? '')
+        const wantsEnemyOccupiedBf = canPlayToBf && /occupied enemy battlefield/i.test(card.text ?? '')
+        const wantsConqueredBf = canPlayToBf && /conquered this turn/i.test(card.text ?? '')
+        if (wantsOpenBf && action.toBattlefield != null && (s.battlefields[action.toBattlefield]?.units.length ?? 0) > 0)
+          return fail(state, `${card.name} can only be played to an open battlefield.`)
+        if (wantsEnemyOccupiedBf && action.toBattlefield != null && !s.battlefields[action.toBattlefield]?.units.some((u) => u.owner !== action.player))
+          return fail(state, `${card.name} must be played to a battlefield with enemy units.`)
+        if (wantsConqueredBf && (action.toBattlefield == null || !(s.players[action.player].conqueredThisTurn ?? []).includes(action.toBattlefield)))
+          return fail(state, `${card.name} can only be played to a battlefield you conquered this turn.`)
         const playToBf = canPlayToBf && action.toBattlefield != null ? action.toBattlefield : null
         const enterBf = ambushBf != null ? ambushBf : playToBf
         const priorBfController = enterBf != null ? s.battlefields[enterBf].controller : null
