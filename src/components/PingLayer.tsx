@@ -19,7 +19,7 @@ function Ping({ x, y, name }: { x: number; y: number; name?: string }) {
       style={{ left: `${x * 100}%`, top: `${y * 100}%`, transform: 'translate(-50%, -50%)' }}
     >
       <img
-        src="/ping.png"
+        src="/ping.webp"
         alt="ping"
         className="w-auto drop-shadow-[0_0_10px_rgba(255,210,120,0.85)]"
         style={{ height: 84 }}
