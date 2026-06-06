@@ -6820,4 +6820,40 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.error).toBeFalsy()
     expect(r.state.battlefields[0].units.find((u) => u.iid === dr.iid)?.tempMight).toBe(2)
   })
+
+  it('Vayne - Hunter: pays 1 to return to hand when she conquers', () => {
+    const s = baseState()
+    const v = mk('ogn-035-298', 0)
+    s.players[0].zones.base.push(v)
+    s.players[0].pool = { energy: 1, power: {} } // afford the optional 1
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [v.iid], toBattlefield: 0 }) // conquers open bf0
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === v.iid)).toBe(true) // returned to hand
+  })
+
+  it('Lucian - Purifier: your Equipment each give the attacking unit +1 Might', () => {
+    const s = baseState()
+    s.players[0].legend = mk('sfd-183-221', 0) // Lucian - Purifier legend
+    const u = mk(furyUnit.id, 0)
+    u.attached = [`${injectCard('b-lucian-eq', '[Equip]', { type: 'gear', energy: 1 })}|eq-iid`]
+    s.battlefields[0] = { cardId: battlefield.id, units: [u], controller: 0 }
+    const withLegend = combatMightAt(s, 0, u, 'attacker')
+    s.players[0].legend = null
+    const withoutLegend = combatMightAt(s, 0, u, 'attacker')
+    expect(withLegend - withoutLegend).toBe(1) // +1 from the one Equipment while Lucian is the legend
+  })
+
+  it("Brynhir Thundersong: opponents can't play cards the turn she's played", () => {
+    const bid = injectCard('b-brynhir', "When you play me, opponents can't play cards this turn.", { type: 'unit', energy: 0, might: 3 })
+    const s = baseState()
+    const b = mk(bid, 0)
+    s.players[0].zones.hand.push(b)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: b.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].cantPlayCardsThisTurn).toBe(true)
+    const foeCard = mk(injectCard('b-bryn-foe', 'x', { type: 'unit', might: 1 }), 1)
+    r.state.players[1].zones.hand.push(foeCard)
+    const r2 = reduce(r.state, { type: 'PLAY_UNIT', player: 1, iid: foeCard.iid, payment: emptyPayment() })
+    expect(r2.error).toBeTruthy() // blocked from playing this turn
+  })
 })

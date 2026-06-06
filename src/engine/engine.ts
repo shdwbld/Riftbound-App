@@ -1437,6 +1437,15 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     }
     // Sivir - Ambitious: "When I conquer after an attack, if you assigned 5+ excess
     // damage to enemy units, you may deal that much to an enemy unit." (auto: strongest.)
+    if (ability.event === 'conquer' && srcName === 'Vayne - Hunter' && sourceIid) {
+      // "When I conquer, you may pay :rb_energy_1: to return me to my owner's hand."
+      // Auto-pay 1 if affordable (per the auto-resolve preference).
+      if (makeBfApi(s).payEnergy(player, 1)) {
+        s = bounceUnitToHand(s, sourceIid, player, 'Vayne - Hunter', 0)
+        s = log(s, player, `${label}: Vayne - Hunter paid 1 to return to hand.`)
+      }
+      handled = true
+    }
     if (ability.event === 'conquer' && srcName === 'Sivir - Ambitious' && excess >= 5) {
       const enemies = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)].filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit')
       if (enemies.length) {
@@ -3347,6 +3356,7 @@ export function beginTurn(state: MatchState): MatchState {
   // Reset per-turn counters (LEGION) and empty the resource pool (it does not
   // carry between turns — emptied at end of the Draw step / end of turn).
   p.cardsPlayedThisTurn = 0
+  p.cantPlayCardsThisTurn = false // Brynhir Thundersong lock clears at the start of your turn
   p.playedEquipmentThisTurn = false
   p.discardedThisTurn = false
   p.xpGainedThisTurn = false
@@ -4155,6 +4165,10 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     const bm = text.match(/while (?:i'm|i am) buffed,? i have (?:an? )?(?:additional )?\+(\d+)\s*(?::rb_might:|might)/)
     if (bm) b += parseInt(bm[1], 10)
   }
+  // Lucian - Purifier (legend): "Your Equipment each give [Assault]." Each Equipment
+  // attached to an ATTACKING unit grants +1 Might (Assault) while it attacks.
+  if (role === 'attacker' && /your equipment each give \[assault\]/.test((getCard(owner.legend?.cardId ?? '')?.text ?? '').toLowerCase()))
+    b += (u.attached ?? []).filter((ref) => parseKeywords(getCard(ref.split('|')[0])).equip).length
   // Self: "While I'm attacking or defending alone, I have +N Might." (Wielder of Water)
   if (alone && (role === 'attacker' || role === 'defender')) {
     const am = text.match(/while (?:i'm|i am) attacking (?:or defending )?alone,? i have \+(\d+)\s*(?::rb_might:|might)/)
@@ -5487,6 +5501,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const expected =
         action.type === 'PLAY_UNIT' ? 'unit' : action.type === 'PLAY_GEAR' ? 'gear' : 'spell'
       if (card.type !== expected) return fail(state, `That card is not a ${expected}.`)
+      // Brynhir Thundersong: "opponents can't play cards this turn."
+      if (state.players[action.player]?.cantPlayCardsThisTurn) return fail(state, "You can't play cards this turn.")
 
       // Timing. Spells can respond to an open Chain (priority holder + Reaction/
       // Action) or to a showdown; everything else needs your open action phase.
@@ -5784,6 +5800,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
               if (self) { self.exhausted = false; emit({ kind: 'buff', iid: self.iid, player: action.player }) }
             }
           }
+          // Brynhir Thundersong: "When you play me, opponents can't play cards this turn."
+          if (/opponents can'?t play cards this turn/.test(txt))
+            for (const pl of s1.players) if (pl.id !== action.player) pl.cantPlayCardsThisTurn = true
           // Albus Ferros: "When you play me, spend any number of buffs. For each buff
           // spent, channel 1 rune exhausted." Auto-spend all friendly buffs.
           if (/spend any number of buffs/.test(txt) && /channel 1 rune exhausted/.test(txt)) {

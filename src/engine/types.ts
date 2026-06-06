@@ -135,6 +135,9 @@ export interface PlayerState {
   /** Whether Azir - Ascendant's location-swap ability has been used this turn.
    *  Cleared at turn start. */
   azirSwappedThisTurn?: boolean
+  /** Brynhir Thundersong: set on opponents when she's played ("opponents can't play
+   *  cards this turn"); blocks their plays until their next Beginning Phase clears it. */
+  cantPlayCardsThisTurn?: boolean
   /** The tag named when The List was played ("As you play this, name a tag"); gates
    *  The List's activated −2 Might to units with that tag. Persists for its lifetime. */
   namedTag?: string
