@@ -65,7 +65,12 @@ export default function BoardCard({
   auraBonus?: number
 }) {
   const def = card(ci)
-  const w = size === 'sm' ? 'w-12' : 'w-[68px]'
+  // Size from the single --card-h token (5:7 ratio preserved via --card-w). One
+  // knob in :root controls every board card.
+  const cardStyle =
+    size === 'sm'
+      ? { width: 'var(--card-w-sm)', height: 'var(--card-h-sm)' }
+      : { width: 'var(--card-w)', height: 'var(--card-h)' }
   const borderClass =
     glow === 'target'
       ? 'border-amber-300 ring-2 ring-amber-300/70 shadow-[0_0_12px_2px_rgba(252,211,77,0.55)]'
@@ -79,12 +84,12 @@ export default function BoardCard({
       onClick={onClick}
       title={def?.name}
       data-iid={(ci as { iid?: string }).iid}
-      className={`relative ${w} shrink-0 overflow-hidden rounded-md border transition ${borderClass} ${
+      className={`relative shrink-0 overflow-hidden rounded-md border transition ${borderClass} ${
         ci.exhausted ? 'rotate-90' : ''
       } ${dim ? 'opacity-40 saturate-0' : ''} ${glow === 'ready' ? 'fx-ready' : ''} ${
         flash ? `fx-${flash}` : ''
       }`}
-      style={{ aspectRatio: '744/1039' }}
+      style={cardStyle}
     >
       {faceDown ? (
         <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-900 to-fuchsia-900 text-white/40">

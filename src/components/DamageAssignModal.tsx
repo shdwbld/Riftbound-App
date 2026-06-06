@@ -74,7 +74,7 @@ export default function DamageAssignModal({
             const lethal = placed >= hp
             const isTank = step.tanks.includes(iid)
             return (
-              <div key={iid} className="flex w-28 flex-col items-center gap-1">
+              <div key={iid} className="flex w-[var(--card-w)] flex-col items-center gap-1">
                 <div className={`relative rounded-lg ${lethal ? 'ring-2 ring-rose-500' : ''}`}>
                   {u && <BoardCard ci={u} />}
                   {isTank && (

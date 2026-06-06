@@ -48,7 +48,7 @@ export default function MulliganHand({
             <button
               onClick={() => onToggle(c.iid)}
               onDoubleClick={() => onInspect(c.cardId)}
-              className={`w-28 rounded-xl transition hover:-translate-y-1 ${
+              className={`w-[var(--card-w)] rounded-xl transition hover:-translate-y-1 ${
                 aside.includes(c.iid) ? 'opacity-50 ring-2 ring-rose-400' : 'ring-1 ring-white/10 hover:ring-amber-300/60'
               }`}
               title="Click to set aside · double-click to inspect"

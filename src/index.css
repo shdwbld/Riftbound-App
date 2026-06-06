@@ -8,14 +8,27 @@
   --zone-line: #c8a24c;
   --zone-fill: rgba(255, 255, 255, 0.02);
   --mat-label: #f3efe4;
+  /* Card-size system — ONE knob. Every board card derives from --card-h; zones
+     are sized to the card (not the window), so the board scales uniformly. */
+  --card-h: clamp(116px, 14vh, 176px); /* primary play cards (hand/base/legend/champion) */
+  --card-w: calc(var(--card-h) * 5 / 7); /* standard TCG 5:7 portrait */
+  --card-h-sm: calc(var(--card-h) * 0.7); /* compact: opponent mat, deck piles, battlefield units */
+  --card-w-sm: calc(var(--card-h-sm) * 5 / 7);
+  --rune-w: calc(var(--card-w) * 0.5); /* rune-pool runes (narrow) */
+  --bf-h: clamp(120px, 18vh, 210px); /* shared battlefield tile height cap */
+  --mat-max: 1180px; /* board content max-width (centered) */
 }
 
 /* ---- Playmat: irregular grid-template-areas (Riftbound 1v1 layout) -------- */
 .playmat {
   display: grid;
   gap: clamp(6px, 1vw, 13px);
+  max-width: var(--mat-max);
+  margin-inline: auto;
   grid-template-columns: clamp(26px, 3.2vw, 44px) 1fr 2.3fr 1.1fr 1.15fr;
-  grid-template-rows: minmax(108px, auto) minmax(96px, auto) auto;
+  /* Rows hug the card: an empty zone is ~one card tall (legend/champion row also
+     fits the card's label/buttons), never a big empty box. */
+  grid-template-rows: minmax(calc(var(--card-h) + 2rem), auto) minmax(var(--card-h), auto) auto;
   grid-template-areas:
     'score battlefield battlefield legend    champion'
     'score baseunits   baseunits   baseunits maindeck'
@@ -188,6 +201,9 @@ body {
 .bf-slot {
   position: relative;
   width: 100%;
+  /* Cap the tile so its aspect-derived height can never exceed --bf-h — keeps
+     battlefields reading as banners, not half the screen. Crop math unchanged. */
+  max-width: calc(var(--bf-h) * 2.26);
   aspect-ratio: 2.26 / 1;
   overflow: hidden;
   border-radius: 8px;

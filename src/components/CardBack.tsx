@@ -11,11 +11,15 @@ export default function CardBack({
   count?: number
   label?: string
 }) {
-  const w = size === 'sm' ? 'w-12' : 'w-[68px]'
+  // Size from the single --card-h token (matches BoardCard).
+  const cardStyle =
+    size === 'sm'
+      ? { width: 'var(--card-w-sm)', height: 'var(--card-h-sm)' }
+      : { width: 'var(--card-w)', height: 'var(--card-h)' }
   return (
     <div
-      className={`relative ${w} shrink-0 overflow-hidden rounded-md border border-amber-500/30 shadow-inner`}
-      style={{ aspectRatio: '744/1039' }}
+      className="relative shrink-0 overflow-hidden rounded-md border border-amber-500/30 shadow-inner"
+      style={cardStyle}
     >
       <div className="absolute inset-0 bg-gradient-to-br from-[#1a1206] via-[#0c0a14] to-[#05060c]" />
       {/* radial rift glow */}

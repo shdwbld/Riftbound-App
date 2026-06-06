@@ -809,8 +809,11 @@ export default function MatchBoard({
         onOpenChange={setHudOpen}
       />
     )}
-    {/* CENTER — the board */}
-    <div ref={rootRef} className={`min-w-0 flex-1 space-y-3 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
+    {/* CENTER — the board. The inner wrapper caps + centers all board content at
+        --mat-max so zones can't sprawl on wide screens (cap on a block child, not
+        the flex-1 element, so flex-grow and auto-margins don't fight). */}
+    <div ref={rootRef} className={`min-w-0 flex-1 ${targetingActive ? 'rounded-xl ring-2 ring-rose-400/40' : ''}`}>
+    <div className="mx-auto w-full max-w-[var(--mat-max)] space-y-3">
       {/* Opponents */}
       <div className={opponents.length > 1 ? 'grid gap-2 sm:grid-cols-2' : ''}>
         {opponents.map((opp) => (
@@ -1116,6 +1119,7 @@ export default function MatchBoard({
       {/* Alt+click ping markers (local + peers). */}
       <PingLayer pings={pings ?? []} />
     </div>
+    </div>
 
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
         panel lands here in Stage 2. On < xl this stacks below the board. */}
@@ -1368,10 +1372,10 @@ function OpponentMat({
                 <button
                   onClick={() => onInspect(r)}
                   title={`${d?.name ?? 'Rune'}${r.exhausted ? ' (exhausted)' : ''}`}
-                  className={`relative w-7 shrink-0 overflow-hidden rounded border transition-all hover:border-white/50 ${
+                  className={`relative shrink-0 overflow-hidden rounded border transition-all hover:border-white/50 ${
                     r.exhausted ? 'rotate-90 opacity-40 saturate-50' : ''
                   }`}
-                  style={{ aspectRatio: '744/1039', borderColor: color }}
+                  style={{ width: 'var(--rune-w)', aspectRatio: '744/1039', borderColor: color }}
                 >
                   {d?.imageUrl ? (
                     <img src={d.imageUrl} alt={d.name} loading="lazy" className="h-full w-full object-cover" />
@@ -1445,7 +1449,7 @@ function BattlefieldZone({
 }) {
   const dndOn = !!match.sandbox && !!onMoveOverride
   return (
-    <div className="grid h-full gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(match.battlefields.length, 4)}, minmax(0,1fr))` }}>
+    <div className="grid h-full justify-items-center gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(match.battlefields.length, 4)}, minmax(0,1fr))` }}>
       {match.battlefields.map((bf, i) => {
         const bfCard = getCard(bf.cardId)
         const ctrl = bf.controller
@@ -1531,7 +1535,7 @@ function BattlefieldZone({
                 <CardText text={bfCard.text} />
               </p>
             )}
-            <div className="relative mt-1.5 flex min-h-[92px] flex-wrap content-start gap-1">
+            <div className="relative mt-1.5 flex min-h-[var(--card-h-sm)] flex-wrap content-start gap-1">
               {bf.facedown && (() => {
                 const fd = bf.facedown
                 const mine = fd.owner === perspective
@@ -1841,7 +1845,7 @@ function PlayerMat({
         {/* Base: Units + Gears */}
         <div className="pm-zone pm-baseunits" onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('pm-zone-label')) onZoneContext(e, 'base') } : undefined}>
           <div className="pm-zone-label mb-1">Base: Units + Gears ({me.zones.base.length})</div>
-          <div className="flex min-h-[80px] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'base' }, onMoveOverride)}>
+          <div className="flex min-h-[var(--card-h)] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'base' }, onMoveOverride)}>
         {me.zones.base.map((u) => {
           const isUnit = getCard(u.cardId)?.type === 'unit'
           const movable = myActionTurn && isUnit && !u.exhausted
@@ -1933,10 +1937,10 @@ function PlayerMat({
                 onClick={() => onInspect(r)}
                 onContextMenu={(e) => onContext?.(e, r, 'runePool')}
                 {...dragSrc(dndOn, r.iid)}
-                className={`relative w-9 shrink-0 overflow-hidden rounded border transition-all hover:border-white/50 ${
+                className={`relative shrink-0 overflow-hidden rounded border transition-all hover:border-white/50 ${
                   r.exhausted ? 'rotate-90 opacity-40 saturate-50' : ''
                 }`}
-                style={{ aspectRatio: '744/1039', borderColor: color }}
+                style={{ width: 'var(--rune-w)', aspectRatio: '744/1039', borderColor: color }}
               >
                 {d?.imageUrl ? (
                   <img src={d.imageUrl} alt={d.name} loading="lazy" className="h-full w-full object-cover" />
@@ -1987,7 +1991,7 @@ function PlayerMat({
       {/* Hand strip (below the mat) */}
       <div className="rounded-xl border border-amber-600/25 bg-[#0c1322]/70 p-2" onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('pm-zone-label')) onZoneContext(e, 'hand') } : undefined}>
         <div className="pm-zone-label mb-1">Hand ({me.zones.hand.length})</div>
-        <div className="flex min-h-[80px] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'hand' }, onMoveOverride)} onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget) onZoneContext(e, 'hand') } : undefined}>
+        <div className="flex min-h-[var(--card-h)] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'hand' }, onMoveOverride)} onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget) onZoneContext(e, 'hand') } : undefined}>
         {me.zones.hand.map((c) => {
           const check = canPlayIid(c.iid)
           // Greyable only when it's a context where playing is conceivable
