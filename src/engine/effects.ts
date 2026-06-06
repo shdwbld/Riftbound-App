@@ -158,6 +158,10 @@ export interface ParsedEffect {
   bounceGear: boolean
   /** "Its controller draws N" after a gear kill (Detonate). 0 = none. */
   gearKillControllerDraw: number
+  /** Play a gear from hand ignoring its Energy cost (still paying Power), gated on a
+   *  preceding friendly gear-kill (Jayce - Man of Progress). `maxEnergy` caps which
+   *  gear is eligible; null = any. */
+  playGearFromHand: { maxEnergy: number | null } | null
   /** Opponent hand disruption — "choose an opponent. They reveal their hand. Choose
    *  a [non-unit] card from it, and they discard / recycle / banish it." Mindsplitter
    *  (trash), Sabotage (deck/recycle, non-unit), Ashe - Focused (banish). Auto-picks
@@ -294,6 +298,7 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   killGear: null,
   bounceGear: false,
   gearKillControllerDraw: 0,
+  playGearFromHand: null,
   opponentHandStrip: null,
   opponentDiscards: 0,
   playUnitFromTrash: null,
@@ -904,6 +909,17 @@ function parse(text: string): ParsedEffect {
     // "Its controller draws N" (Detonate).
     const cdM = t.match(/its controller draws? (\d+)/)
     if (cdM) eff.gearKillControllerDraw = parseInt(cdM[1], 10)
+    // Jayce - Man of Progress: "If you do, you may play a gear with Energy cost no more
+    // than :rb_energy_7: from hand … ignoring its Energy cost." Gated on the kill.
+    const pgM = t.match(/play a gear[^.]*?from hand[^.]*?ignoring its energy cost/)
+    if (pgM) {
+      const capM = pgM[0].match(/:rb_energy_(\d+):/)
+      eff.playGearFromHand = { maxEnergy: capM ? parseInt(capM[1], 10) : null }
+    }
+    // Modal "Choose one — Deal N … . Kill a gear." (Rocket Barrage) is resolved by a
+    // bespoke auto-picker; clear the auto-parsed damage so the spell doesn't demand a
+    // target for the mode it didn't take.
+    if (/choose one/.test(t) && eff.damage > 0) eff.damage = 0
   }
   // Return a friendly gear to its owner's hand (Legion Quartermaster additional cost,
   // modelled as a mandatory on-play return).

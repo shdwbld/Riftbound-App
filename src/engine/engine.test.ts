@@ -6327,4 +6327,51 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true) // killed
     expect(r.state.players[0].zones.base.some((c) => c.cardId === GOLD_TOKEN_ID)).toBe(true) // gold made
   })
+
+  it('Jayce - Man of Progress: kills a friendly gear, then plays a bigger gear from hand free', () => {
+    const jText = 'When you play me, you may kill a friendly gear. If you do, you may play a gear with Energy cost no more than :rb_energy_7: from hand this turn, ignoring its Energy cost.'
+    const jid = injectCard('a4-jayce', jText, { type: 'unit', energy: 0 })
+    const fg = injectCard('a4-jayce-fg', 'Equip.', { type: 'gear', energy: 1 })
+    const hg = injectCard('a4-jayce-hg', 'Equip.', { type: 'gear', energy: 5 })
+    const s = baseState()
+    const friendlyGear = mk(fg, 0)
+    s.players[0].zones.base.push(friendlyGear)
+    const handGear = mk(hg, 0)
+    s.players[0].zones.hand.push(handGear)
+    const jayce = mk(jid, 0)
+    s.players[0].zones.hand.push(jayce)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: jayce.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.trash.some((x) => x.iid === friendlyGear.iid)).toBe(true) // sacrificed
+    expect(r.state.players[0].zones.base.some((x) => x.iid === handGear.iid)).toBe(true) // played free
+    expect(r.state.players[0].zones.hand.some((x) => x.iid === handGear.iid)).toBe(false)
+  })
+
+  it('Rocket Barrage: auto-kills an enemy gear when one is present', () => {
+    const rid = injectCard('a4-rocket', '[Repeat] :rb_energy_4: Choose one — Deal 4 to a unit in a base. Kill a gear.', { name: 'Rocket Barrage', type: 'spell', energy: 0, power: {} })
+    const gid = injectCard('a4-rocket-g', 'Equip.', { type: 'gear', energy: 2 })
+    const s = baseState()
+    const gear = mk(gid, 1)
+    s.players[1].zones.base.push(gear)
+    const spell = mk(rid, 0)
+    s.players[0].zones.hand.push(spell)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true)
+  })
+
+  it('Rocket Barrage: with no gear in play, deals 4 to an enemy unit in a base', () => {
+    const rid = injectCard('a4-rocket2', '[Repeat] :rb_energy_4: Choose one — Deal 4 to a unit in a base. Kill a gear.', { name: 'Rocket Barrage', type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(injectCard('a4-rocket-u', 'unit', { might: 4 }), 1)
+    s.players[1].zones.base.push(enemy)
+    const spell = mk(rid, 0)
+    s.players[0].zones.hand.push(spell)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[1].zones.base.some((x) => x.iid === enemy.iid)).toBe(false) // 4 dmg killed it
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === enemy.iid)).toBe(true)
+  })
 })

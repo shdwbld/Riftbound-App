@@ -624,6 +624,24 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     for (const ln of res.lines) lines.push(ln)
     // Pickpocket: "If you do, play a Gold gear token exhausted." Gate the gold on the kill.
     if (res.killed && e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, false)} Gold token(s).`)
+    // Jayce - Man of Progress: "If you do, you may play a gear (Energy ≤ N) from hand,
+    // ignoring its Energy cost (still pay Power)." Auto-plays the highest-Energy eligible
+    // gear; Power is paid from ready runes (approximated via payPowerAny).
+    if (res.killed && e.playGearFromHand) {
+      const cap = e.playGearFromHand.maxEnergy
+      const cand = p.zones.hand
+        .filter((c) => getCard(c.cardId)?.type === 'gear' && (cap == null || gearEnergyOf(c) <= cap))
+        .sort((a, b) => gearEnergyOf(b) - gearEnergyOf(a))[0]
+      if (cand) {
+        const cardDef = getCard(cand.cardId)
+        const powerPips = cardDef ? Object.values(costOf(cardDef).power).reduce((a, b) => a + (b ?? 0), 0) : 0
+        if (powerPips === 0 || makeBfApi(s).payPowerAny(p.id, powerPips)) {
+          removeFromZone(p, 'hand', cand.iid)
+          p.zones.base.push({ ...cand, exhausted: false, damage: 0, attached: [] })
+          lines.push(`Played ${cardDef?.name ?? 'a gear'} from hand (Energy ignored).`)
+        }
+      }
+    }
   }
   if (e.bounceGear) {
     const gears = allGearInPlay(s).filter((g) => g.owner === p.id)
@@ -4580,6 +4598,30 @@ function resolveSpellEffects(
     s = log(s, controller, `Void Assault: moved ${getCard(friendly.cardId)?.name} and ${getCard(enemy.cardId)?.name} to ${bfBaseNameAt(s, dest) || `Battlefield ${dest + 1}`}.`)
     // "You're the attacker" → designate the friendly unit as the mover (attacker).
     if (fcard) s = showdownOrConquerAfterEffectMove(s, dest, fcard.iid, priorCtrl)
+    return s
+  }
+
+  // Rocket Barrage: "Choose one — Deal 4 to a unit in a base. Kill a gear." Auto-picks
+  // (no manual modal): kill an enemy gear if one exists, else deal 4 to the strongest
+  // enemy unit sitting in a base.
+  if (card.name === 'Rocket Barrage') {
+    const enemyGear = allGearInPlay(s).find((g) => g.owner !== controller)
+    if (enemyGear) {
+      const nm = getCard(enemyGear.cardId)?.name ?? 'a gear'
+      killGearByIid(s, enemyGear.iid)
+      s = log(s, controller, `${card.name}: killed ${nm}.`)
+    } else {
+      const target = s.players
+        .flatMap((pl) => (pl.id !== controller ? pl.zones.base : []))
+        .filter((u) => getCard(u.cardId)?.type === 'unit')
+        .sort((a, b) => mightOf(b) - mightOf(a))[0]
+      if (target) {
+        s = fireDeaths(s, applyTargetDamage(s, target.iid, 4, true, controller), controller)
+        s = log(s, controller, `${card.name}: dealt 4 to ${getCard(target.cardId)?.name} in base.`)
+      } else {
+        s = log(s, controller, `${card.name}: no enemy gear or base unit — fizzled.`)
+      }
+    }
     return s
   }
 
