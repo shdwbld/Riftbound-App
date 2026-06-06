@@ -180,9 +180,11 @@ export function deckChampions(deck: Deck, player: PlayerState): string[] {
   const candidates = deck.championId ? [deck.championId, ...inMain] : inMain
   // Only champions of the SAME character as the chosen Legend may go to the
   // Champion Zone (Teemo legend → Teemo champions only). The character is the
-  // name before " - " / "," / "(" — same split as championName().
-  const legendChar = championName(deck.legendId)
-  const charOf = (name: string) => name.split(/\s+[-–,(]/)[0].trim()
+  // name before " - " / " – " / "," / "(" — same split as championName().
+  // Compared case-insensitively (data has e.g. legend "Rek'sai" vs champion
+  // "Rek'Sai"). When no legend is chosen (legendChar null), all champions pass.
+  const legendChar = championName(deck.legendId)?.toLowerCase() ?? null
+  const charOf = (name: string) => name.split(/\s+[-–,(]/)[0].trim().toLowerCase()
   const byBase = new Map<string, string>()
   for (const id of candidates) {
     const c = getCard(id)
