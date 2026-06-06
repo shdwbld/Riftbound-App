@@ -587,6 +587,29 @@ export default function MatchBoard({
     setMenu({ x: e.clientX, y: e.clientY, items })
   }
 
+  // Right-click a battlefield's art. When its identity was replaced by a token
+  // (Brush / Baron Pit), offer to revert it to the original. Sandbox-gated, like
+  // the other zone right-clicks (it's a referee action — the token swap is
+  // otherwise one-way).
+  const openBfMenu = (e: React.MouseEvent, bfIndex: number) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!onCardAction || !match.sandbox) return
+    const bf = match.battlefields[bfIndex]
+    if (!bf?.originalCardId) return // nothing to revert — suppress the menu
+    const origName = getCard(bf.originalCardId)?.name ?? 'original battlefield'
+    const items: MenuItem[] = [
+      {
+        label: `↩ Revert to ${origName}`,
+        action: { type: 'OVERRIDE', player: perspective, op: 'revertBf', toBattlefield: bfIndex } as Action,
+      },
+    ]
+    setDrill(null)
+    setSub(null)
+    setStepper(null)
+    setMenu({ x: e.clientX, y: e.clientY, items })
+  }
+
   // Manual keyboard shortcuts (sandbox): track held letter keys, then route a
   // modified click on any card (data-iid) to a manual op in the capture phase
   // so the card's own onClick (inspect/play/target) is bypassed.
@@ -740,6 +763,7 @@ export default function MatchBoard({
           onInspect={onInspect}
           targetingActive={targetingActive}
           onMoveOverride={onMoveOverride}
+          onBfContext={onCardAction && match.sandbox ? openBfMenu : undefined}
         />
       </div>
 
@@ -1327,6 +1351,7 @@ function BattlefieldZone({
   onInspect,
   targetingActive,
   onMoveOverride,
+  onBfContext,
 }: {
   match: MatchState
   perspective: PlayerId
@@ -1339,6 +1364,7 @@ function BattlefieldZone({
   onInspect?: (card: Card) => void
   targetingActive?: boolean
   onMoveOverride?: (iid: string, dest: MoveDest) => void
+  onBfContext?: (e: React.MouseEvent, bfIndex: number) => void
 }) {
   const dndOn = !!match.sandbox && !!onMoveOverride
   return (
@@ -1378,6 +1404,10 @@ function BattlefieldZone({
               onClick={(e) => {
                 e.stopPropagation()
                 if (bfCard && onInspect && !targetable) onInspect(bfCard)
+              }}
+              onContextMenu={(e) => {
+                e.stopPropagation()
+                onBfContext?.(e, i)
               }}
               title={rulesTip ?? undefined}
               className="bf-slot relative block w-full"

@@ -30,6 +30,9 @@ export type OverrideOp =
   | 'setActive' | 'setTurn' | 'setPointsToWin' | 'setWinner' | 'setPhase'
   | 'clearChain' | 'clearShowdown' | 'setController' | 'triggerEnterPlay' | 'clearTurnState'
   | 'recomputeControllers'
+  // Restore a battlefield whose identity was replaced by a token (Brush / Baron
+  // Pit) back to its original card (uses `action.toBattlefield`).
+  | 'revertBf'
 
 /** A destination zone for a sandbox `move` override (a player zone, the
  *  banishment pile, the legend/champion slot, or — with `toBattlefield` set — a
@@ -195,6 +198,9 @@ export interface PlayerState {
 
 export interface BattlefieldState {
   cardId: string
+  /** When the identity was replaced by a token (Brush / Baron Pit), the card id
+   *  it had before, so a manual override can revert it back. */
+  originalCardId?: string
   /** Units contesting this battlefield, from either player. */
   units: EngineCard[]
   /** Current controller (most/only units present), or null if empty. */

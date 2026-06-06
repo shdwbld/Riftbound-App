@@ -1735,7 +1735,9 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         }
         if (targetBf != null && s.battlefields[targetBf]) {
           legend.exhausted = true
-          s.battlefields[targetBf].cardId = BRUSH_ID
+          const bf = s.battlefields[targetBf]
+          if (bf.cardId !== BRUSH_ID) bf.originalCardId = bf.cardId
+          bf.cardId = BRUSH_ID
           recomputeControllers(s)
           s = log(s, player, `${label}: Ivern exhausted — replaced battlefield ${targetBf + 1} with Brush.`)
         }
@@ -6225,6 +6227,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
               if (open >= 0) return open
               return s1.battlefields.reduce((best, b, i) => (b.units.length < s1.battlefields[best].units.length ? i : best), 0)
             })()
+            if (s1.battlefields[slotIdx].cardId !== BARON_PIT_ID)
+              s1.battlefields[slotIdx].originalCardId = s1.battlefields[slotIdx].cardId
             s1.battlefields[slotIdx].cardId = BARON_PIT_ID
             recomputeControllers(s1)
             s1 = log(s1, action.player, `Baron Nashor: added Baron Pit (battlefield ${slotIdx + 1}).`)
@@ -7465,6 +7469,18 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         // Force a battlefield-control recompute (the trailing recomputeControllers does it).
         case 'recomputeControllers': break
+        // Revert a token battlefield (Brush / Baron Pit) back to its original
+        // card. Passives/scripts key on the current cardId, so restoring it
+        // automatically brings the original effect back.
+        case 'revertBf': {
+          const bfi = action.toBattlefield
+          if (bfi == null || !s.battlefields[bfi]) break
+          const bf = s.battlefields[bfi]
+          if (!bf.originalCardId) break
+          bf.cardId = bf.originalCardId
+          bf.originalCardId = undefined
+          break
+        }
       }
       recomputeControllers(s)
       return ok(log(s, action.player, `Override: ${action.op}${nm ? ` ${nm}` : ''}.`))
