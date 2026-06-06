@@ -91,8 +91,10 @@ const PATTERNS: Pattern[] = [
   // "When you hold", "When you or an ally hold", "When an ally holds" (Vex - Gloomist).
   { event: 'hold', scope: 'global', re: /when(?:ever)?\s+(?:you|an? ally)(?:\s+or\s+(?:you|an? ally))?\s+holds?/i },
   // "When I hold" (Trevor Snoozebottom, Dunebreaker, …) — fires for the unit at a
-  // held battlefield (the engine already collects self 'hold' triggers).
-  { event: 'hold', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+holds?/i },
+  // held battlefield (the engine already collects self 'hold' triggers). "When I
+  // conquer or hold" (Last Rites) also fires hold; its conquer half is matched by
+  // the conquer self pattern above.
+  { event: 'hold', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+(?:conquers?\s+or\s+)?holds?/i },
   { event: 'startOfTurn', scope: 'global', re: /(?:at\s+the\s+)?(?:start|beginning)\s+of\s+(?:your|the|each)\s+(?:turn|beginning\s+phase)/i },
   { event: 'attack', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+attacks?/i },
   // "When I defend" and "When I attack or defend" (Ahri - Inquisitive) both fire a
@@ -146,6 +148,13 @@ function clauseAfter(text: string, m: RegExpMatchArray): string {
   if (end >= 0 && /\b(?:look at|reveal) the top\b/i.test(rest.slice(0, end))) {
     const recM = rest.match(/recycle [^.;]*[.;]/i)
     if (recM) end = (recM.index ?? 0) + recM[0].length - 1
+  }
+  // Full-cost trash-play ("play a unit from your trash. (You still pay its costs.)")
+  // — extend through the closing parenthetical so the parser sees "still pay its
+  // costs" and resolves it as a full-cost play, not a free one (Last Rites).
+  if (end >= 0 && /\bplay a unit from your trash\b/i.test(rest.slice(0, end))) {
+    const stillM = rest.match(/(?:you )?still pay its costs?[.;)]/i)
+    if (stillM) end = (stillM.index ?? 0) + stillM[0].length - 1
   }
   return (end >= 0 ? rest.slice(0, end) : rest).trim()
 }

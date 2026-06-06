@@ -6244,4 +6244,15 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     expect(a?.tempMight).toBe(3) // +3 Might from Yuumi
     expect(a?.grantTank).toBe(true) // and [Tank] this turn
   })
+
+  it('Last Rites: "When I conquer or hold" parses both triggers with the full-cost trash-play clause', () => {
+    const lr = CARD_INDEX['sfd-150-221']
+    const trigs = parseTriggers(lr) as { event: string; text: string }[]
+    const hold = trigs.find((a) => a.event === 'hold')
+    const conquer = trigs.find((a) => a.event === 'conquer')
+    expect(hold).toBeTruthy() // hold pattern now matches "conquer or hold"
+    expect(conquer).toBeTruthy()
+    expect(/play a unit from your trash/i.test(hold!.text)).toBe(true)
+    expect(/still pay its costs/i.test(hold!.text)).toBe(true) // clauseAfter captured the parenthetical
+  })
 })
