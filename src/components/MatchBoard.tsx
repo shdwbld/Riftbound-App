@@ -23,6 +23,8 @@ import CardBack from './CardBack'
 import CardPreview from './CardPreview'
 import CardText, { DomainIcon } from './CardText'
 import PlayedCardSpotlight from './PlayedCardSpotlight'
+import PlayedCardAnnouncement from './PlayedCardAnnouncement'
+import ChainResponsePopup from './ChainResponsePopup'
 import OverridePanel from './OverridePanel'
 import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
 
@@ -300,6 +302,21 @@ export default function MatchBoard({
     if (plays.length) {
       const last = plays[plays.length - 1]
       setLastPlayed({ cardId: last.cardId!, player: last.player ?? perspective })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.seq])
+
+  // Premium 80%-screen "card played" announcement for ALL players. Only units,
+  // spells & gear (skip rune channels / token spawns). Keyed on seq so it fires
+  // once per play; the float is non-blocking and click-dismissable.
+  const [announce, setAnnounce] = useState<{ cardId: string; player: PlayerId; seq: number } | null>(null)
+  useEffect(() => {
+    const plays = (events ?? []).filter(
+      (e) => e.kind === 'play' && e.cardId && ['unit', 'spell', 'gear'].includes(getCard(e.cardId)?.type ?? ''),
+    )
+    if (plays.length) {
+      const last = plays[plays.length - 1]
+      setAnnounce({ cardId: last.cardId!, player: last.player ?? perspective, seq: match.seq })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])
@@ -633,6 +650,11 @@ export default function MatchBoard({
   const canRespondNow = myChainPriority || myShowdown
   const hasPlayableResponse =
     canRespondNow && me.zones.hand.some((c) => canPlay(match, perspective, c.iid).valid)
+
+  // The top-of-chain card to surface in the 80%-screen react popup (chain
+  // reactions only — showdowns without a chain are skipped).
+  const respondChainTop =
+    myChainPriority && match.chain.length > 0 ? match.chain[match.chain.length - 1] : null
 
   // End-turn guard: still have a playable card or a unit that can move?
   const championPlayable = !!me.champion && canPlay(match, perspective, me.champion.iid).valid
@@ -980,6 +1002,18 @@ export default function MatchBoard({
 
       {/* Transient combat banner (chain link / showdown / react window) */}
       <CombatBanner data={combatBanner} />
+
+      {/* Premium 80%-screen announcements (both non-blocking floats). */}
+      <PlayedCardAnnouncement
+        seq={announce?.seq ?? -1}
+        cardId={announce?.cardId ?? null}
+        playerName={announce ? (match.players[announce.player]?.name ?? '') : ''}
+      />
+      <ChainResponsePopup
+        chainItemId={respondChainTop?.id ?? null}
+        cardId={respondChainTop?.cardId ?? null}
+        playerName={respondChainTop ? (match.players[respondChainTop.controller]?.name ?? '') : ''}
+      />
     </div>
 
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action

@@ -496,6 +496,63 @@ body {
   filter: brightness(1.08);
 }
 
+/* ---- Premium full-screen announcements (played card / chain react) ------- */
+/* Gentle, slightly irregular float + tilt + scale breathing for the 80%-screen
+ *  played-card announcement so it feels alive without being distracting. */
+@keyframes cardFloat {
+  0% {
+    transform: translateY(0) rotate(-0.4deg) scale(1);
+  }
+  25% {
+    transform: translateY(-6px) rotate(0.3deg) scale(1.004);
+  }
+  50% {
+    transform: translateY(-3px) rotate(-0.2deg) scale(1.007);
+  }
+  75% {
+    transform: translateY(-8px) rotate(0.5deg) scale(1.003);
+  }
+  100% {
+    transform: translateY(0) rotate(-0.4deg) scale(1);
+  }
+}
+.card-announce {
+  animation: cardFloat 5s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+
+/* A faster, higher-opacity foil sweep (reuses the lightSweep keyframe) layered
+ *  over the announcement card — same idea as the battlefield .light-overlay. */
+.light-overlay-foil {
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.28) 48%,
+    rgba(220, 230, 255, 0.18) 52%,
+    transparent 70%
+  );
+  background-size: 250% 100%;
+  animation: lightSweep 2.6s ease-in-out infinite;
+}
+
+/* Lifetime / countdown drain bars (played-card = 10s, chain popup = 5s). */
+@keyframes announceDrain {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+.announcement-drain {
+  width: 100%;
+  animation: announceDrain 10s linear forwards;
+}
+.chain-countdown-bar {
+  width: 100%;
+  animation: announceDrain 5s linear forwards;
+}
+
 /* Move: slide up into the battlefield slot. */
 @keyframes moveIn {
   0% {
@@ -649,6 +706,10 @@ body {
   .fx-baron-portal,
   .fx-baron-eye,
   .fx-baron-rise,
+  .card-announce,
+  .light-overlay-foil,
+  .announcement-drain,
+  .chain-countdown-bar,
   .fx-ready {
     animation: none;
   }
