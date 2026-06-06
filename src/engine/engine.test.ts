@@ -5977,4 +5977,28 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.error).toBeUndefined() // conquered bf 1 → ok
     expect(r.state.battlefields[1].units.some((x) => x.iid === u2.iid)).toBe(true)
   })
+
+  it('Magma Wurm: other friendly units enter ready', () => {
+    const s = baseState()
+    s.players[0].zones.base.push(mk(injectCard('a3-magma', 'Other friendly units enter ready.', { might: 8 }), 0))
+    const u = mk(injectCard('a3-mw-unit', 'A unit.'), 0) // free unit
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.exhausted).toBe(false) // entered ready
+  })
+
+  it('Blitzcrank - Impassive: on play to a battlefield, pulls an enemy unit there', () => {
+    const id = injectCard('a3-blitz', 'When you play me to a battlefield, you may move an enemy unit to here.', { name: 'Blitzcrank - Impassive', might: 6 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    const blitz = mk(id, 0)
+    s.players[0].zones.hand.push(blitz)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: blitz.iid, payment: emptyPayment(), toBattlefield: 0 })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(true) // pulled to Blitzcrank's battlefield
+  })
 })

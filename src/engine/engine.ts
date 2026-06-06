@@ -2077,6 +2077,12 @@ function enemyWardenAtBf(s: MatchState, player: PlayerId): boolean {
   return s.players.some((_, i) => i !== player && mageseekerWardenAtBf(s, i))
 }
 
+/** Magma Wurm: "Other friendly units enter ready." — an aura while it's in play. */
+function friendlyUnitsEnterReadyAura(s: MatchState, player: PlayerId): boolean {
+  return [...s.battlefields.flatMap((b) => b.units), ...s.players[player].zones.base]
+    .some((u) => u.owner === player && /other friendly units enter ready/i.test(getCard(u.cardId)?.text ?? ''))
+}
+
 /** Record a conquered battlefield for the turn (Perched Grimwyrm's placement
  *  predicate). Deduped; cleared at turn start. */
 function markConquered(s: MatchState, player: PlayerId, bfIndex: number): void {
@@ -5106,7 +5112,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Towering Pairofant, Dunebreaker, Xin Zhao, Shadow Watcher, Shadow).
         const guardReady = readyGuarded && enterReadyConditionMet(s, p, readyClause, action.toBattlefield ?? null)
         const condReady = monchReady || leonaReady || guardReady
-        const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady
+        const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady || friendlyUnitsEnterReadyAura(s, action.player)
         // Required additional cost "As an additional cost to play me, kill a <X>
         // you control" (Stalking Wolf → Bird/Cat/Dog/Poro; Cruel Patron → any
         // friendly unit). Pick the lowest-Might qualifier now (the kill resolves
@@ -5272,6 +5278,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Elder Dragon: "When you play me, choose up to one enemy unit at each location.
         // Deal 1 to them." Auto-picks the strongest enemy at each battlefield + each
         // opponent's base; the passive above makes that 1 damage lethal.
+        if (card.name === 'Blitzcrank - Impassive' && playToBf != null) {
+          // "When you play me to a battlefield, you may move an enemy unit to here."
+          // Auto-pull the strongest enemy unit from another battlefield.
+          const enemies = s1.battlefields.flatMap((b, bi) => (bi === playToBf ? [] : b.units.filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit')))
+          if (enemies.length) {
+            const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
+            const pulled = pluckCardAnywhere(s1, target.iid)
+            if (pulled) {
+              const priorCtrl = s1.battlefields[playToBf].controller
+              s1.battlefields[playToBf].units.push(pulled)
+              recomputeControllers(s1)
+              s1 = log(s1, action.player, `Blitzcrank - Impassive: pulled ${getCard(pulled.cardId)?.name} to its battlefield.`)
+              s1 = showdownOrConquerAfterEffectMove(s1, playToBf, pulled.iid, priorCtrl)
+            }
+          }
+        }
         if (card.name === 'Baron Nashor') {
           // "As you play me, add the Baron Pit battlefield token to the board if it's
           // not there already. If you do, I enter there." A 4th battlefield slot isn't
