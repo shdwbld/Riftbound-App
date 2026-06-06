@@ -920,7 +920,9 @@ export default function MatchBoard({
 
       {/* Shared, contested battlefields — rendered ABOVE the mat. They belong to
           no single player, so they live outside any per-player Battlefield Zone. */}
-      <div className="rounded-xl border border-amber-600/25 bg-[#0c1322]/70 p-2">
+      {/* Battlefields are capped narrower than the mat so their banners take less
+          vertical space — leaving the player's board the bigger share of the height. */}
+      <div className="mx-auto max-w-[860px] rounded-xl border border-amber-600/25 bg-[#0c1322]/70 p-2">
         <div className="pm-zone-label mb-1.5">Battlefields — shared & contested</div>
         <BattlefieldZone
           match={match}
