@@ -1365,7 +1365,7 @@ function OpponentMat({
             </button>
           )}
           <CardBack size="sm" count={opp.zones.mainDeck.length} />
-          <CardBack size="sm" count={opp.zones.runeDeck.length} />
+          <CardBack size="sm" count={opp.zones.runeDeck.length} rune />
         </div>
       </div>
       {/* opponent base + battlefield presence summary */}
@@ -1949,7 +1949,7 @@ function PlayerMat({
         {/* Rune Deck */}
         <div className="pm-zone pm-runedeck flex flex-col items-center justify-center gap-1" onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'runeDeck') : undefined}>
           <div className="pm-zone-label self-start">Rune Deck</div>
-          <CardBack size="sm" count={me.zones.runeDeck.length} />
+          <CardBack size="sm" count={me.zones.runeDeck.length} rune />
         </div>
 
         {/* Base: Runes */}
@@ -1996,16 +1996,26 @@ function PlayerMat({
         <div className="pm-zone pm-trash flex flex-col items-center justify-center gap-1">
           <div className="pm-zone-label self-start">Trash</div>
           <div className="flex items-end gap-2">
-            <button
-              type="button"
-              title={onOpenSearch ? 'Search / take back from trash' : undefined}
-              onClick={onOpenSearch ? () => onOpenSearch('trash') : undefined}
-              onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'trash') : undefined}
-              className={`flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-white/15 text-sm text-white/40 ${onOpenSearch ? 'cursor-pointer hover:border-white/40' : ''}`}
-              {...dropTgt(dndOn, { toZone: 'trash' }, onMoveOverride)}
-            >
-              🗑 {me.zones.trash.length}
-            </button>
+            {(() => {
+              const topTrash = me.zones.trash[me.zones.trash.length - 1]
+              const topImg = topTrash ? getCard(topTrash.cardId)?.imageUrl : undefined
+              return (
+                <button
+                  type="button"
+                  title={onOpenSearch ? 'Search / take back from trash' : undefined}
+                  onClick={onOpenSearch ? () => onOpenSearch('trash') : undefined}
+                  onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'trash') : undefined}
+                  className={`relative flex h-[60px] w-11 items-center justify-center overflow-hidden rounded-md border text-sm text-white/40 ${topImg ? 'border-white/25' : 'border-dashed border-white/15'} ${onOpenSearch ? 'cursor-pointer hover:border-white/40' : ''}`}
+                  {...dropTgt(dndOn, { toZone: 'trash' }, onMoveOverride)}
+                >
+                  {/* Top trashed card behind the icon — dimmed (−50% brightness, −30% saturation). */}
+                  {topImg && (
+                    <img src={topImg} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" style={{ filter: 'brightness(0.5) saturate(0.7)' }} />
+                  )}
+                  <span className="relative z-10 font-semibold text-white drop-shadow">🗑 {me.zones.trash.length}</span>
+                </button>
+              )
+            })()}
             {me.banished.length > 0 && (
               <div className="flex flex-col items-center gap-0.5">
                 <div className="flex h-[60px] w-11 items-center justify-center rounded-md border border-dashed border-fuchsia-400/30 text-sm text-fuchsia-300/60">

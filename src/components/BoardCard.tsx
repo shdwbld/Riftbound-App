@@ -2,6 +2,7 @@ import { type CardInstance, card } from '../game/state'
 import { getCard } from '../data/cards'
 import { isUnit, type Card } from '../types/cards'
 import { parseKeywords, levelBonus } from '../engine/keywords'
+import { domainGlow } from '../lib/theme'
 
 /** Manual sandbox status-marker dot colors, indexed 1–4 (0/undefined = none). */
 const MARKER_COLORS = ['', 'bg-rose-500', 'bg-amber-400', 'bg-emerald-400', 'bg-sky-400']
@@ -71,6 +72,22 @@ export default function BoardCard({
     size === 'sm'
       ? { width: 'var(--card-w-sm)', height: 'var(--card-h-sm)' }
       : { width: 'var(--card-w)', height: 'var(--card-h)' }
+  // Champion + signature(-spell) cards get a soft, slow domain-colored outer glow
+  // (4–5s pulse, randomly staggered per card via an iid hash). Rendered on a
+  // wrapper so it never clashes with the card's flash / ready animations.
+  const sig = !!def && (def.supertype === 'champion' || def.supertype === 'signature')
+  const iidStr = String((ci as { iid?: string }).iid ?? '')
+  let h = 0
+  for (let i = 0; i < iidStr.length; i++) h = (h * 31 + iidStr.charCodeAt(i)) >>> 0
+  const sigStyle = sig
+    ? {
+        display: 'inline-block',
+        borderRadius: '0.375rem',
+        ['--sig-glow' as string]: domainGlow(def!.domains),
+        animationDelay: `${(h % 30) / 10}s`,
+        animationDuration: `${4 + ((h >>> 3) % 10) / 10}s`,
+      }
+    : { display: 'contents' }
   const borderClass =
     glow === 'target'
       ? 'border-amber-300 ring-2 ring-amber-300/70 shadow-[0_0_12px_2px_rgba(252,211,77,0.55)]'
@@ -80,6 +97,7 @@ export default function BoardCard({
           ? 'border-emerald-400/60 ring-1 ring-emerald-400/40'
           : 'border-white/15 hover:border-white/40'
   return (
+    <span className={sig ? 'sig-glow' : undefined} style={sigStyle}>
     <button
       onClick={onClick}
       title={def?.name}
@@ -92,9 +110,7 @@ export default function BoardCard({
       style={cardStyle}
     >
       {faceDown ? (
-        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-900 to-fuchsia-900 text-white/40">
-          ⚔
-        </div>
+        <img src="/card-back.png" alt="Card back" loading="lazy" className="h-full w-full object-cover" />
       ) : def?.imageUrl ? (
         <img
           src={def.imageUrl}
@@ -233,5 +249,6 @@ export default function BoardCard({
         )
       })()}
     </button>
+    </span>
   )
 }

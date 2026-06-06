@@ -615,6 +615,21 @@ body {
   animation: announceOut 0.4s ease-in forwards;
 }
 
+/* Champion / signature cards: a soft, slow domain-colored outer glow (color via
+   the inline --sig-glow var; period + delay randomized per card inline). */
+@keyframes sigPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 5px 1px var(--sig-glow, transparent);
+  }
+  50% {
+    box-shadow: 0 0 18px 6px var(--sig-glow, transparent);
+  }
+}
+.sig-glow {
+  animation: sigPulse 4.5s ease-in-out infinite;
+}
+
 /* Alt+click ping marker: quick pop, then fade to 0% opacity over 2s. */
 @keyframes pingPop {
   0% {
@@ -799,6 +814,7 @@ body {
   .ping-pop,
   .draw-flip-in,
   .announce-out,
+  .sig-glow,
   .fx-ready {
     animation: none;
   }
