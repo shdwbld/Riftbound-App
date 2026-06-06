@@ -3547,6 +3547,7 @@ export function beginTurn(state: MatchState): MatchState {
   p.azirSwappedThisTurn = false
   p.energySpentOnSpellsThisTurn = 0
   p.spellPlayedThisTurn = false
+  p.nextUnitEntersReadyThisTurn = false
   p.conqueredThisTurn = []
   p.oncePerTurnUsed = {}
   p.pool = { energy: 0, power: {} }
@@ -5850,7 +5851,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // "you may pay X as an additional cost … If you do, I enter ready" (Crescent
         // Guardian) — entering ready is the paid-bonus, granted only when the cost was paid.
         const paidEnterReady = paidAdditional && /if you do,?\s*i enters? ready/i.test(card.text ?? '')
-        const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady || paidEnterReady || friendlyUnitsEnterReadyAura(s, action.player)
+        // Sun Disc: "the next unit you play this turn enters ready" — consume the flag.
+        const sunDiscReady = !!p.nextUnitEntersReadyThisTurn
+        if (sunDiscReady) p.nextUnitEntersReadyThisTurn = false
+        const entersReady = accelChosen || levelReady || baseReady || legendReady || condReady || paidEnterReady || sunDiscReady || friendlyUnitsEnterReadyAura(s, action.player)
         // Required additional cost "As an additional cost to play me, kill a <X>
         // you control" (Stalking Wolf → Bird/Cat/Dog/Poro; Cruel Patron → any
         // friendly unit). Pick the lowest-Might qualifier now (the kill resolves
@@ -7022,6 +7026,16 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (ab.exhaust && !ab.killThis) u.exhausted = true
       let s1 = log(s, action.player, `${name}: activated — ${ab.effectText}.`)
       if (discardedCards.length > 0) s1 = fireDiscard(log(s1, action.player, `Discarded ${discardedCards.length} as a cost.`), action.player, discardedCards)
+      // Sun Disc: "⟳: [Legion] — The next unit you play this turn enters ready. (Get the
+      // effect if you've played another card this turn.)" Set a flag PLAY_UNIT consumes;
+      // Legion gates it on having already played another card this turn.
+      if (/the next unit you play this turn enters ready/i.test(getCard(u.cardId)?.text ?? '')) {
+        if ((p.cardsPlayedThisTurn ?? 0) >= 1) {
+          p.nextUnitEntersReadyThisTurn = true
+          return ok(log(s1, action.player, `${name}: the next unit you play this turn enters ready.`))
+        }
+        return ok(log(s1, action.player, `${name}: activated, but Legion is inactive (play another card first).`))
+      }
       // "Attach an Equipment you control to a unit you control" (Jax) — a
       // two-step pick-equip → pick-target, reusing the Forge choice flow.
       if (/attach\b[^.]*\bequipment\b[^.]*\bto a unit/i.test(ab.effectText)) {
@@ -7366,6 +7380,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             p.azirSwappedThisTurn = false
             p.energySpentOnSpellsThisTurn = 0
             p.spellPlayedThisTurn = false
+            p.nextUnitEntersReadyThisTurn = false
             p.conqueredThisTurn = []
             p.oncePerTurnUsed = {}
             p.grantRepeatNextSpell = false

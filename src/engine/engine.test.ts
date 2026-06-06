@@ -4091,6 +4091,22 @@ describe('Viktor deck — minor faithfulness', () => {
     expect(tokens.length).toBeGreaterThan(0) // the gear's "When I move, play a Recruit token here" fired
   })
 
+  it('Sun Disc: activating it makes the next unit you play this turn enter ready', () => {
+    const s = baseState()
+    const disc = mk('ogn-021-298', 0) // Sun Disc gear in base
+    s.players[0].zones.base.push(disc)
+    s.players[0].cardsPlayedThisTurn = 1 // Legion active (already played a card)
+    let r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: disc.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].nextUnitEntersReadyThisTurn).toBe(true)
+    const u = mk(injectCard('sun-disc-unit', 'x', { type: 'unit', energy: 0, power: {}, might: 2 }), 0)
+    r.state.players[0].zones.hand.push(u)
+    r = reduce(r.state, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: emptyPayment() })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.exhausted).toBe(false) // entered ready
+    expect(r.state.players[0].nextUnitEntersReadyThisTurn).toBeFalsy() // flag consumed
+  })
+
   it('a -Might debuff respects "to a minimum of 1 Might"', () => {
     const targetId = injectCard('floor-target', 'A unit.', { might: 3 })
     const spellId = injectCard('floor-spell', 'Give a unit -4 :rb_might: this turn, to a minimum of 1 :rb_might:.', { type: 'spell', energy: 0, power: {} })

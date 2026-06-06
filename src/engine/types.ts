@@ -156,6 +156,9 @@ export interface PlayerState {
    *  "if you've played a spell this turn" optional-cost gate — distinct from
    *  energySpentOnSpellsThisTurn since a 0-cost spell still counts). Cleared at turn start. */
   spellPlayedThisTurn?: boolean
+  /** Set by Sun Disc ("⟳: The next unit you play this turn enters ready"). The next
+   *  unit played enters ready and consumes the flag. Cleared at turn start. */
+  nextUnitEntersReadyThisTurn?: boolean
   /** Battlefield indices this player conquered this turn (Perched Grimwyrm's
    *  "play me only to a battlefield you conquered this turn"). Cleared at turn start. */
   conqueredThisTurn?: number[]
