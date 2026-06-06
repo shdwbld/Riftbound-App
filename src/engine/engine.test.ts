@@ -5716,4 +5716,25 @@ describe('A1.5 follow-up cards — first-move / first-win-combat self triggers',
     const draven = parseTriggers({ id: 'a15-draven', text: 'The first time I win a combat each turn, you score 1 point.' } as never)
     expect(draven.some((a) => a.event === 'winCombat' && a.scope === 'self' && a.oncePerTurn === true && a.effect.score === 1)).toBe(true)
   })
+
+  it('The Dreaming Tree: choosing your unit here with a spell draws once per turn', () => {
+    const dtId = injectCard('a15-dt', 'When a player chooses a friendly unit here with a spell for the first time each turn, they draw 1.', { type: 'battlefield', name: 'The Dreaming Tree' })
+    const spellId = injectCard('a15-dt-spell', 'Give a unit +1 :rb_might: this turn.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    s.battlefields[0] = { cardId: dtId, units: [], controller: 0 }
+    const myUnit = mk(furyUnit.id, 0)
+    s.battlefields[0].units.push(myUnit)
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0)) // draw fuel
+    const sp1 = mk(spellId, 0)
+    const sp2 = mk(spellId, 0)
+    s.players[0].zones.hand.push(sp1, sp2)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp1.iid, targets: [myUnit.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.mainDeck.length).toBe(1) // first choose-here → drew 1
+    r = reduce(r.state, { type: 'PLAY_SPELL', player: 0, iid: sp2.iid, targets: [myUnit.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.mainDeck.length).toBe(1) // gated — no second draw same turn
+  })
 })

@@ -2571,9 +2571,16 @@ function bfUnitPlayedHere(s: MatchState, player: PlayerId, bfIndex: number, iid:
       s.log.push({ turn: s.turn, player, text: `Valley of Idols: paid 1 to Buff ${getCard(u.cardId)?.name}.` })
     }
   } else if (name === 'Star Spring' && getCard(s.battlefields[bfIndex].units.find((x) => x.iid === iid)?.cardId ?? '')?.supertype !== 'token') {
-    // "you may move another unit you control here to its base."
-    const opts = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === player && u.iid !== iid).map((u) => unitOpt(u))
-    offerChoice(s, { player, kind: 'moveAnyToBase', bfIndex, prompt: 'Star Spring — move another unit you control to its base?', options: opts })
+    // "The first time a player plays a non-token unit here each turn, they may move
+    //  another unit they control here to its base." Gate once per turn per player.
+    const pp = s.players[player]
+    const ssKey = `star-spring-bf${bfIndex}`
+    if (!pp.oncePerTurnUsed) pp.oncePerTurnUsed = {}
+    if (!pp.oncePerTurnUsed[ssKey]) {
+      pp.oncePerTurnUsed[ssKey] = true
+      const opts = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === player && u.iid !== iid).map((u) => unitOpt(u))
+      if (opts.length) offerChoice(s, { player, kind: 'moveAnyToBase', bfIndex, prompt: 'Star Spring — move another unit you control to its base?', options: opts })
+    }
   }
 }
 
@@ -4275,6 +4282,22 @@ function resolveSpellEffects(
     let stunnedEnemy = false
     for (const t of tgts) {
       s = fireTargetedSelf(s, controller, t) // Jae Medarda / Irelia - Fervent "when you choose me"
+      {
+        // The Dreaming Tree: the first time per turn you choose YOUR unit at this
+        // battlefield with a spell, you draw 1.
+        const dtBf = battlefieldOf(s, t)
+        const dtu = findUnitAnywhere(s, t)
+        if (dtu && dtu.owner === controller && dtBf >= 0 && bfBaseNameAt(s, dtBf) === 'The Dreaming Tree') {
+          const cp = s.players[controller]
+          const dtKey = `dreaming-tree-bf${dtBf}`
+          if (!cp.oncePerTurnUsed) cp.oncePerTurnUsed = {}
+          if (!cp.oncePerTurnUsed[dtKey]) {
+            cp.oncePerTurnUsed[dtKey] = true
+            drawN(cp, 1)
+            s = log(s, controller, 'The Dreaming Tree: drew 1 (chose a friendly unit here).')
+          }
+        }
+      }
       let dead: EngineCard[] = []
       // Smite: mark the target so a death from this damage banishes it instead.
       if (e.banishOnDeath) {
