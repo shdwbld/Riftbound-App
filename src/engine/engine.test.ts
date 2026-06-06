@@ -1907,18 +1907,25 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.mainDeck.length).toBe(3) // all recycled
   })
 
-  it('peekToHand: draws the highest-cost of the top N (Stacked Deck / Called Shot)', () => {
+  it('peekToHand: offers an interactive pick of the top N (Stacked Deck / Called Shot)', () => {
     const cheap = injectCard('pth-1', 'A unit.', { energy: 1 })
     const dear = injectCard('pth-4', 'A unit.', { energy: 4 })
     const mid = injectCard('pth-2', 'A unit.', { energy: 2 })
     const sd = injectCard('pth-sd', 'When you play me, look at the top 3 cards of your Main Deck. Put 1 into your hand and recycle the rest.', { type: 'unit', energy: 0, power: {} })
     const s = baseState()
-    s.players[0].zones.mainDeck = [mk(cheap, 0), mk(dear, 0), mk(mid, 0), mk(furyUnit.id, 0)]
+    const top = [mk(cheap, 0), mk(dear, 0), mk(mid, 0)]
+    s.players[0].zones.mainDeck = [...top, mk(furyUnit.id, 0)]
     const u = mk(sd, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
-    expect(r.state.players[0].zones.hand.some((c) => c.cardId === dear)).toBe(true) // best of 3 drawn
-    expect(r.state.players[0].zones.mainDeck.length).toBe(3)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.state.pendingChoice?.kind).toBe('peekToHand') // a choice is offered, not auto-drawn
+    expect(r.state.pendingChoice?.options.length).toBe(3) // looked at the top 3
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: top[1].iid }) // keep the dear one
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === top[1].iid)).toBe(true) // chosen card to hand
+    expect(r.state.players[0].zones.mainDeck.some((c) => c.iid === top[1].iid)).toBe(false)
+    expect(r.state.players[0].zones.mainDeck.length).toBe(3) // 2 recycled + the untouched bottom card
+    expect(r.state.pendingChoice).toBeFalsy()
   })
 
   it('Ivern - Nurturer (champion): peek draws a unit AND buffs a friendly when a Bird/Cat/Dog/Poro is revealed', () => {

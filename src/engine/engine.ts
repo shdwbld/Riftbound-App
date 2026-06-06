@@ -871,16 +871,26 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     }
   }
   if (e.peekToHand) {
-    // "Look at the top N; draw the best; recycle the rest" (Stacked Deck, Called Shot).
+    // "Look at the top N; put 1 into your hand; recycle the rest" (Stacked Deck,
+    // Called Shot). This is a genuine selection (and a private look), so offer an
+    // interactive pick: the top N stay on the deck while a pendingChoice — visible only
+    // to the controller — lets them choose which to keep; the rest recycle to the bottom
+    // on resolve. With ≤1 card to look at (or a choice already pending) auto-take it.
     const deck = p.zones.mainDeck
-    const top = deck.splice(0, Math.min(e.peekToHand.n, deck.length))
-    let drawn: EngineCard | undefined
-    if (top.length) {
-      drawn = top.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b))
-      p.zones.hand.push(drawn)
+    const n = Math.min(e.peekToHand.n, deck.length)
+    if (n <= 1 || s.pendingChoice) {
+      const drawn = n >= 1 ? deck.shift() : undefined
+      if (drawn) { p.zones.hand.push(drawn); lines.push('Looked at the top card and put it in hand.') }
+    } else {
+      const cand = deck.slice(0, n)
+      offerChoice(s, {
+        player: p.id, kind: 'peekToHand', bfIndex: -1,
+        prompt: `Look at the top ${n} cards — put 1 into your hand, recycle the rest.`,
+        options: cand.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
+        payload: JSON.stringify({ candIids: cand.map((c) => c.iid) }),
+      })
+      lines.push(`Looking at the top ${n} cards — choose one to keep.`)
     }
-    for (const c of top) if (c !== drawn) deck.push(c)
-    if (drawn) lines.push(`Looked at top ${top.length}; drew ${getCard(drawn.cardId)?.name}; recycled ${top.length - 1}.`)
   }
   if (e.peekBanishPlay) {
     // "Look at/reveal the top N; banish one (a unit), then play it (free / discounted
@@ -6663,6 +6673,20 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       }
       if (action.iid !== null && !pc.options.some((o) => o.iid === action.iid))
         return fail(state, 'That is not a valid choice.')
+
+      // Stacked Deck / Called Shot: keep the chosen looked-at card, recycle the rest of
+      // the looked-at set to the bottom of the deck. A decline keeps none.
+      if (pc.kind === 'peekToHand') {
+        const candIids: string[] = JSON.parse(pc.payload ?? '{}').candIids ?? []
+        const pl = s.players[action.player]
+        const cands = candIids.map((iid) => pl.zones.mainDeck.find((c) => c.iid === iid)).filter((c): c is EngineCard => !!c)
+        pl.zones.mainDeck = pl.zones.mainDeck.filter((c) => !candIids.includes(c.iid))
+        const chosen = action.iid ? cands.find((c) => c.iid === action.iid) : undefined
+        if (chosen) pl.zones.hand.push(chosen)
+        for (const c of cands) if (c.iid !== action.iid) pl.zones.mainDeck.push(c) // recycle the rest to the bottom
+        // Don't name the kept card — it was a PRIVATE look (only the controller should know).
+        return ok(log(s, action.player, chosen ? `Put a card into hand and recycled ${cands.length - 1}.` : `Recycled ${cands.length} looked-at card(s).`))
+      }
 
       // Dusk Rose Lab pauses the Beginning Phase before scoring; resolving it
       // (pick or decline) resumes via finishBeginning.
