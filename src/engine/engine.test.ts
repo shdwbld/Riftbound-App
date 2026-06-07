@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility, canActivateUnit, combatMightAt } from './engine'
+import { reduce, beginTurn, canPlay, repeatCostFor, grantedAbilityFor, getLegalTargets, unitActivatedAbility, canActivateUnit, combatMightAt, validateAllocation } from './engine'
 import { autoPayForCard, effectiveCostOf } from './autopay'
 import { parseTriggers } from './triggers'
 import { RULES, createMatch, TOKEN_PILE_IDS, TOKEN_BY_NAME, GOLD_TOKEN_ID } from './setup'
@@ -6006,7 +6006,7 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)).toBe(false)
   })
 
-  it('Volibear - Furious: on attack, deals 5 split among enemy units here', () => {
+  it('Volibear - Furious: on attack, pauses for a FREE split-damage placement that the dealer resolves', () => {
     const voli = injectCard('a2-voli', 'When I attack, deal 5 damage split among any number of enemy units here.', { name: 'Volibear - Furious', might: 9 })
     const s = baseState()
     const w1 = mk(injectCard('a2-vw1', 'A unit.', { might: 2 }), 1, { exhausted: true })
@@ -6018,9 +6018,26 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
     r = reduce(r.state, { type: 'PASS', player: 1 })
     r = reduce(r.state, { type: 'PASS', player: 0 })
+    // Combat pauses for the dealer to place the 5 freely (no auto-resolve).
+    expect(r.state.showdown?.splitDamage).toBeTruthy()
+    expect(r.state.showdown!.splitDamage!.step.dealer).toBe(0)
+    expect(r.state.showdown!.splitDamage!.step.free).toBe(true)
+    r = reduce(r.state, { type: 'RESOLVE_SPLIT_DAMAGE', player: 0, allocations: { [w1.iid]: 2, [w2.iid]: 2 } })
+    expect(r.error).toBeUndefined()
     const enemyIids = r.state.battlefields[0].units.filter((u) => u.owner === 1).map((u) => u.iid)
-    expect(enemyIids).not.toContain(w1.iid) // killed by the split
+    expect(enemyIids).not.toContain(w1.iid) // killed by the placed counters
     expect(enemyIids).not.toContain(w2.iid)
+  })
+
+  it('split-damage validation is FREE: allows multiple sub-lethal units (combat does not)', () => {
+    const base = { dealer: 0 as const, side: 'defenders' as const, targets: ['a', 'b'], amount: 5, manual: true, defeated: [], hp: { a: 8, b: 8 }, tanks: [] }
+    // Free: 3 + 2 across two 8-HP units (both sub-lethal) is legal.
+    expect(validateAllocation({ ...base, free: true }, { a: 3, b: 2 })).toBeNull()
+    // Combat (no free flag) rejects leaving two units sub-lethal (lethal-first rule).
+    expect(validateAllocation({ ...base, free: false }, { a: 3, b: 2 })).toBeTruthy()
+    // Free still enforces the total and the per-unit lethal cap.
+    expect(validateAllocation({ ...base, free: true }, { a: 1, b: 1 })).toBeTruthy() // under the required 5
+    expect(validateAllocation({ ...base, free: true }, { a: 9, b: 0 })).toBeTruthy() // over a unit's HP
   })
 
   it('Sivir - Ambitious: on conquer with 5+ excess, deals that much to the strongest enemy', () => {

@@ -15,7 +15,7 @@ import {
   type GameEvent,
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { checkInvariants } from '../engine/invariants'
@@ -888,6 +888,16 @@ export default function OnlinePage() {
             match={match}
             step={step}
             onConfirm={(allocations) => dispatch({ type: 'ASSIGN_DAMAGE', player: seat, allocations })}
+          />
+        ) : null
+      })()}
+      {(() => {
+        const step = pendingSplitAssignment(match, seat)
+        return step ? (
+          <DamageAssignModal
+            match={match}
+            step={step}
+            onConfirm={(allocations) => dispatch({ type: 'RESOLVE_SPLIT_DAMAGE', player: seat, allocations })}
           />
         ) : null
       })()}

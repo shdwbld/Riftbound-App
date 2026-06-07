@@ -43,10 +43,11 @@ export default function DamageAssignModal({
         style={{ width: '75vw', maxWidth: 880, maxHeight: '85vh' }}
       >
         <div>
-          <h3 className="text-2xl font-bold text-rose-100">⚔ Assign combat damage</h3>
+          <h3 className="text-2xl font-bold text-rose-100">{step.free ? '✦ Place damage' : '⚔ Assign combat damage'}</h3>
           <p className="text-sm text-white/55">
             <b className="text-rose-200">{dealerName}</b> deals <b className="font-mono text-rose-200">{step.amount}</b>{' '}
-            damage to {sideLabel}. Assign lethal to a unit before moving on; Tanks first.
+            damage to {sideLabel}.{' '}
+            {step.free ? 'Split it freely among any number — no lethal-first rule.' : 'Assign lethal to a unit before moving on; Tanks first.'}
           </p>
         </div>
 

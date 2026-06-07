@@ -7,7 +7,7 @@ import { DeckPicker } from '../components/DeckTile'
 import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { checkInvariants } from '../engine/invariants'
@@ -665,6 +665,16 @@ export default function MatchPage() {
             match={match}
             step={step}
             onConfirm={(allocations) => act({ type: 'ASSIGN_DAMAGE', player: controlling, allocations })}
+          />
+        ) : null
+      })()}
+      {(() => {
+        const step = pendingSplitAssignment(match, controlling)
+        return step ? (
+          <DamageAssignModal
+            match={match}
+            step={step}
+            onConfirm={(allocations) => act({ type: 'RESOLVE_SPLIT_DAMAGE', player: controlling, allocations })}
           />
         ) : null
       })()}

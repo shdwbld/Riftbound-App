@@ -258,6 +258,10 @@ export interface DamageAssignStep {
   /** Iids that "must be assigned combat damage last" — every other target must be
    *  lethal before these take any damage (Caitlyn - Patrolling). */
   assignedLast?: string[]
+  /** FREE placement (ability "deal N split among any number of units"): the dealer
+   *  distributes the N as damage counters with NO lethal-first / Tank-first rule —
+   *  any number of units may be left sub-lethal. Not combat damage. */
+  free?: boolean
 }
 
 export interface ShowdownState {
@@ -275,6 +279,13 @@ export interface ShowdownState {
   priorController?: PlayerId | null
   /** Pending manual damage assignment — combat is paused until filled. */
   assign?: { steps: DamageAssignStep[]; current: number }
+  /** Pending FREE split-damage placement from an attack trigger ("deal N split
+   *  among any number of enemy units here" — Volibear - Furious). Resolved before
+   *  the combat math via RESOLVE_SPLIT_DAMAGE; `step.free` disables lethal-first. */
+  splitDamage?: { sourceIid: string; srcName: string; step: DamageAssignStep }
+  /** Source iids whose split-damage trigger has been resolved this showdown (so the
+   *  combat resolver doesn't re-prompt for them when it re-enters). */
+  splitDone?: string[]
   /** A pending invitation: a combatant has asked `to` to join and help, awaiting
    *  their accept/decline. */
   invite?: { from: PlayerId; to: PlayerId }
@@ -496,6 +507,9 @@ export type Action =
   /** Assign a paused showdown's combat damage across the opposing units
    *  (Tank-first). `allocations` maps receiving unit iid → damage placed on it. */
   | { type: 'ASSIGN_DAMAGE'; player: PlayerId; allocations: Record<string, number> }
+  /** Resolve a pending FREE split-damage placement (Volibear - Furious's attack
+   *  trigger): distribute the N counters across the chosen enemy units, no lethal-first. */
+  | { type: 'RESOLVE_SPLIT_DAMAGE'; player: PlayerId; allocations: Record<string, number> }
   | { type: 'STUN_UNIT'; player: PlayerId; iid: string }
   /** Detach a piece of gear from a unit (the gear returns to your Base). */
   | { type: 'DETACH'; player: PlayerId; unitIid: string; gearIid: string }

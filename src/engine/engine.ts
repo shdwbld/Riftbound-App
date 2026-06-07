@@ -1336,6 +1336,10 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       || (srcName === 'Atakhan' && ability.event === 'attack') // defender-must-kill, handled bespoke
       || (srcName === 'Ava Achiever' && ability.event === 'attack') // pay-Mind play-Hidden, handled bespoke
       || (srcName === 'Dramatic Visionary' && ability.event === 'death') // [Predict 2] Deathknell, handled bespoke
+      // "When I attack, deal N damage split among any number of enemy units here"
+      // (Volibear - Furious, et al.) — resolved as a FREE manual split-damage pause
+      // BEFORE the combat math (resolveShowdown → nextSplitTrigger), never auto-applied.
+      || (ability.event === 'attack' && /deal \d+ damage split among any number of enemy units here/i.test(ability.text ?? ''))
     // `bfIndex`/`excess` only scope conquer triggers ("units at that battlefield",
     // "if you assigned N+ excess damage"); `sourceIid` lets self-buff / ready-me
     // resolve. A conquer effect that's gated (excess/units) and unmet is skipped.
@@ -1535,23 +1539,11 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // Adaptatron: "When I conquer, you may kill a gear. If you do, buff me." The
     // generic apply already placed the self-buff; keep it only if a (detached, lowest-
     // cost) gear is sacrificed, otherwise revert it.
-    // Volibear - Furious: "When I attack, deal 5 damage split among any number of
-    // enemy units here." Auto-split greedily, killing the weakest enemies first.
-    if (ability.event === 'attack' && srcName === 'Volibear - Furious' && sourceIid) {
-      const bi = battlefieldOf(s, sourceIid)
-      if (bi >= 0) {
-        let remaining = 5
-        const enemies = s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit').sort((a, b) => mightOf(a) - mightOf(b))
-        const dead: EngineCard[] = []
-        for (const en of enemies) {
-          if (remaining <= 0) break
-          const dmg = Math.min(remaining, Math.max(1, mightOf(en)))
-          remaining -= dmg
-          dead.push(...applyTargetDamage(s, en.iid, dmg, true, player))
-        }
-        if (remaining < 5) s = log(s, player, `${label}: Volibear - Furious dealt 5 split among enemies here.`)
-        s = fireDeaths(s, dead, player)
-      }
+    // "When I attack, deal N damage split among any number of enemy units here"
+    // (Volibear - Furious, et al.) is resolved as a FREE manual split-damage pause
+    // BEFORE the combat math (resolveShowdown → nextSplitTrigger → RESOLVE_SPLIT_DAMAGE),
+    // so the player places the counters with no lethal-first rule. Nothing to do here.
+    if (ability.event === 'attack' && /deal \d+ damage split among any number of enemy units here/i.test(ability.text ?? '')) {
       handled = true
     }
     // Sivir - Ambitious: "When I conquer after an attack, if you assigned 5+ excess
@@ -4635,6 +4627,8 @@ export function validateAllocation(step: DamageAssignStep, alloc: Record<string,
     if (v > 0 && v < step.hp[iid]) sublethal++
   }
   if (sum !== mustAssign) return `Assign exactly ${mustAssign} damage (you assigned ${sum}).`
+  // FREE placement (ability "split among any number"): no ordering rules at all.
+  if (step.free) return null
   // Kill-order: at most one unit may be left sub-lethal.
   if (sublethal > 1) return 'Assign lethal to a unit before splitting damage to another.'
   // Tank-first: a non-Tank may only take damage once every Tank is lethal.
@@ -4690,6 +4684,14 @@ export function pendingAssignment(state: MatchState, player: PlayerId): DamageAs
   const step = a.steps[a.current]
   if (!step || !step.manual || step.dealer !== player) return null
   return step
+}
+
+/** The pending FREE split-damage step the given player must place now, or null
+ *  (Volibear - Furious's "deal N split among any number of enemy units here"). */
+export function pendingSplitAssignment(state: MatchState, player: PlayerId): DamageAssignStep | null {
+  const sd = state.showdown?.splitDamage
+  if (!sd || sd.step.dealer !== player) return null
+  return sd.step
 }
 
 /** Kill-order auto-distribution for a step (Tank-first, lethal-before-next). */
@@ -4810,8 +4812,40 @@ function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
   return fireTriggers(s, combatFired, bfIndex)
 }
 
+/** The next unresolved "deal N damage split among any number of enemy units here"
+ *  attack trigger in this showdown (Volibear - Furious, et al.), as a FREE damage
+ *  step for the attacker to place by hand (no lethal-first). null when none remain. */
+function nextSplitTrigger(s: MatchState, bfIndex: number): { sourceIid: string; srcName: string; step: DamageAssignStep } | null {
+  const bf = s.battlefields[bfIndex]
+  const moverOwner = bf.units.find((u) => u.iid === s.showdown?.movedUnit)?.owner ?? s.activePlayer
+  const done = new Set(s.showdown?.splitDone ?? [])
+  for (const a of bf.units.filter((u) => u.owner === moverOwner)) {
+    if (done.has(a.iid)) continue
+    const m = (getCard(a.cardId)?.text ?? '').match(/deal (\d+) damage split among any number of enemy units here/i)
+    if (!m) continue
+    const enemies = bf.units.filter((u) => u.owner !== moverOwner && getCard(u.cardId)?.type === 'unit')
+    const hp: Record<string, number> = {}
+    for (const e of enemies) hp[e.iid] = Math.max(0, mightOf(e) - (e.damage ?? 0))
+    if (enemies.every((e) => hp[e.iid] <= 0)) continue // no living target to place on
+    return {
+      sourceIid: a.iid,
+      srcName: (getCard(a.cardId)?.name ?? 'A unit').replace(/\s*\([^)]*\)\s*$/, ''),
+      step: { dealer: moverOwner, side: 'defenders', targets: enemies.map((e) => e.iid), amount: parseInt(m[1], 10), manual: true, free: true, defeated: [], hp, tanks: [] },
+    }
+  }
+  return null
+}
+
 function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   let s = clone(state)
+  // FREE split-damage attack triggers (Volibear - Furious) resolve first — one manual
+  // prompt each, BEFORE the combat math, placed by the dealer with no lethal-first rule.
+  const split = nextSplitTrigger(s, bfIndex)
+  if (split) {
+    s.showdown!.splitDamage = split
+    s.showdown!.priority = split.step.dealer
+    return s // paused — wait for RESOLVE_SPLIT_DAMAGE
+  }
   s = fireCombatTriggers(s, bfIndex)
   const { steps } = showdownSteps(s, bfIndex)
   if (steps.some((st) => st.manual)) {
@@ -7692,12 +7726,34 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       return ok(finalizeShowdown(s, s.showdown!.battlefield, sAsg.steps))
     }
 
+    case 'RESOLVE_SPLIT_DAMAGE': {
+      if (state.phase !== 'showdown' || !state.showdown?.splitDamage)
+        return fail(state, 'No split damage to place right now.')
+      const sd = state.showdown.splitDamage
+      if (sd.step.dealer !== action.player) return fail(state, 'Not your damage to place.')
+      const err = validateAllocation(sd.step, action.allocations)
+      if (err) return fail(state, err)
+      let s = clone(state)
+      const src = s.showdown!.splitDamage!
+      const dead: EngineCard[] = []
+      for (const iid of Object.keys(action.allocations)) {
+        const n = action.allocations[iid] ?? 0
+        if (n > 0) dead.push(...applyTargetDamage(s, iid, n, true, action.player))
+      }
+      s = fireDeaths(s, dead, action.player)
+      s.showdown!.splitDone = [...(s.showdown!.splitDone ?? []), src.sourceIid]
+      s.showdown!.splitDamage = undefined
+      s = log(s, action.player, `${src.srcName}: dealt ${sd.step.amount} split among enemy units here.`)
+      return ok(resolveShowdown(s, s.showdown!.battlefield))
+    }
+
     case 'PASS': {
       if (state.phase !== 'showdown' || !state.showdown)
         return fail(state, 'Nothing to pass on.')
       if (state.showdown.priority !== action.player)
         return fail(state, 'Not your priority.')
       if (state.showdown.assign) return fail(state, 'Assign combat damage first.')
+      if (state.showdown.splitDamage) return fail(state, 'Place the split damage first.')
       if (state.showdown.invite) return fail(state, 'An invitation is awaiting a response.')
       const s = clone(state)
       s.showdown!.passes += 1
