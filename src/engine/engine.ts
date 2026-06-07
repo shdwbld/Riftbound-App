@@ -2812,9 +2812,10 @@ function pickEnemyToDamage(units: EngineCard[], player: PlayerId, amount: number
 
 /** State-aware [Tank]: the printed keyword, or a token unit while its controller
  *  has Lillia - Protector of Dreams in play ("Your token units have [Tank]"). */
-function hasTank(s: MatchState, u: EngineCard): boolean {
+export function hasTank(s: MatchState, u: EngineCard): boolean {
   if (parseKeywords(def(u)).tank) return true
   if (u.grantTank) return true // [Tank] granted this turn (Yuumi - Magical Cat, Block)
+  if ((u.attached ?? []).some((ref) => parseKeywords(getCard(ref.split('|')[0])).tank)) return true // gear-granted [Tank] (Cloth Armor)
   return getCard(u.cardId)?.supertype === 'token' && controlsUnitNamed(s, u.owner, 'Lillia - Protector of Dreams')
 }
 
@@ -6309,7 +6310,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const attachOnPlay = state.sandbox || parseKeywords(card).quickDraw || controlsQuickDrawAura(s, action.player)
         if (action.targetIid && attachOnPlay) {
           for (const u of p.zones.base.concat(s.battlefields.flatMap((b) => b.units)))
-            if (u.iid === action.targetIid && u.owner === action.player) {
+            if (u.iid === action.targetIid && u.owner === action.player && getCard(u.cardId)?.type === 'unit') {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
               emit({ kind: 'equip', iid: u.iid, player: action.player, cardId: card.id })

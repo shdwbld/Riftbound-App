@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { reduce, combatMightAt, deflectSurcharge, displayMight } from './engine'
+import { reduce, combatMightAt, deflectSurcharge, displayMight, hasTank } from './engine'
+import { parseKeywords } from './keywords'
 import { type MatchState, type PlayerState, type EngineCard, type PlayerId, type ZoneId } from './types'
 import { CARDS, CARD_INDEX } from '../data/cards'
 import { isUnit } from '../types/cards'
@@ -45,6 +46,17 @@ describe('equipment — attached effects reach the host unit', () => {
     s.battlefields[0].units.push(u)
     expect(combatMightAt(s, 0, u, 'attacker')).toBe(base + 2)
     expect(combatMightAt(s, 0, u, 'defender')).toBe(base + 2)
+  })
+
+  it('gear-granted [Tank] folds into the host (assigned damage first)', () => {
+    const tankGear = CARDS.find((c) => c.type === 'gear' && parseKeywords(c).tank)
+    if (!tankGear) return // dataset guard
+    const s = baseState()
+    const bare = mk(furyUnit.id, 0)
+    const tanked = mk(furyUnit.id, 0, { attached: [`${tankGear.id}|g1`] })
+    s.battlefields[0].units.push(bare, tanked)
+    expect(hasTank(s, tanked)).toBe(true) // [Tank] reaches the host through the gear
+    expect(hasTank(s, bare)).toBe(false)
   })
 
   it('Hexdrinker [Deflect]: an opponent pays +1 to choose the equipped unit', () => {
