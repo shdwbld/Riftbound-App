@@ -1768,7 +1768,7 @@ describe('tokens (Recruit)', () => {
     expect(r.state.players[0].zones.base.find((x) => x.iid === em.iid)?.tempMight).toBe(2)
   })
 
-  it('Weaponmaster: re-seats an already-attached gear when none in hand/base (P3)', () => {
+  it('Weaponmaster: prompts (optional choice), then steals an already-attached gear on resolve (rule 747)', () => {
     const wm = injectCard('wm-reseat-t', "[Weaponmaster] (When you play me, you may [Equip] one of your Equipment to me, even if it's already attached.)", { type: 'unit', energy: 0, power: {}, might: 4 })
     const gear = injectCard('wm-gear', 'A gear.', { type: 'gear', energy: 0, power: {} })
     const s = baseState()
@@ -1779,8 +1779,15 @@ describe('tokens (Recruit)', () => {
     s.players[0].zones.hand.push(u)
     const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeUndefined()
-    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true) // re-seated to the new unit
-    expect(r.state.players[0].zones.base.find((x) => x.iid === otherUnit.iid)?.attached.length).toBe(0) // taken from the other unit
+    // Optional + a choice: the unit enters WITHOUT the gear; a pending decision opens.
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.length).toBe(0)
+    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIid: u.iid })
+    // Resolve: steal the gear off the other unit onto the Weaponmaster unit.
+    const r2 = reduce(r.state, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: g.iid })
+    expect(r2.error).toBeUndefined()
+    expect(r2.state.weaponmaster).toBeNull()
+    expect(r2.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true) // re-seated to the new unit
+    expect(r2.state.players[0].zones.base.find((x) => x.iid === otherUnit.iid)?.attached.length).toBe(0) // taken from the other unit
   })
 
   it('Bard - Mercurial: paying the legend-exhaust moves a unit to conquer an open battlefield (P4)', () => {
@@ -3124,19 +3131,26 @@ describe('Batch F — Spiritforged attach', () => {
     expect(r.state.players[0].zones.base.some((x) => x.iid === g.iid)).toBe(true)
   })
 
-  it('Weaponmaster auto-attaches a gear from hand on entry', () => {
+  it('Weaponmaster targets an in-play gear (never one in hand) and attaches it on resolve', () => {
     const wm = injectCard('f-wm', '[Weaponmaster]')
-    const gear = injectCard('f-wm-gear', '+1 Might', { type: 'gear' })
+    const gear = injectCard('f-wm-gear', '+1 Might', { type: 'gear', energy: 0, power: {} })
     const s = baseState()
     const u = mk(wm, 0)
     s.players[0].zones.hand.push(u)
-    const g = mk(gear, 0)
-    s.players[0].zones.hand.push(g)
+    // A gear in hand is NOT a Weaponmaster target; an unattached gear on base IS.
+    const handGear = mk(gear, 0)
+    s.players[0].zones.hand.push(handGear)
+    const baseGear = mk(gear, 0)
+    s.players[0].zones.base.push(baseGear)
     const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeUndefined()
-    const placed = r.state.players[0].zones.base.find((x) => x.iid === u.iid)
-    expect(placed?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true)
-    expect(r.state.players[0].zones.hand.some((x) => x.iid === g.iid)).toBe(false)
+    expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.length).toBe(0) // not auto-attached
+    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIid: u.iid })
+    const r2 = reduce(r.state, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: baseGear.iid })
+    expect(r2.error).toBeUndefined()
+    expect(r2.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true)
+    expect(r2.state.players[0].zones.base.some((x) => x.iid === baseGear.iid)).toBe(false) // moved off base onto the unit
+    expect(r2.state.players[0].zones.hand.some((x) => x.iid === handGear.iid)).toBe(true) // hand gear untouched
   })
 
   it('Quick-Draw gear may be played at Reaction speed; ordinary gear may not', () => {

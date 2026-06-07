@@ -49,7 +49,8 @@ export interface Keywords {
   /** Predict: look at the top of your Main Deck; you may recycle it (same look
    *  as Vision, reached from different triggers). */
   predict: boolean
-  /** Auto-attach an equipment on entry. */
+  /** When played, may attach an Equipment you control in play (even one on
+   *  another unit — stealing it) to this unit, paying Equip cost − 1 Power. */
   weaponmaster: boolean
   /** Doesn't participate as a normal frontline combatant. */
   backline: boolean
@@ -335,7 +336,7 @@ export const KEYWORD_DEFS: Record<string, string> = {
   action: 'May be played during an Open State, such as a showdown.',
   vision: 'Look at / filter the top of your deck when it is played.',
   predict: 'Look at the top card of your Main Deck; you may recycle it.',
-  weaponmaster: 'Automatically attaches an equipment when it enters play.',
+  weaponmaster: 'When you play this, you may attach an Equipment you control (even one already on another unit) to it, paying its Equip cost reduced by 1 Power.',
   backline: 'Does not fight on the frontline (deals/takes no showdown damage).',
   temporary: 'Is defeated at the start of your next turn.',
   equip: 'Gear that attaches to a unit, granting its bonuses.',

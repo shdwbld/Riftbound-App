@@ -7,7 +7,7 @@ import { DeckPicker } from '../components/DeckTile'
 import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { checkInvariants } from '../engine/invariants'
@@ -152,6 +152,8 @@ export default function MatchPage() {
   const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
   // Pending [Equip] cost payment (rune picker) once the target unit is chosen.
   const [equipPay, setEquipPay] = useState<{ gearIid: string; unitIid: string; card: Card; cost: ResolvedCost } | null>(null)
+  // Pending [Weaponmaster] discounted-Equip payment (after the equipment is chosen).
+  const [wmPay, setWmPay] = useState<{ unitIid: string; gearIid: string; card: Card; cost: ResolvedCost } | null>(null)
   // Pending "Move equipment to another unit" choice (sandbox).
   const [movePick, setMovePick] = useState<{ gearIid: string; fromUnitIid: string; owner: PlayerId } | null>(null)
   // Pending play destination for a unit whose rules let it enter a battlefield.
@@ -435,7 +437,7 @@ export default function MatchPage() {
     // sandbox) attaches straight from hand — pick the unit. Normal Equipment plays
     // UNATTACHED to your base (ready); you equip it later via its [Equip] ability.
     const kw = parseKeywords(card)
-    const attachOnPlay = match.sandbox || kw.quickDraw || kw.weaponmaster || controlsQuickDrawAura(match, controlling)
+    const attachOnPlay = match.sandbox || kw.quickDraw || controlsQuickDrawAura(match, controlling)
     if (type === 'PLAY_GEAR' && attachOnPlay && friendlyUnitIids(match, controlling).length > 0) {
       setTargeting({ iid: c.iid, cardId: card.id, payment, player: controlling, kind: 'gear', count: 1, picked: [] })
       flash('Choose a unit to attach this to.')
@@ -692,6 +694,53 @@ export default function MatchPage() {
           />
         ) : null
       })()}
+      {match.weaponmaster && match.weaponmaster.player === controlling && !wmPay && (() => {
+        const wm = match.weaponmaster!
+        const choices = weaponmasterChoices(match, controlling, wm.unitIid)
+        const bareN = (s?: string) => (s ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+        const unitName = bareN(getCard([...match.players[controlling].zones.base, ...match.battlefields.flatMap((b) => b.units)].find((u) => u.iid === wm.unitIid)?.cardId ?? '')?.name)
+        const costLbl = (cardId: string) => {
+          const d = weaponmasterCost(getCard(cardId))
+          if (!d) return 'free'
+          const parts: string[] = []
+          if (d.energy) parts.push(`${d.energy} Energy`)
+          for (const [dom, n] of Object.entries(d.power) as [Domain, number][]) if (n) parts.push(`${n} ${DOMAIN_META[dom].label}`)
+          if (d.anyPower) parts.push(`${d.anyPower} Power`)
+          return parts.length ? parts.join(' + ') : 'free'
+        }
+        return (
+          <ChoiceModal
+            title="⚔ Weaponmaster"
+            subtitle={`Attach an Equipment you control to ${unitName} (Equip cost − 1 Power), or skip.`}
+            options={choices.map((ch) => ({ label: `${bareN(getCard(ch.cardId)?.name)}${ch.hostIid ? ` — steal from ${bareN(ch.hostName)}` : ' — base'} · ${costLbl(ch.cardId)}`, value: ch.gearIid }))}
+            onPick={(gid) => {
+              const ch = choices.find((c) => c.gearIid === String(gid))
+              if (!ch) return
+              const d = weaponmasterCost(getCard(ch.cardId))
+              const free = !d || (d.energy === 0 && d.anyPower === 0 && Object.keys(d.power).length === 0)
+              if (free) return act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid: wm.unitIid, gearIid: ch.gearIid })
+              if (manualPay && d!.anyPower === 0)
+                setWmPay({ unitIid: wm.unitIid, gearIid: ch.gearIid, card: getCard(ch.cardId)!, cost: { energy: d!.energy, power: d!.power } })
+              else act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid: wm.unitIid, gearIid: ch.gearIid })
+            }}
+            onCancel={() => act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid: wm.unitIid, gearIid: null })}
+          />
+        )
+      })()}
+      {wmPay && (
+        <PaymentModal
+          player={match.players[controlling]}
+          card={wmPay.card}
+          cost={wmPay.cost}
+          confirmLabel="Pay & equip ▶"
+          onCancel={() => setWmPay(null)}
+          onConfirm={(payment) => {
+            const w = wmPay
+            setWmPay(null)
+            act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid: w.unitIid, gearIid: w.gearIid, payment })
+          }}
+        />
+      )}
       {ambushPick && (
         <ChoiceModal
           title="⚡ Ambush"

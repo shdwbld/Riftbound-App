@@ -269,6 +269,45 @@ function payEquipCost(s: MatchState, player: PlayerId, ec: { energy: number; pow
   return true
 }
 
+/** [Weaponmaster] (rule 747): the Equipment a player controls IN PLAY that a
+ *  just-played Weaponmaster unit could attach — an unattached gear on their base,
+ *  or a gear attached to another friendly unit (stealing it). Excludes gear already
+ *  on `unitIid`. (Weaponmaster never targets cards in hand — that's Quick-Draw.) */
+export function weaponmasterChoices(
+  s: MatchState, player: PlayerId, unitIid: string,
+): { gearIid: string; cardId: string; hostIid?: string; hostName?: string }[] {
+  const out: { gearIid: string; cardId: string; hostIid?: string; hostName?: string }[] = []
+  const p = s.players[player]
+  for (const g of p.zones.base) if (getCard(g.cardId)?.type === 'gear') out.push({ gearIid: g.iid, cardId: g.cardId })
+  for (const u of [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
+    if (u.owner !== player || u.iid === unitIid) continue
+    for (const ref of u.attached ?? []) {
+      const [cid, giid] = ref.split('|')
+      out.push({ gearIid: giid, cardId: cid, hostIid: u.iid, hostName: getCard(u.cardId)?.name })
+    }
+  }
+  return out
+}
+
+/** The [Equip] cost of `card` reduced by 1 Power (the Weaponmaster discount, rule
+ *  747.1.c): drop one rainbow Power if present, else one domain Power. Energy is
+ *  never reduced. Returns null if the card has no [Equip] cost. */
+export function weaponmasterCost(
+  card: Card | undefined,
+): { energy: number; power: Partial<Record<Domain, number>>; anyPower: number } | null {
+  const ec = parseKeywords(card).equipCost
+  if (!ec) return null
+  const power: Partial<Record<Domain, number>> = {}
+  for (const [d, n] of Object.entries(ec.power) as [Domain, number][]) if (n) power[d] = n
+  let anyPower = ec.anyPower
+  if (anyPower > 0) anyPower -= 1
+  else {
+    const dom = (Object.keys(power) as Domain[]).find((d) => (power[d] ?? 0) > 0)
+    if (dom) { power[dom] = (power[dom] ?? 0) - 1; if (!power[dom]) delete power[dom] }
+  }
+  return { energy: ec.energy, power, anyPower }
+}
+
 // --- effect helpers --------------------------------------------------------
 
 function drawN(p: PlayerState, n: number): number {
@@ -6175,40 +6214,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         if (e.manual && !e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
-        // Weaponmaster: auto-attach a piece of Equipment on entry. May be granted
-        // owner-wide (Azir - Emperor of the Sands → Sand Soldiers). Prefers a gear in
-        // hand, then a detached gear in base, then RE-SEATS one already attached to
-        // another friendly unit ("even if it's already attached"). (The "[Equip] for
-        // one rainbow less" cost is treated as free here — a balance nicety, deferred.)
-        if (kw.weaponmaster || unitGrantedKeyword(s1, ci, 'weaponmaster')) {
-          const target = p.zones.base.find((u) => u.iid === ci.iid)
-          let attachRef: string | undefined
-          const handGear = p.zones.hand.find((c) => getCard(c.cardId)?.type === 'gear')
-          const baseGear = p.zones.base.find((c) => getCard(c.cardId)?.type === 'gear' && c.iid !== ci.iid)
-          if (target && handGear) {
-            removeFromZone(p, 'hand', handGear.iid)
-            attachRef = `${handGear.cardId}|${handGear.iid}`
-          } else if (target && baseGear) {
-            removeFromZone(p, 'base', baseGear.iid)
-            attachRef = `${baseGear.cardId}|${baseGear.iid}`
-          } else if (target) {
-            for (const host of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)]) {
-              if (host.owner !== action.player || host.iid === ci.iid || !host.attached.length) continue
-              const [ref] = host.attached.splice(0, 1)
-              attachRef = ref
-              break
-            }
-          }
-          if (target && attachRef) {
-            target.attached = [...target.attached, attachRef]
-            const gCid = attachRef.split('|')[0]
-            emit({ kind: 'buff', iid: target.iid, player: action.player, cardId: gCid })
-            s1 = fireAttachEquip(s1, action.player, target)
-            s1 = log(s1, action.player, `Weaponmaster: attached ${getCard(gCid)?.name} to ${card.name}.`)
-          } else {
-            s1 = log(s1, action.player, `Weaponmaster: no Equipment available to attach.`)
-          }
-        }
+        // Weaponmaster (rule 747): when this unit enters, you MAY choose an Equipment
+        // you control IN PLAY (unattached on your base, or attached to another friendly
+        // unit — stealing it) and pay its [Equip] cost reduced by 1 Power to attach it
+        // here. It's OPTIONAL, a CHOICE, and costs runes — so surface a pending decision
+        // for the UI (resolved by WEAPONMASTER_RESOLVE) instead of auto-attaching for
+        // free. May be granted owner-wide (Azir - Emperor of the Sands → Sand Soldiers).
+        if ((kw.weaponmaster || unitGrantedKeyword(s1, ci, 'weaponmaster')) && weaponmasterChoices(s1, action.player, ci.iid).length > 0)
+          s1 = { ...s1, weaponmaster: { player: action.player, unitIid: ci.iid } }
         s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
         // Elder Dragon: "When you play me, choose up to one enemy unit at each location.
         // Deal 1 to them." Auto-picks the strongest enemy at each battlefield + each
@@ -6293,7 +6306,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Normal Equipment plays UNATTACHED to your base; you then pay its [Equip]
         // cost via the ATTACH action (the proper two-step flow). This stops a
         // hand-play from silently attaching for free and bypassing the equip cost.
-        const attachOnPlay = state.sandbox || parseKeywords(card).quickDraw || parseKeywords(card).weaponmaster || controlsQuickDrawAura(s, action.player)
+        const attachOnPlay = state.sandbox || parseKeywords(card).quickDraw || controlsQuickDrawAura(s, action.player)
         if (action.targetIid && attachOnPlay) {
           for (const u of p.zones.base.concat(s.battlefields.flatMap((b) => b.units)))
             if (u.iid === action.targetIid && u.owner === action.player) {
@@ -6474,6 +6487,54 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       let sA = log(s, action.player, `Attached ${getCard(gear.cardId)?.name} to ${getCard(unit.cardId)?.name}.`)
       sA = fireAttachEquip(sA, action.player, unit) // Aphelios - Exalted, etc.
       return ok(sA)
+    }
+
+    case 'WEAPONMASTER_RESOLVE': {
+      // Resolve the pending [Weaponmaster] decision (rule 747). gearIid === null
+      // declines. Otherwise attach the chosen in-play Equipment (unattached on base,
+      // or stolen off another friendly unit) to the unit, paying its [Equip] cost
+      // reduced by 1 Power. All mutations are on the clone; a failed payment returns
+      // the untouched original state (the prompt stays open).
+      if (!state.weaponmaster || state.weaponmaster.player !== action.player || state.weaponmaster.unitIid !== action.unitIid)
+        return fail(state, 'No Weaponmaster decision pending.')
+      const s = clone(state)
+      s.weaponmaster = null
+      if (!action.gearIid) return ok(log(s, action.player, 'Weaponmaster: declined.'))
+      const unit = findUnitAnywhere(s, action.unitIid)
+      if (!unit || unit.owner !== action.player || getCard(unit.cardId)?.type !== 'unit') return fail(state, 'No such unit.')
+      const gid = action.gearIid
+      // Locate the chosen Equipment: unattached on base, or attached to another friendly unit.
+      let gearCardId: string | null = null
+      let hostUnit: EngineCard | undefined
+      const bi = s.players[action.player].zones.base.findIndex((g) => g.iid === gid && getCard(g.cardId)?.type === 'gear')
+      if (bi >= 0) gearCardId = s.players[action.player].zones.base[bi].cardId
+      else {
+        for (const u of [...s.players[action.player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
+          if (u.owner !== action.player || u.iid === unit.iid) continue
+          const ri = (u.attached ?? []).findIndex((ref) => ref.split('|')[1] === gid)
+          if (ri >= 0) { hostUnit = u; gearCardId = u.attached[ri].split('|')[0]; break }
+        }
+      }
+      if (!gearCardId) return fail(state, 'That Equipment is no longer available.')
+      // Pay the discounted [Equip] cost. Honor a supplied rune payment when no rainbow
+      // Power remains; else auto-pay from ready runes/pool.
+      const disc = weaponmasterCost(getCard(gearCardId))
+      if (disc && (disc.energy > 0 || disc.anyPower > 0 || Object.keys(disc.power).length > 0)) {
+        if (action.payment && disc.anyPower === 0) {
+          const err = applyPayment(s.players[action.player], { energy: disc.energy, power: disc.power }, action.payment)
+          if (err) return fail(state, err)
+        } else if (!payEquipCost(s, action.player, disc)) {
+          return fail(state, 'Not enough resources to pay the Equip cost.')
+        }
+      }
+      // Detach from the host (steal) or remove from base, then attach to the unit.
+      if (hostUnit) { const ri = hostUnit.attached.findIndex((ref) => ref.split('|')[1] === gid); if (ri >= 0) hostUnit.attached.splice(ri, 1) }
+      else s.players[action.player].zones.base.splice(bi, 1)
+      unit.attached = [...unit.attached, `${gearCardId}|${gid}`]
+      emit({ kind: 'equip', iid: unit.iid, player: action.player, cardId: gearCardId })
+      let sW = log(s, action.player, `Weaponmaster: attached ${getCard(gearCardId)?.name} to ${getCard(unit.cardId)?.name}.`)
+      sW = fireAttachEquip(sW, action.player, unit)
+      return ok(sW)
     }
 
     case 'USE_GOLD': {

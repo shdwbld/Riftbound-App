@@ -323,6 +323,11 @@ export interface MatchState {
   /** A pending "ready a unit" choice: the player picks which exhausted unit(s)
    *  to ready, one at a time, until `count` reaches 0. */
   readyChoice?: { player: PlayerId; count: number; excludeIid?: string }
+  /** A pending [Weaponmaster] decision (rule 747): the player just played a unit
+   *  with Weaponmaster and may attach an Equipment they control IN PLAY (unattached
+   *  in base, or stolen off another friendly unit) to it, paying that gear's [Equip]
+   *  cost reduced by 1 Power. `unitIid` is the Weaponmaster unit. Optional — declinable. */
+  weaponmaster?: { player: PlayerId; unitIid: string } | null
   /** A pending optional battlefield choice (Reaver's Row, Amateur Recital,
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {
@@ -485,6 +490,10 @@ export type Action =
   /** Detach a piece of gear from a unit (the gear returns to your Base). */
   | { type: 'DETACH'; player: PlayerId; unitIid: string; gearIid: string }
   | { type: 'ATTACH'; player: PlayerId; unitIid: string; gearIid: string; payment?: Payment }
+  /** Resolve a pending [Weaponmaster] decision: attach `gearIid` (an Equipment the
+   *  player controls in play, possibly stolen off another friendly unit) to
+   *  `unitIid`, paying the Equip cost reduced by 1 Power; `gearIid: null` declines. */
+  | { type: 'WEAPONMASTER_RESOLVE'; player: PlayerId; unitIid: string; gearIid: string | null; payment?: Payment }
   /** Cash in a Gold gear token: kill it and add 1 Power of the chosen domain. */
   | { type: 'USE_GOLD'; player: PlayerId; iid: string; domain: Domain }
   /** Remove a unit from play to the Banishment zone (no Deathknell). */
