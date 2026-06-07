@@ -73,6 +73,16 @@ export default function PaymentModal({
   }
   const totalNeedPower = Object.values(needPower).reduce((a, b) => a + (b ?? 0), 0)
 
+  // What you HAVE to spend: Energy = ready runes + pool energy; Power = any rune you
+  // can recycle (ready or already-spent) + pool power. Per-domain shows what each rune
+  // could produce (a multi-domain rune counts toward each of its domains).
+  const energyAvail = ready.length + (pool.energy ?? 0)
+  const recyclableRunes = available.length
+  const poolPowerTotal = Object.values(pool.power).reduce((a, b) => a + (b ?? 0), 0)
+  const powerAvail: Partial<Record<Domain, number>> = {}
+  for (const r of available) for (const d of runeDomains(r)) powerAvail[d] = (powerAvail[d] ?? 0) + 1
+  for (const [d, nn] of Object.entries(pool.power) as [Domain, number][]) if (nn) powerAvail[d] = (powerAvail[d] ?? 0) + nn
+
   // Build a seed assignment from auto-pay (a rune may end up doing BOTH).
   const seedFrom = (): Record<string, Role> => {
     const seed: Record<string, Role> = {}
@@ -215,6 +225,24 @@ export default function PaymentModal({
           <button onClick={onCancel} className="rounded px-2 py-1 text-xl text-white/40 hover:bg-white/5 hover:text-white">
             ✕
           </button>
+        </div>
+
+        {/* What you currently have to spend. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm">
+          <span className="text-[11px] uppercase tracking-wide text-white/45">You have</span>
+          <span className="font-mono font-bold text-emerald-200">⚡ {energyAvail} energy</span>
+          <span className="text-white/15">·</span>
+          <span className="font-mono font-bold text-sky-200">♺ {recyclableRunes + poolPowerTotal} power</span>
+          {(Object.entries(powerAvail) as [Domain, number][]).filter(([, nn]) => nn > 0).length > 0 && (
+            <span className="flex items-center gap-1.5">
+              {(Object.entries(powerAvail) as [Domain, number][]).filter(([, nn]) => nn > 0).map(([d, nn]) => (
+                <span key={d} className="flex items-center font-mono text-[13px]" style={{ color: DOMAIN_META[d].color }}>
+                  <DomainIcon domain={d} /> {nn}
+                </span>
+              ))}
+            </span>
+          )}
+          <span className="ml-auto text-[11px] text-white/35">{ready.length} ready · {spent.length} spent · 🪙 pool ⚡{pool.energy ?? 0}</span>
         </div>
 
         {/* Explicit instruction indicators */}

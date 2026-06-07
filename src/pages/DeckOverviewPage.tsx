@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { getCard } from '../data/cards'
-import { getDeck, duplicateDeck, exportDeck } from '../lib/deckStorage'
+import { getDeck, duplicateDeck, exportDeck, exportDeckArena } from '../lib/deckStorage'
 import { shareDeck, deckShareEnabled } from '../lib/deckShare'
 import { validateDeck } from '../lib/deckValidation'
 import { computeStats, CURVE_MAX } from '../lib/deckStats'
@@ -141,7 +141,7 @@ export default function DeckOverviewPage() {
         </div>
       </div>
 
-      {exporting && <ExportPanel text={exportDeck(deck)} onClose={() => setExporting(false)} />}
+      {exporting && <ExportPanel deck={deck} onClose={() => setExporting(false)} />}
       {share && (
         <div className="rounded-xl border border-sky-400/30 bg-sky-500/10 p-3 text-sm">
           {share.loading ? (
@@ -374,12 +374,29 @@ function CurveBars({ title, data, color }: { title: string; data: number[]; colo
   )
 }
 
-function ExportPanel({ text, onClose }: { text: string; onClose: () => void }) {
+const EXPORT_FORMATS = [
+  { key: 'native', label: 'Native (IDs)', fn: exportDeck },
+  { key: 'arena', label: 'TCG Arena (names)', fn: exportDeckArena },
+] as const
+
+function ExportPanel({ deck, onClose }: { deck: Deck; onClose: () => void }) {
   const [copied, setCopied] = useState(false)
+  const [format, setFormat] = useState<(typeof EXPORT_FORMATS)[number]['key']>('native')
+  const text = (EXPORT_FORMATS.find((f) => f.key === format) ?? EXPORT_FORMATS[0]).fn(deck)
   return (
     <div className="space-y-2 rounded-xl border border-white/10 bg-[#0a1428] p-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-white/60">Deck code</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1 rounded-lg bg-black/30 p-0.5">
+          {EXPORT_FORMATS.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => { setFormat(f.key); setCopied(false) }}
+              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${format === f.key ? 'bg-sky-500 text-white' : 'text-white/55 hover:text-white'}`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <div className="flex gap-2">
           <button
             onClick={() => {

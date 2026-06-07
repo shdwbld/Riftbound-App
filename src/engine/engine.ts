@@ -571,7 +571,7 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
   if (!e.buff && !e.buffAll) return []
   const lines: string[] = []
   const give = (u: EngineCard | undefined) => {
-    if (!u || controllerOf(u) !== p.id || (u.buffs ?? 0) >= 1) return false
+    if (!u || !isFriendlyTo(s, p.id, u) || (u.buffs ?? 0) >= 1) return false
     u.buffs = 1
     emit({ kind: 'buff', iid: u.iid, player: p.id })
     lines.push(`Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
@@ -586,11 +586,11 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
   if (e.buffAll) {
     const hereBf = e.buffAll === 'here' && sourceIid ? bfIndexOfUnit(s, sourceIid) : -1
     const pool = hereBf >= 0 ? (s.battlefields[hereBf]?.units ?? []) : [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-    for (const u of pool) if (controllerOf(u) === p.id && def(u)?.type === 'unit' && u.iid !== sourceIid) give(u)
+    for (const u of pool) if (isFriendlyTo(s, p.id, u) && def(u)?.type === 'unit' && u.iid !== sourceIid) give(u)
   }
   if (!e.buffSelf && !e.buffAll && e.buff) {
     const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-      .filter((u) => controllerOf(u) === p.id && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
+      .filter((u) => isFriendlyTo(s, p.id, u) && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
       .filter((u) => !(e.buffExcludesSelf && u.iid === sourceIid))
       .sort((a, b) => (def(b)?.type === 'unit' ? (def(b) as { might: number }).might : 0) - (def(a)?.type === 'unit' ? (def(a) as { might: number }).might : 0))
     for (let i = 0; i < e.buff && i < candidates.length; i++) give(candidates[i])
@@ -676,14 +676,14 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   }
   if (e.draw) lines.push(`Drew ${drawN(p, e.draw)}.`)
   if (e.drawPerBattlefield) {
-    // "draw 1 for each battlefield you control" (Right of Conquest).
-    const held = s.battlefields.filter((b) => b.controller === p.id).length
+    // "draw 1 for each battlefield you (or an ally) control" (Right of Conquest).
+    const held = s.battlefields.filter((b) => b.controller != null && sameTeam(s, p.id, b.controller)).length
     if (held > 0) lines.push(`Drew ${drawN(p, e.drawPerBattlefield * held)} (per battlefield held).`)
   }
   if (e.drawPerMighty) {
     // "draw 1 for each of your [Mighty] units" (Kadregrin, Show of Strength) — counts
     // EFFECTIVE-Mighty units in play (base + buffs + temp + gear + level).
-    const n = [...s.battlefields.flatMap((b) => b.units), ...p.zones.base].filter((u) => controllerOf(u) === p.id && stateActive(s, u, 'mighty')).length
+    const n = [...s.battlefields.flatMap((b) => b.units), ...p.zones.base].filter((u) => isFriendlyTo(s, p.id, u) && stateActive(s, u, 'mighty')).length
     if (n > 0) lines.push(`Drew ${drawN(p, e.drawPerMighty * n)} (per [Mighty] unit).`)
   }
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
@@ -703,7 +703,12 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     emit({ kind: 'score', player: p.id, amount: e.score })
     fireOpponentScore(s, p.id) // Sumpworks Map: opponents draw when you score
     lines.push(`Scored ${e.score} point(s).`)
-    if (s.winner == null && p.points >= s.pointsToWin) { s.winner = p.id; s.phase = 'gameover' }
+    if (s.winner == null && scoreFor(s, p.id) >= s.pointsToWin) {
+      // Route through endGame so a 2v2 also sets winnerTeam + outs the losing team.
+      const ended = endGame(s, p.id)
+      s.winner = ended.winner; s.winnerTeam = ended.winnerTeam; s.phase = ended.phase
+      for (let i = 0; i < s.players.length; i++) s.players[i].out = ended.players[i].out
+    }
   }
   // Direct XP gain ("gain N XP" — Scuttle Crab Deathknell, Right of Conquest).
   if (e.gainXp) { p.xp = (p.xp ?? 0) + e.gainXp; p.xpGainedThisTurn = true; lines.push(`Gained ${e.gainXp} XP (now ${p.xp}).`) }
@@ -751,7 +756,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       lines.push(`Returned ${nm} to its owner's hand.`)
     }
   }
-  if (e.goldTokens && !e.killGear) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
+  // Card Sharp: "you and each opponent may play a Gold gear token. For each opponent
+  // who did, you play a Gold gear token." Bespoke (the generic parser only sees one
+  // token): you play one now, each opponent is asked, then you play one per yes.
+  const srcCardForGold = sourceIid ? getCard(findUnitAnywhere(s, sourceIid)?.cardId ?? '') : undefined
+  const isCardSharp = e.goldTokens > 0 && /you and each opponent may play a gold gear token/i.test(srcCardForGold?.text ?? '')
+  if (isCardSharp) {
+    lines.push(`Created ${spawnGold(p, 1, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
+    startCardSharp(s, p.id)
+  } else if (e.goldTokens && !e.killGear) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, tokensEnterReady(s, p.id))} Gold token(s).`)
   if (e.namedToken) {
     // "choose an opponent. They play a … token" (Walking Roost) → spawn into the
     // chosen opponent's Base (auto-pick the first opponent still in the match).
@@ -802,40 +815,20 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     if (n) lines.push(`Returned ${n} ${type === 'card' ? 'card' : type}(s) from trash to hand.`)
   }
   if (e.opponentHandStrip) {
-    // Opponent reveals hand; you strip the highest-cost (non-unit, for Sabotage)
-    // card to trash / deck (recycle) / banish (Mindsplitter, Sabotage, Ashe). Auto-
-    // picks the opponent holding the most cards. A forced discard cascades the victim's
-    // own "when you discard" reactions via fireDiscard — mutations land on shared state,
-    // exactly like the e.discard path above (line ~583).
+    // Opponent reveals hand; you choose a card (non-unit, for Sabotage) to strip to
+    // trash / deck (recycle) / banish (Mindsplitter, Sabotage, Ashe). Interactive —
+    // you pick which opponent and which card via a reveal modal (the resolver applies
+    // the sink + Ashe's return-on-hold tracking + the victim's discard cascade).
     const { to, nonUnit } = e.opponentHandStrip
-    const foe = s.players
-      .filter((pl) => pl.id !== p.id && !pl.out && pl.zones.hand.length > 0)
-      .sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
-    if (foe) {
-      const pick = foe.zones.hand
-        .filter((c) => !nonUnit || getCard(c.cardId)?.type !== 'unit')
-        .sort((a, b) => cardCost(b) - cardCost(a))[0]
-      if (pick) {
-        const i = foe.zones.hand.findIndex((x) => x.iid === pick.iid)
-        const [card] = foe.zones.hand.splice(i, 1)
-        const nm = getCard(card.cardId)?.name ?? 'a card'
-        if (to === 'deck') { foe.zones.mainDeck.push({ ...card, exhausted: false, damage: 0, attached: [] }); lines.push(`Opponent revealed hand — recycled ${nm}.`) }
-        else if (to === 'banish') {
-          foe.banished.push(card)
-          lines.push(`Opponent revealed hand — banished ${nm}.`)
-          // Ashe - Focused: "When they hold, return it to their hand (even if I'm no
-          // longer on the board)." Record the banished card for return on the victim's hold.
-          const srcCard = sourceIid ? getCard(findUnitAnywhere(s, sourceIid)?.cardId ?? '') : undefined
-          if (/when they hold, return it/i.test(srcCard?.text ?? '')) {
-            s.asheBanishPending = s.asheBanishPending ?? []
-            s.asheBanishPending.push({ banishedIid: card.iid, owner: p.id, victimId: foe.id })
-          }
-        }
-        else { sendToTrash(foe, card); foe.discardedThisTurn = true; lines.push(`Opponent revealed hand — discarded ${nm}.`); fireDiscard(s, foe.id, [card]) }
-      } else {
-        lines.push('Opponent revealed hand — nothing to take.')
-      }
-    }
+    const srcCard = sourceIid ? getCard(findUnitAnywhere(s, sourceIid)?.cardId ?? '') : undefined
+    const asheReturn = /when they hold, return it/i.test(srcCard?.text ?? '')
+    startReveal(s, p.id, srcCard?.name ?? 'Effect', { mode: 'strip', to, nonUnit, asheReturn })
+    lines.push(s.pendingChoice ? 'An opponent reveals their hand — choose a card.' : 'No opponent had a card to take.')
+  }
+  // Scuttle Crab: informational reveal — an opponent shows you their hand (read-only).
+  if (e.revealOppHandView) {
+    startReveal(s, p.id, getCard(findUnitAnywhere(s, sourceIid ?? '')?.cardId ?? '')?.name ?? 'Reveal', { mode: 'view' })
+    if (s.pendingChoice) lines.push('An opponent reveals their hand.')
   }
   if (e.opponentDiscards) {
     // "They discard N" — the opponent loses N cards of their choice (auto: lowest-cost).
@@ -956,7 +949,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // Ivern - Nurturer: "if you revealed a Bird/Cat/Dog/Poro, [Buff] a friendly unit."
     if (thenBuffIfTribe && top.some((c) => (getCard(c.cardId)?.tags ?? []).some((tg) => thenBuffIfTribe.includes(tg)))) {
       const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-        (u) => controllerOf(u) === p.id && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
+        (u) => isFriendlyTo(s, p.id, u) && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
       )
       if (friendly.length) {
         const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
@@ -1033,7 +1026,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.tempMightAll) {
     // Board-wide temp Might to all the controller's units (Grand Strategem).
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => controllerOf(u) === p.id && getCard(u.cardId)?.type === 'unit',
+      (u) => isFriendlyTo(s, p.id, u) && getCard(u.cardId)?.type === 'unit',
     )
     for (const u of units) u.tempMight = (u.tempMight ?? 0) + e.tempMightAll
     if (units.length) lines.push(`${e.tempMightAll > 0 ? '+' : ''}${e.tempMightAll} Might this turn to ${units.length} unit(s).`)
@@ -1041,7 +1034,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.tempMightAllEnemy) {
     // Board-wide temp Might to all ENEMY units (Thousand-Tailed Watcher: -3, min 1).
     const enemies = [...s.players.flatMap((pl) => pl.zones.base), ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => controllerOf(u) !== p.id && getCard(u.cardId)?.type === 'unit',
+      (u) => isEnemyTo(s, p.id, u) && getCard(u.cardId)?.type === 'unit',
     )
     let n = 0
     for (const u of enemies) { applyTempMight(s, u.iid, e.tempMightAllEnemy, e.tempMightFloor); n++ }
@@ -1051,7 +1044,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // Tag-scoped temp Might to your tagged units (Danger Zone: "your Mechs +1").
     const { tag, amount } = e.tempMightTag
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => controllerOf(u) === p.id && (getCard(u.cardId)?.tags ?? []).includes(tag),
+      (u) => isFriendlyTo(s, p.id, u) && (getCard(u.cardId)?.tags ?? []).includes(tag),
     )
     for (const u of units) u.tempMight = (u.tempMight ?? 0) + amount
     if (units.length) lines.push(`${amount > 0 ? '+' : ''}${amount} Might this turn to ${units.length} ${tag}(s).`)
@@ -1060,7 +1053,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // "ready your units" (Shurelya's Requiem) — pure benefit, auto-ready them all.
     let n = 0
     for (const u of [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)])
-      if (controllerOf(u) === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
+      if (isFriendlyTo(s, p.id, u) && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
     if (n > 0) lines.push(`Readied ${n} unit(s).`)
   }
   if (e.readyOrExhaustLegend) {
@@ -1075,7 +1068,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // ANOTHER unit" (First Mate) excludes the source unit from the choices.
     const excludeIid = e.readyExcludesSelf ? sourceIid : undefined
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => controllerOf(u) === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit' && u.iid !== excludeIid,
+      (u) => isFriendlyTo(s, p.id, u) && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit' && u.iid !== excludeIid,
     )
     const cnt = Math.min(e.readyUnits, exhausted.length)
     if (cnt > 0) {
@@ -1097,7 +1090,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     let n = 0
     if (bi >= 0)
       for (const u of s.battlefields[bi].units)
-        if (controllerOf(u) === p.id && u.iid !== sourceIid) { u.grantAssault = (u.grantAssault ?? 0) + e.grantAssaultHere; n++ }
+        if (isFriendlyTo(s, p.id, u) && u.iid !== sourceIid) { u.grantAssault = (u.grantAssault ?? 0) + e.grantAssaultHere; n++ }
     if (n) lines.push(`Gave [Assault ${e.grantAssaultHere}] to ${n} other unit(s) here this turn.`)
   }
   if (e.grantShieldHere && sourceIid != null) {
@@ -1106,7 +1099,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     let n = 0
     if (bi >= 0)
       for (const u of s.battlefields[bi].units)
-        if (controllerOf(u) === p.id && u.iid !== sourceIid) { u.grantShield = (u.grantShield ?? 0) + e.grantShieldHere; n++ }
+        if (isFriendlyTo(s, p.id, u) && u.iid !== sourceIid) { u.grantShield = (u.grantShield ?? 0) + e.grantShieldHere; n++ }
     if (n) lines.push(`Gave [Shield ${e.grantShieldHere}] to ${n} other unit(s) here this turn.`)
   }
   // "spend a buff to buff me and ready me" (Wildclaw Shaman): pay the cost by
@@ -1115,7 +1108,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   let costPaid = true
   if (e.spendBuff && (e.buffSelf || e.readySelf)) {
     const donor = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].find(
-      (u) => controllerOf(u) === p.id && (u.buffs ?? 0) > 0 && u.iid !== sourceIid,
+      (u) => isFriendlyTo(s, p.id, u) && (u.buffs ?? 0) > 0 && u.iid !== sourceIid,
     )
     if (donor) {
       donor.buffs = (donor.buffs ?? 0) - 1
@@ -1237,6 +1230,55 @@ function countFriendlyUnitsWithKeyword(s: MatchState, player: PlayerId, kw: stri
  *  `owner` (Rule 107.1.d), and recall routes to the controller's base (Rule 428). */
 export function controllerOf(u: EngineCard): PlayerId {
   return u.controlledBy ?? u.owner
+}
+
+// --- Team (2v2) helpers ----------------------------------------------------
+// In 1v1/FFA `teamMode` is falsy, so every helper collapses to plain per-player
+// identity — existing behaviour is byte-identical. Only 2v2 (players carry a
+// `team` of 0/1) makes "friendly" span you + your teammate (Rule 649).
+
+/** The team (0/1) of a player, or null outside 2v2. */
+export function teamOf(s: MatchState, p: PlayerId): 0 | 1 | null {
+  return s.teamMode ? (s.players[p]?.team ?? null) : null
+}
+
+/** True if two players are the same player or (2v2) on the same team. */
+export function sameTeam(s: MatchState, a: PlayerId, b: PlayerId): boolean {
+  if (a === b) return true
+  const ta = teamOf(s, a)
+  return ta != null && ta === teamOf(s, b)
+}
+
+/** The other player on `p`'s team (2v2), or null. */
+export function teammateOf(s: MatchState, p: PlayerId): PlayerId | null {
+  if (!s.teamMode) return null
+  const t = teamOf(s, p)
+  if (t == null) return null
+  const mate = s.players.find((pl) => pl.id !== p && pl.team === t)
+  return mate ? mate.id : null
+}
+
+/** Is unit `u` friendly to `viewer` — i.e. controlled by them or their teammate? */
+export function isFriendlyTo(s: MatchState, viewer: PlayerId, u: EngineCard): boolean {
+  return sameTeam(s, viewer, controllerOf(u))
+}
+
+/** Is unit `u` an enemy of `viewer` (not on their team)? */
+export function isEnemyTo(s: MatchState, viewer: PlayerId, u: EngineCard): boolean {
+  return !isFriendlyTo(s, viewer, u)
+}
+
+/** Combined Victory Score of a team (2v2). Outside 2v2, just that player's points. */
+export function teamPoints(s: MatchState, team: 0 | 1 | null): number {
+  if (team == null) return 0
+  return s.players.reduce((sum, p) => (p.team === team ? sum + p.points : sum), 0)
+}
+
+/** The Victory Score a player is racing to — their team's shared total in 2v2,
+ *  else their own points. Used by every win check so the logic stays uniform. */
+export function scoreFor(s: MatchState, p: PlayerId): number {
+  const t = teamOf(s, p)
+  return t != null ? teamPoints(s, t) : (s.players[p]?.points ?? 0)
 }
 
 function controlledPermanents(s: MatchState, player: PlayerId): EngineCard[] {
@@ -1369,7 +1411,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // (previously fired unconditionally).
     const enemyAloneOk = !/if an enemy unit is alone here/i.test(ability.text) || (() => {
       const bi = battlefieldOf(s, sourceIid ?? '')
-      return bi >= 0 && s.battlefields[bi].units.filter((u) => controllerOf(u) !== player).length === 1
+      return bi >= 0 && s.battlefields[bi].units.filter((u) => isEnemyTo(s, player, u)).length === 1
     })()
     // Vex - Mocking: a stun trigger's "you may move me to that battlefield" needs the
     // stunned enemy's bfIndex threaded into applyParsed (moveSourceToBf) — the same way
@@ -1391,7 +1433,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // gating condition (Daisy! — only "while your units have all 4 tags").
     if (e.stun && sourceIid && !gated) {
       const bi = battlefieldOf(s, sourceIid)
-      const target = bi >= 0 ? s.battlefields[bi].units.find((u) => controllerOf(u) !== player && !u.stunned) : undefined
+      const target = bi >= 0 ? s.battlefields[bi].units.find((u) => isEnemyTo(s, player, u) && !u.stunned) : undefined
       if (target) {
         target.stunned = true
         emit({ kind: 'stun', iid: target.iid, player })
@@ -1421,7 +1463,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const canPay = srcName !== "Kha'Zix - Evolving Hunter" || p.xp >= 3
       if (self && canPay) {
         const amt = combatMightAt(s, bi, self, 'attacker')
-        const target = pickEnemyToDamage(s.battlefields[bi].units, player, amt)
+        const target = pickEnemyToDamage(s, s.battlefields[bi].units, player, amt)
         if (target && amt > 0) {
           if (srcName === "Kha'Zix - Evolving Hunter") p.xp -= 3
           const dead = applyTargetDamage(s, target.iid, amt, true, player)
@@ -1442,7 +1484,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         const amt = dm.useStat === 'assault'
           ? parseKeywords(getCard(self.cardId)).assault + (self.grantAssault ?? 0)
           : combatMightAt(s, bi, self, ability.event === 'attack' ? 'attacker' : 'defender')
-        const target = pickEnemyToDamage(s.battlefields[bi].units, player, amt)
+        const target = pickEnemyToDamage(s, s.battlefields[bi].units, player, amt)
         if (target && amt > 0) {
           s = log(s, player, `${label}: ${srcName} dealt ${amt} to ${getCard(target.cardId)?.name}.`)
           s = fireDeaths(s, applyTargetDamage(s, target.iid, amt, true, player))
@@ -1453,7 +1495,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if (ability.event === 'attack' && sourceIid && srcName === 'Warwick - Hunter') {
       // "When I attack, kill all damaged enemy units here."
       const bi = battlefieldOf(s, sourceIid)
-      const victims = bi >= 0 ? s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && (u.damage ?? 0) > 0).map((u) => u.iid) : []
+      const victims = bi >= 0 ? s.battlefields[bi].units.filter((u) => isEnemyTo(s, player, u) && (u.damage ?? 0) > 0).map((u) => u.iid) : []
       const dead: EngineCard[] = []
       for (const iid of victims) dead.push(...killTarget(s, iid))
       if (victims.length) s = log(s, player, `${label}: ${srcName} killed ${victims.length} damaged enemy unit(s).`)
@@ -1463,7 +1505,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if ((ability.event === 'attack' || ability.event === 'defend') && sourceIid && srcName === 'Ahri - Inquisitive') {
       // "When I attack or defend, give an enemy unit here −2 Might this turn (min 1)."
       const bi = battlefieldOf(s, sourceIid)
-      const target = bi >= 0 ? pickStrongestEnemy(s.battlefields[bi].units, player) : undefined
+      const target = bi >= 0 ? pickStrongestEnemy(s, s.battlefields[bi].units, player) : undefined
       if (target) {
         applyTempMight(s, target.iid, -2, 1)
         s = log(s, player, `${label}: ${srcName} gave ${getCard(target.cardId)?.name} −2 Might this turn (min 1).`)
@@ -1504,17 +1546,17 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         p.zones.runeDeck.push({ ...rune, exhausted: false, damage: 0 }) // recycle to bottom
         const here = [...s.battlefields[bi].units]
         if (domains.includes('fury')) {
-          const main = pickEnemyToDamage(here, player, 2)
+          const main = pickEnemyToDamage(s, here, player, 2)
           const dead: EngineCard[] = []
           if (main) dead.push(...applyTargetDamage(s, main.iid, 2, true, player))
-          for (const u of here) if (controllerOf(u) !== player && u.iid !== main?.iid) dead.push(...applyTargetDamage(s, u.iid, 1, true, player))
+          for (const u of here) if (isEnemyTo(s, player, u) && u.iid !== main?.iid) dead.push(...applyTargetDamage(s, u.iid, 1, true, player))
           s = fireDeaths(s, dead)
           s = log(s, player, `${label}: Twisted Fate (Fury) dealt 2 + 1 to enemies here.`)
         } else if (domains.includes('mind')) {
           drawN(p, 1)
           s = log(s, player, `${label}: Twisted Fate (Mind) drew 1.`)
         } else if (domains.includes('order')) {
-          const tgt = pickStrongestEnemy(here, player)
+          const tgt = pickStrongestEnemy(s, here, player)
           if (tgt && !tgt.stunned) {
             tgt.stunned = true
             emit({ kind: 'stun', iid: tgt.iid, player })
@@ -1530,7 +1572,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // defend-only — the played-from-Hidden trigger was removed.)
     if (ability.event === 'defend' && srcName === 'Teemo - Strategist' && sourceIid) {
       const bi = battlefieldOf(s, sourceIid)
-      const target = bi >= 0 ? pickStrongestEnemy(s.battlefields[bi].units, player) : undefined
+      const target = bi >= 0 ? pickStrongestEnemy(s, s.battlefields[bi].units, player) : undefined
       const top5 = p.zones.mainDeck.slice(0, 5)
       const hiddenCount = top5.filter((c) => /\[hidden\]/i.test(getCard(c.cardId)?.text ?? '')).length
       const revealed = p.zones.mainDeck.splice(0, 5) // recycle the revealed 5 to the bottom
@@ -1578,7 +1620,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       handled = true
     }
     if (ability.event === 'conquer' && srcName === 'Sivir - Ambitious' && excess >= 5) {
-      const enemies = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)].filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit')
+      const enemies = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)].filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit')
       if (enemies.length) {
         const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
         s = log(s, player, `${label}: Sivir - Ambitious dealt ${excess} to ${getCard(target.cardId)?.name}.`)
@@ -1636,7 +1678,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         const kw = parseKeywords(getCard(kato.cardId))
         const katoMight = mightOf(kato)
         const allies = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
-          .filter((u) => controllerOf(u) === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit')
+          .filter((u) => isFriendlyTo(s, player, u) && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit')
         const target = allies.length ? allies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : undefined
         if (target) {
           if (kw.deflect > 0) target.grantDeflect = (target.grantDeflect ?? 0) + kw.deflect
@@ -1659,7 +1701,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const self = findUnitAnywhere(s, sourceIid)
       if (bi >= 0 && self) {
         const myMight = mightOf(self)
-        const targets = s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit' && mightOf(u) < myMight)
+        const targets = s.battlefields[bi].units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit' && mightOf(u) < myMight)
         if (targets.length) {
           const victim = targets.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
           const destIdx = (() => {
@@ -1712,7 +1754,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if (ability.event === 'attack' && srcName === 'Sinister Poro' && sourceIid) {
       const bi = battlefieldOf(s, sourceIid)
       if (bi >= 0) {
-        const enemies = s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit')
+        const enemies = s.battlefields[bi].units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit')
         if (enemies.length && makeBfApi(s).payEnergy(player, 1)) {
           const victim = enemies.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
           if (sendUnitToBase(s, victim.iid))
@@ -1728,7 +1770,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const bi = battlefieldOf(s, sourceIid)
       if (bi >= 0) {
         const dead: EngineCard[] = []
-        const defenders = new Set(s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit').map((u) => controllerOf(u)))
+        const defenders = new Set(s.battlefields[bi].units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit').map((u) => controllerOf(u)))
         for (const owner of defenders) {
           const theirs = s.battlefields[bi].units.filter((u) => controllerOf(u) === owner && getCard(u.cardId)?.type === 'unit')
           if (!theirs.length) continue
@@ -1781,7 +1823,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // +3 Might and [Tank] this turn." Auto-picks a friendly other unit at the bf.
     if ((ability.event === 'attack' || ability.event === 'defend') && srcName === 'Yuumi - Magical Cat' && sourceIid) {
       const bi = battlefieldOf(s, sourceIid)
-      const ally = bi >= 0 ? s.battlefields[bi].units.find((u) => controllerOf(u) === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit') : undefined
+      const ally = bi >= 0 ? s.battlefields[bi].units.find((u) => isFriendlyTo(s, player, u) && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit') : undefined
       if (ally) {
         ally.tempMight = (ally.tempMight ?? 0) + 3
         ally.grantTank = true
@@ -1801,7 +1843,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       if (mech) {
         const cost = cardCost(mech) // recycled Might must cover the whole cost (free)
         const spare = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-          .filter((x) => controllerOf(x) === player && x.iid !== sourceIid && !x.token && getCard(x.cardId)?.supertype !== 'token' && getCard(x.cardId)?.type === 'unit' && mightOf(x) >= cost && mightOf(x) < mightOf(mech))
+          .filter((x) => isFriendlyTo(s, player, x) && x.iid !== sourceIid && !x.token && getCard(x.cardId)?.supertype !== 'token' && getCard(x.cardId)?.type === 'unit' && mightOf(x) >= cost && mightOf(x) < mightOf(mech))
           .sort((a, b) => mightOf(a) - mightOf(b))[0]
         if (spare) {
           for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === spare.iid); if (i >= 0) bf.units.splice(i, 1) }
@@ -1917,8 +1959,8 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
   }
   const aloneAtDeath = (u: EngineCard) => {
     const bf = u.diedAtBf != null ? s.battlefields[u.diedAtBf] : null
-    const survivors = bf ? bf.units.filter((x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid).length : 0
-    const otherDead = defeated.filter((x) => x.iid !== u.iid && controllerOf(x) === controllerOf(u) && x.diedAtBf === u.diedAtBf).length
+    const survivors = bf ? bf.units.filter((x) => sameTeam(s, controllerOf(x), controllerOf(u)) && x.iid !== u.iid).length : 0
+    const otherDead = defeated.filter((x) => x.iid !== u.iid && sameTeam(s, controllerOf(x), controllerOf(u)) && x.diedAtBf === u.diedAtBf).length
     return survivors + otherDead === 0
   }
   const fired: FiredTrigger[] = []
@@ -2615,7 +2657,7 @@ function mageseekerWardenAtBf(s: MatchState, owner: PlayerId): boolean {
 /** True if an ENEMY of `player` has a Mageseeker Warden at a battlefield — locks
  *  `player` to playing units-to-base only, and blocks effect-readies of their units. */
 function enemyWardenAtBf(s: MatchState, player: PlayerId): boolean {
-  return s.players.some((_, i) => i !== player && mageseekerWardenAtBf(s, i))
+  return s.players.some((_, i) => !sameTeam(s, player, i) && mageseekerWardenAtBf(s, i))
 }
 
 /** Magma Wurm: "Other friendly units enter ready." — an aura while it's in play. */
@@ -2632,7 +2674,7 @@ function friendlyUnitsEnterReadyAura(s: MatchState, player: PlayerId): boolean {
 function pullEnemyToBf(s: MatchState, player: PlayerId, destBf: number, label: string): MatchState {
   if (destBf < 0 || destBf >= s.battlefields.length) return s
   const enemies = s.battlefields.flatMap((b, bi) =>
-    bi === destBf ? [] : b.units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit'),
+    bi === destBf ? [] : b.units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit'),
   )
   if (!enemies.length) return s
   const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
@@ -2651,7 +2693,7 @@ function pullEnemyToBf(s: MatchState, player: PlayerId, destBf: number, label: s
  *  the mover controls (in their base) and stuns the moved unit. */
 function blastConeOnEnemyMove(s: MatchState, mover: PlayerId, enemyIid: string): MatchState {
   const enemy = findUnitAnywhere(s, enemyIid)
-  if (!enemy || controllerOf(enemy) === mover || enemy.stunned) return s
+  if (!enemy || sameTeam(s, mover, controllerOf(enemy)) || enemy.stunned) return s
   const cone = s.players[mover].zones.base.find((c) => getCard(c.cardId)?.name === 'Blast Cone' && !c.exhausted)
   if (!cone) return s
   cone.exhausted = true
@@ -2712,25 +2754,45 @@ function killGearByIid(s: MatchState, gearIid: string): PlayerId | null {
  *  different location (per the auto-resolve preference) and swaps the two — preserving
  *  ready/exhausted/damage (the swap is not a standard move) — then recomputes control and
  *  opens any showdown the relocation creates. No-op if no friendly unit is elsewhere. */
-function tideturnerSwap(s: MatchState, player: PlayerId, tideIid: string): MatchState {
+/** Friendly units at a DIFFERENT location than Tideturner — the legal swap partners. */
+function tideturnerPartners(s: MatchState, player: PlayerId, tideIid: string): EngineCard[] {
   const tideBf = battlefieldOf(s, tideIid)
-  const allies = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
-    .filter((u) => controllerOf(u) === player && u.iid !== tideIid && getCard(u.cardId)?.type === 'unit' && battlefieldOf(s, u.iid) !== tideBf)
-  if (!allies.length) return s
-  const partner = allies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
+  return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
+    .filter((u) => isFriendlyTo(s, player, u) && u.iid !== tideIid && getCard(u.cardId)?.type === 'unit' && battlefieldOf(s, u.iid) !== tideBf)
+}
+
+/** Tideturner: "you may choose a unit you control at another location" — offer a
+ *  board-highlight pick of the swap partner (optional). */
+function startTideturner(s: MatchState, player: PlayerId, tideIid: string): MatchState {
+  const partners = tideturnerPartners(s, player, tideIid)
+  if (!partners.length) return s
+  offerChoice(s, {
+    player, kind: 'tideSwap', bfIndex: -1,
+    prompt: 'Tideturner — choose a unit at another location to swap with (or skip).',
+    options: partners.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? u.iid })),
+    payload: JSON.stringify({ tideIid }),
+  })
+  return s
+}
+
+/** Perform the Tideturner swap with the chosen partner: each unit moves to the
+ *  other's location (firing showdown/conquer checks on both landing spots). */
+function doTideturnerSwap(s: MatchState, player: PlayerId, tideIid: string, partnerIid: string): MatchState {
   const tide = findUnitAnywhere(s, tideIid)
-  if (!tide) return s
-  const partnerBf = battlefieldOf(s, partner.iid)
+  const partner = findUnitAnywhere(s, partnerIid)
+  if (!tide || !partner) return s
+  const tideBf = battlefieldOf(s, tideIid)
+  const partnerBf = battlefieldOf(s, partnerIid)
   const tidePriorCtrl = tideBf >= 0 ? s.battlefields[tideBf].controller : null
   const partnerPriorCtrl = partnerBf >= 0 ? s.battlefields[partnerBf].controller : null
   const pull = (inst: EngineCard, bi: number) => {
     if (bi >= 0) s.battlefields[bi].units.splice(s.battlefields[bi].units.findIndex((x) => x.iid === inst.iid), 1)
-    else s.players[player].zones.base.splice(s.players[player].zones.base.findIndex((x) => x.iid === inst.iid), 1)
+    else { const base = s.players[controllerOf(inst)].zones.base; base.splice(base.findIndex((x) => x.iid === inst.iid), 1) }
   }
   pull(tide, tideBf)
   pull(partner, partnerBf)
-  ;(partnerBf >= 0 ? s.battlefields[partnerBf].units : s.players[player].zones.base).push(tide)
-  ;(tideBf >= 0 ? s.battlefields[tideBf].units : s.players[player].zones.base).push(partner)
+  ;(partnerBf >= 0 ? s.battlefields[partnerBf].units : s.players[controllerOf(tide)].zones.base).push(tide)
+  ;(tideBf >= 0 ? s.battlefields[tideBf].units : s.players[controllerOf(partner)].zones.base).push(partner)
   recomputeControllers(s)
   s = log(s, player, `Tideturner: swapped locations with ${getCard(partner.cardId)?.name}.`)
   if (partnerBf >= 0) s = showdownOrConquerAfterEffectMove(s, partnerBf, tide.iid, partnerPriorCtrl)
@@ -2782,8 +2844,8 @@ function bounceGearByIid(s: MatchState, gearIid: string): PlayerId | null {
  *  applying "its controller draws N" if set. Returns log lines. */
 function applyKillGear(s: MatchState, player: PlayerId, spec: { scope: 'friendly' | 'enemy' | 'any'; maxEnergy: number | null }, controllerDraw = 0): { killed: boolean; lines: string[] } {
   const gears = allGearInPlay(s).filter((g) => {
-    if (spec.scope === 'friendly' && controllerOf(g) !== player) return false
-    if (spec.scope === 'enemy' && controllerOf(g) === player) return false
+    if (spec.scope === 'friendly' && !isFriendlyTo(s, player, g)) return false
+    if (spec.scope === 'enemy' && !isEnemyTo(s, player, g)) return false
     if (spec.maxEnergy != null && gearEnergyOf(g) > spec.maxEnergy) return false
     return true
   })
@@ -2901,7 +2963,7 @@ function fireAttachEquip(s: MatchState, player: PlayerId, target: EngineCard): M
     return log(s, player, `Aphelios - Exalted: channeled ${n} rune (exhausted).`)
   }
   const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-    (u) => controllerOf(u) === player && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
+    (u) => isFriendlyTo(s, player, u) && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
   )
   if (!friendly.length) return s
   const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
@@ -2923,7 +2985,7 @@ function enterReadyConditionMet(s: MatchState, p: PlayerState, clause: string, t
   const toN = (w: string) => NW[w] ?? (parseInt(w, 10) || 0)
   const controlsTag = (tag: string) =>
     [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
-      (u) => controllerOf(u) === p.id && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
+      (u) => isFriendlyTo(s, p.id, u) && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
     )
   let m = t.match(/if you control (?:another |an? )?([a-z][a-z' -]*?)(?:\.|,| then|$)/)
   if (m) return controlsTag(m[1].trim())
@@ -2964,8 +3026,8 @@ function playerHasLegend(s: MatchState, player: PlayerId, name: string): boolean
 
 /** The highest-Might enemy unit at a battlefield (for "an enemy unit here" auto-
  *  targeting). Undefined if there are none. */
-function pickStrongestEnemy(units: EngineCard[], player: PlayerId): EngineCard | undefined {
-  const enemies = units.filter((u) => controllerOf(u) !== player)
+function pickStrongestEnemy(s: MatchState, units: EngineCard[], player: PlayerId): EngineCard | undefined {
+  const enemies = units.filter((u) => isEnemyTo(s, player, u))
   if (!enemies.length) return undefined
   return enemies.reduce((best, u) => (mightOf(u) > mightOf(best) ? u : best))
 }
@@ -2973,8 +3035,8 @@ function pickStrongestEnemy(units: EngineCard[], player: PlayerId): EngineCard |
 /** Auto-target for "deal damage to an enemy unit here": prefer the highest-Might
  *  enemy the damage would kill (remaining Might ≤ amount); else the highest-Might
  *  enemy (soften the biggest threat / set up Warwick). */
-function pickEnemyToDamage(units: EngineCard[], player: PlayerId, amount: number): EngineCard | undefined {
-  const enemies = units.filter((u) => controllerOf(u) !== player)
+function pickEnemyToDamage(s: MatchState, units: EngineCard[], player: PlayerId, amount: number): EngineCard | undefined {
+  const enemies = units.filter((u) => isEnemyTo(s, player, u))
   if (!enemies.length) return undefined
   const killable = enemies.filter((u) => mightOf(u) <= amount)
   const pool = killable.length ? killable : enemies
@@ -3082,6 +3144,142 @@ function retreatOne(s: MatchState, player: PlayerId, iid: string): string | null
 function offerChoice(s: MatchState, spec: NonNullable<MatchState['pendingChoice']>): void {
   if (s.pendingChoice || spec.options.length === 0) return
   s.pendingChoice = spec
+}
+
+// --- "An opponent reveals their hand" interactive flow ----------------------
+// Shared by Bone Skewer (force-play a unit) and the strip family (Mindsplit /
+// Sabotage / Ashe — trash/recycle/banish a card). Step 1 picks the opponent (only
+// when more than one is eligible), step 2 reveals that hand and picks a card, and
+// (Bone Skewer only) step 3 picks the battlefield. `mode` rides in the payload.
+
+interface RevealSpec {
+  mode: 'boneSkewer' | 'strip' | 'view'
+  /** strip family sink + filter (unused for boneSkewer/view). */
+  to?: 'trash' | 'deck' | 'banish'
+  nonUnit?: boolean
+  asheReturn?: boolean
+}
+
+/** Does a card match what the spec lets you act on? (view = any card). */
+function revealMatch(spec: RevealSpec, c: EngineCard): boolean {
+  if (spec.mode === 'view') return true
+  if (spec.mode === 'boneSkewer') return getCard(c.cardId)?.type === 'unit'
+  return !spec.nonUnit || getCard(c.cardId)?.type !== 'unit'
+}
+
+/** Eligible opponents (not out) who hold at least one card matching the spec. */
+function revealEligibleFoes(s: MatchState, caster: PlayerId, spec: RevealSpec): PlayerState[] {
+  return s.players.filter((pl) => !sameTeam(s, caster, pl.id) && !pl.out && pl.zones.hand.some((c) => revealMatch(spec, c)))
+}
+
+/** Begin the reveal flow for a caster: opponent step (if >1) → hand step. */
+function startReveal(s: MatchState, caster: PlayerId, srcName: string, spec: RevealSpec): MatchState {
+  const foes = revealEligibleFoes(s, caster, spec)
+  if (!foes.length) return log(s, caster, `${srcName}: no opponent has an eligible card in hand.`)
+  if (foes.length === 1) return offerRevealHand(s, caster, foes[0].id, srcName, spec)
+  offerChoice(s, {
+    player: caster, kind: 'revealOpponent', bfIndex: -1,
+    prompt: 'Choose an opponent to reveal their hand.',
+    options: foes.map((f) => ({ iid: `opp:${f.id}`, label: `${f.name} (${f.zones.hand.length} cards)` })),
+    payload: JSON.stringify(spec), srcName,
+  })
+  return s
+}
+
+/** Reveal one opponent's hand and offer the card pick (or a read-only view). */
+function offerRevealHand(s: MatchState, caster: PlayerId, foeId: PlayerId, srcName: string, spec: RevealSpec): MatchState {
+  const foe = s.players[foeId]
+  const cards = foe.zones.hand.filter((c) => revealMatch(spec, c))
+  if (!cards.length) return log(s, caster, `${srcName}: ${foe.name} revealed their hand — nothing to ${spec.mode === 'view' ? 'see' : 'take'}.`)
+  offerChoice(s, {
+    player: caster, kind: spec.mode === 'view' ? 'revealView' : 'revealHandCard', bfIndex: -1,
+    prompt:
+      spec.mode === 'view'
+        ? `${foe.name}'s hand (revealed)`
+        : spec.mode === 'boneSkewer'
+          ? `${foe.name}'s hand — choose a unit to force into play (Stunned), or decline.`
+          : `${foe.name}'s hand — choose a card to ${spec.to === 'deck' ? 'recycle' : spec.to === 'banish' ? 'banish' : 'discard'}.`,
+    options: cards.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid })),
+    payload: JSON.stringify({ ...spec, opponent: foeId }), srcName,
+  })
+  return s
+}
+
+function startBoneSkewer(s: MatchState, caster: PlayerId, srcName: string): MatchState {
+  return startReveal(s, caster, srcName, { mode: 'boneSkewer' })
+}
+
+/** Card Sharp: ask the next opponent whether to play a Gold token; when none are
+ *  left, the caster plays one Gold token per opponent who said yes. */
+function startCardSharp(s: MatchState, caster: PlayerId): MatchState {
+  const foes = s.players.filter((pl) => pl.id !== caster && !pl.out).map((pl) => pl.id)
+  return offerCardSharpNext(s, caster, foes, 0)
+}
+function offerCardSharpNext(s: MatchState, caster: PlayerId, queue: PlayerId[], yes: number): MatchState {
+  if (queue.length) {
+    const pid = queue[0]
+    offerChoice(s, {
+      player: pid, kind: 'cardSharpGold', bfIndex: -1,
+      prompt: 'Card Sharp — play a Gold gear token (exhausted)? (Declining denies the caster a bonus token.)',
+      options: [{ iid: 'yes', label: 'Play a Gold token' }, { iid: 'no', label: 'Decline' }],
+      payload: JSON.stringify({ caster, queue: queue.slice(1), yes }),
+    })
+    return s
+  }
+  if (yes > 0) s = log(s, caster, `Card Sharp: ${s.players[caster].name} played ${spawnGold(s.players[caster], yes, s.turn, tokensEnterReady(s, caster))} bonus Gold token(s).`)
+  return s
+}
+
+/** Units a player controls on the board (base + battlefields). */
+function cullOwnUnits(s: MatchState, pid: PlayerId): EngineCard[] {
+  return [...s.players[pid].zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+    (u) => controllerOf(u) === pid && getCard(u.cardId)?.type === 'unit',
+  )
+}
+
+/** Cull the Weak: offer the next player in `queue` (with units) a board-highlight
+ *  pick of one of their own units to kill; the rest of the queue rides in payload. */
+function offerCullNext(s: MatchState, queue: PlayerId[]): MatchState {
+  let q = [...queue]
+  while (q.length) {
+    const pid = q.shift()!
+    if (s.players[pid]?.out) continue
+    const own = cullOwnUnits(s, pid)
+    if (!own.length) continue
+    offerChoice(s, {
+      player: pid, kind: 'cullKill', bfIndex: -1,
+      prompt: 'Cull the Weak — choose one of your units to kill.',
+      options: own.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? u.iid })),
+      payload: JSON.stringify({ queue: q }),
+    })
+    return s
+  }
+  return log(s, s.activePlayer, 'Cull the Weak: resolved.')
+}
+
+/** Apply the strip family's sink to a chosen card (trash/recycle/banish + follow-ups). */
+function applyRevealStrip(s: MatchState, caster: PlayerId, foeId: PlayerId, cardIid: string, srcName: string, spec: RevealSpec): MatchState {
+  const foe = s.players[foeId]
+  const idx = foe.zones.hand.findIndex((c) => c.iid === cardIid)
+  if (idx < 0) return log(s, caster, `${srcName}: that card is no longer in hand.`)
+  const [card] = foe.zones.hand.splice(idx, 1)
+  const nm = getCard(card.cardId)?.name ?? 'a card'
+  if (spec.to === 'deck') {
+    foe.zones.mainDeck.push({ ...card, exhausted: false, damage: 0, attached: [] })
+    return log(s, caster, `${srcName}: ${foe.name} revealed their hand — recycled ${nm}.`)
+  }
+  if (spec.to === 'banish') {
+    foe.banished.push(card)
+    if (spec.asheReturn) {
+      s.asheBanishPending = s.asheBanishPending ?? []
+      s.asheBanishPending.push({ banishedIid: card.iid, owner: caster, victimId: foeId })
+    }
+    return log(s, caster, `${srcName}: ${foe.name} revealed their hand — banished ${nm}.`)
+  }
+  sendToTrash(foe, card)
+  foe.discardedThisTurn = true
+  s = log(s, caster, `${srcName}: ${foe.name} revealed their hand — discarded ${nm}.`)
+  return fireDiscard(s, foeId, [card])
 }
 
 /** A gear instance that is an Equipment (has [Equip]) sitting unattached in a
@@ -3523,7 +3721,7 @@ function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard, bfIndex?: number)
   // case — kills by assignment, not damage counters, so the comparison is intact.)
   if (bfIndex != null) {
     const soraka = s.battlefields[bfIndex]?.units.find(
-      (x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid &&
+      (x) => sameTeam(s, controllerOf(x), controllerOf(u)) && x.iid !== u.iid &&
         /if another unit you control here would die/i.test(getCard(x.cardId)?.text ?? ''),
     )
     if (soraka && mightOf(u) < mightOf(soraka)) return true
@@ -3610,7 +3808,7 @@ function stealUnitOptions(s: MatchState, controller: PlayerId): { iid: string; l
   const out: { iid: string; label: string }[] = []
   for (const bf of s.battlefields)
     for (const u of bf.units)
-      if (controllerOf(u) !== controller && getCard(u.cardId)?.type === 'unit')
+      if (isEnemyTo(s, controller, u) && getCard(u.cardId)?.type === 'unit')
         out.push({ iid: u.iid, label: `${getCard(u.cardId)?.name ?? u.iid} — ${s.players[controllerOf(u)].name}` })
   return out
 }
@@ -3712,7 +3910,50 @@ function applyStealGear(s: MatchState, controller: PlayerId, gearIid: string, ak
   return log(s, controller, `Akshan - Mischievous: stole ${gc?.name ?? 'a gear'} from ${s.players[originalOwner].name}.`)
 }
 
+/** Elder Dragon's passive is state-based: while a player controls Elder Dragon, any
+ *  enemy unit that has ANY damage on it dies. Enforced when Elder enters (so a
+ *  pre-damaged enemy dies immediately, before the on-play trigger) — Rule/FAQ:
+ *  "if it has any damage prior to Elder, it dies as soon as Elder is played." */
+function enforceElderLethal(s: MatchState): MatchState {
+  const dead: EngineCard[] = []
+  for (const p of s.players) {
+    if (!controlsUnitNamed(s, p.id, 'Elder Dragon')) continue
+    const enemies = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)]
+      .filter((u) => isEnemyTo(s, p.id, u) && getCard(u.cardId)?.type === 'unit' && (u.damage ?? 0) > 0)
+    for (const u of enemies) dead.push(...killTarget(s, u.iid))
+  }
+  return dead.length ? fireDeaths(s, dead) : s
+}
+
+/** Elder Dragon on-play: auto-target the strongest enemy at each location and put the
+ *  1-damage ability on the Chain, opening a priority window so opponents can react
+ *  (move / bounce / Counter / Unyielding Spirit) before it resolves. No targets → no
+ *  trigger (and no chain). */
+function openElderOnPlay(s: MatchState, player: PlayerId): MatchState {
+  const elderId = s.players.flatMap((p) => [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]).find((u) => getCard(u.cardId)?.name === 'Elder Dragon')?.cardId ?? 'unl-118-219'
+  const strongest = (units: EngineCard[]) => {
+    const en = units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit')
+    return en.length ? en.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : null
+  }
+  const targets: string[] = []
+  const locs: number[] = []
+  s.battlefields.forEach((bf, i) => { const v = strongest(bf.units); if (v) { targets.push(v.iid); locs.push(i) } })
+  for (const pl of s.players) { if (pl.id === player) continue; const v = strongest(pl.zones.base); if (v) { targets.push(v.iid); locs.push(-1) } }
+  if (!targets.length) return s
+  s.chain.push({
+    id: makeChainId(), kind: 'trigger', controller: player, cardId: elderId,
+    instance: { iid: '', cardId: elderId, owner: player, exhausted: false, damage: 0, attached: [] },
+    payment: { exhaust: [], recycle: [] }, targets, trigger: { kind: 'elderOnPlay', locs },
+  })
+  s.passes = 0
+  s.priority = nextPlayer(s, player)
+  return s
+}
+
 function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spellLike = false, caster?: PlayerId): EngineCard[] {
+  // Unyielding Spirit: "Prevent all spell and ability damage this turn." (Combat
+  // damage goes through assignDamage, not here, so it is unaffected — as intended.)
+  if (s.preventAbilityDamageThisTurn) return []
   // Annie - Fiery: "Your spells and abilities deal 1 Bonus Damage." +1 per instance
   // of spell/ability damage dealt by a controller of Annie - Fiery.
   if (spellLike && caster != null && controlsUnitNamed(s, caster, 'Annie - Fiery')) amount += 1
@@ -3723,6 +3964,8 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
     const bf = s.battlefields[i]
     const u = bf.units.find((x) => x.iid === targetIid)
     if (u) {
+      // Counter Strike: prevent (and consume) the next damage instance to this unit.
+      if (u.preventNextDamage) { u.preventNextDamage = false; return [] }
       // Void Gate: spells/abilities deal +N Bonus Damage to units here.
       if (spellLike) amount += bfScriptAt(s, i)?.bonusSpellDamageHere ?? 0
       u.damage += amount
@@ -3730,7 +3973,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       let dead: EngineCard[] = []
       // mightOf already subtracts accrued damage, so a unit is defeated when its
       // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
-      if (mightOf(u) <= 0 || (elderLethal && controllerOf(u) !== caster)) {
+      if (mightOf(u) <= 0 || (elderLethal && !sameTeam(s, caster, controllerOf(u)))) {
         u.diedAtBf = i // for location-scoped death triggers (Kog'Maw)
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u, i)) {
@@ -3752,7 +3995,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
     if (u) {
       u.damage += amount
       emit({ kind: 'damage', iid: targetIid, amount, cardId: u.cardId })
-      if (mightOf(u) <= 0 || (elderLethal && controllerOf(u) !== caster)) {
+      if (mightOf(u) <= 0 || (elderLethal && !sameTeam(s, caster, controllerOf(u)))) {
         p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
         if (trashOrBanish(s, u)) return []
@@ -3786,7 +4029,7 @@ function moveUnits(
   // Investigator at the destination stacks the surcharge (1 rainbow per extra unit each).
   if (iids.length > 1) {
     const invCount = s.battlefields[toBattlefield].units.filter(
-      (u) => controllerOf(u) !== player && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator',
+      (u) => isEnemyTo(s, player, u) && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator',
     ).length
     if (invCount > 0 && !makeBfApi(s).payPowerAny(player, (iids.length - 1) * invCount))
       return fail(state, `Mageseeker Investigator: must pay ${(iids.length - 1) * invCount} rainbow Power to move ${iids.length} units there.`)
@@ -3827,7 +4070,7 @@ function moveUnits(
   // Stealthy Pursuer: "When a friendly unit moves from my location, I may be moved
   // with it." Auto-follow — relocate friendly Pursuers from each vacated bf to dest.
   for (const src of sourceBfs) {
-    for (const pur of s.battlefields[src].units.filter((u) => controllerOf(u) === player && !moved.includes(u) && /when a friendly unit moves from my location, i may be moved with it/i.test(getCard(u.cardId)?.text ?? ''))) {
+    for (const pur of s.battlefields[src].units.filter((u) => isFriendlyTo(s, player, u) && !moved.includes(u) && /when a friendly unit moves from my location, i may be moved with it/i.test(getCard(u.cardId)?.text ?? ''))) {
       s.battlefields[src].units = s.battlefields[src].units.filter((u) => u.iid !== pur.iid)
       s.battlefields[toBattlefield].units.push(pur)
       moved.push(pur)
@@ -3842,7 +4085,7 @@ function moveUnits(
   s2 = fireTriggers(s2, collectSelf(s2, player, 'move', moved.map((u) => u.iid)))
   // "When an opponent moves to a battlefield other than mine, draw 1" (Volibear - Imposing).
   s2 = fireOpponentMove(s2, player, toBattlefield)
-  const contested = bf.units.some((u) => controllerOf(u) !== player)
+  const contested = bf.units.some((u) => isEnemyTo(s, player, u))
   if (contested) {
     s2.phase = 'showdown'
     s2.showdown = {
@@ -3860,7 +4103,7 @@ function moveUnits(
     s2.battlefields[toBattlefield].controller === player &&
     prevController !== player
   ) {
-    s2 = awardPoints(s2, player, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    s2 = awardPoints(s2, player, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer', toBattlefield)
     markConquered(s2, player, toBattlefield)
     s2 = grantHunt(s2, player, toBattlefield)
     s2 = applyConquerPassive(s2, player, toBattlefield)
@@ -3898,7 +4141,7 @@ function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedI
   }
   // Uncontested: a conquer if the move flipped control to the moved unit's owner.
   if (bf.controller === movedOwner && priorController !== movedOwner) {
-    s = awardPoints(s, movedOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    s = awardPoints(s, movedOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer', bfIndex)
     markConquered(s, movedOwner, bfIndex)
     s = grantHunt(s, movedOwner, bfIndex)
     s = applyConquerPassive(s, movedOwner, bfIndex)
@@ -3960,6 +4203,11 @@ export function beginTurn(state: MatchState): MatchState {
   let s = clone(state)
   const ap = s.activePlayer
   const p = s.players[ap]
+
+  // 2v2: snapshot who controls each battlefield at the start of the Beginning
+  // Phase — a battlefield a teammate held now can't be conquered for points by the
+  // turn player this turn (Rule 466.8.e.1).
+  if (s.teamMode) s.bfControlAtBeginning = s.battlefields.map((b) => b.controller)
 
   // Reset per-turn counters (LEGION) and empty the resource pool (it does not
   // carry between turns — emptied at end of the Draw step / end of turn).
@@ -4232,7 +4480,7 @@ function finishBeginning(s: MatchState): MatchState {
     }
     if (passive.manualHold) s = log(s, ap, `${bfName} (hold): resolve its effect manually.`)
   }
-  if (p.points >= s.pointsToWin) return endGame(s, ap)
+  if (scoreFor(s, ap) >= s.pointsToWin) return endGame(s, ap)
 
   // First-turn process (Core Rules v1.2 Â§462â€“466), by seat in turn order:
   //   â€¢ 1v1: the player going SECOND channels +1 on their first turn.
@@ -4349,6 +4597,15 @@ function endGame(state: MatchState, winner: PlayerId): MatchState {
   let s = clone(state)
   s.winner = winner
   s.phase = 'gameover'
+  if (s.teamMode) {
+    const wt = s.players[winner]?.team
+    if (wt != null) {
+      s.winnerTeam = wt
+      // Teams win/lose together (Rule 466.6.a): the other team is out.
+      for (const pl of s.players) if (pl.team !== wt) pl.out = true
+      return log(s, winner, `Team ${wt === 0 ? 'Left' : 'Right'} wins!`)
+    }
+  }
   s = log(s, winner, `${s.players[winner].name} wins!`)
   return s
 }
@@ -4360,27 +4617,38 @@ function endGame(state: MatchState, winner: PlayerId): MatchState {
  *  responsible for advancing past the departed seat. */
 function eliminate(state: MatchState, player: PlayerId, reason: string): MatchState {
   let s = clone(state)
-  const p = s.players[player]
-  if (p.out) return s
-  p.out = true
-  // Ashe - Focused: an eliminated victim will never hold again — drop their pending returns.
-  if (s.asheBanishPending?.length) s.asheBanishPending = s.asheBanishPending.filter((e) => e.victimId !== player)
-  // Pull their units off every battlefield into their Trash.
-  for (const bf of s.battlefields) {
-    const leaving = bf.units.filter((u) => u.owner === player)
-    bf.units = bf.units.filter((u) => u.owner !== player)
-    for (const u of leaving) sendToTrash(p, u)
+  if (s.players[player].out) return s
+  // Clear one player's board presence so nothing they own keeps affecting the game.
+  const wipe = (id: PlayerId, why: string) => {
+    const pl = s.players[id]
+    if (pl.out) return
+    pl.out = true
+    if (s.asheBanishPending?.length) s.asheBanishPending = s.asheBanishPending.filter((e) => e.victimId !== id)
+    for (const bf of s.battlefields) {
+      const leaving = bf.units.filter((u) => u.owner === id)
+      bf.units = bf.units.filter((u) => u.owner !== id)
+      for (const u of leaving) sendToTrash(pl, u)
+    }
+    for (const u of [...pl.zones.base]) sendToTrash(pl, u)
+    pl.zones.base = []
+    pl.pool = { energy: 0, power: {} }
+    if (pl.legend) pl.legend.exhausted = true
+    s = log(s, id, `${pl.name} is out of the match (${why}).`)
   }
-  // Clear their board presence so nothing they own keeps affecting the game.
-  for (const u of [...p.zones.base]) sendToTrash(p, u)
-  p.zones.base = []
-  p.pool = { energy: 0, power: {} }
-  if (p.legend) p.legend.exhausted = true
-  s = log(s, player, `${p.name} is out of the match (${reason}).`)
+  wipe(player, reason)
+  // Teams lose together (Rule 466.7): eliminating a player drops their teammate too.
+  if (s.teamMode) {
+    const mate = teammateOf(s, player)
+    if (mate != null) wipe(mate, 'teammate eliminated')
+  }
   recomputeControllers(s)
-  // Anyone holding an accepted invite from / to the departed player is moot —
-  // a stale showdown invite is dropped by the caller's pointer repair.
+  // With one team / one player left, that side wins.
   const alive = s.players.filter((pl) => !pl.out)
+  if (s.teamMode) {
+    const aliveTeams = new Set(alive.map((pl) => pl.team))
+    if (aliveTeams.size <= 1 && alive.length) return endGame(s, alive[0].id)
+    return s
+  }
   if (alive.length === 1) return endGame(s, alive[0].id)
   return s
 }
@@ -4392,6 +4660,12 @@ function eliminate(state: MatchState, player: PlayerId, reason: string): MatchSt
 /** Whether any (live) opponent's score is within `n` points of the Victory Score
  *  (Leona - Zealot, Find Your Center, Poppy - Paragon). */
 function opponentScoreWithin(s: MatchState, player: PlayerId, n: number): boolean {
+  if (s.teamMode) {
+    const myTeam = teamOf(s, player)
+    return ([0, 1] as const).some(
+      (t) => t !== myTeam && s.players.some((pl) => pl.team === t && !pl.out) && s.pointsToWin - teamPoints(s, t) <= n,
+    )
+  }
   return s.players.some((pl, i) => i !== player && !pl.out && s.pointsToWin - pl.points <= n)
 }
 
@@ -4411,14 +4685,25 @@ function awardPoints(
   amount: number,
   reason: string,
   kind: 'hold' | 'conquer',
+  bfIndex?: number,
 ): MatchState {
   const p = s.players[player]
   if (tiannaBlocksScore(s, player))
     return log(s, player, `${p.name} can't gain points — an opponent's Tianna Crownguard is at a battlefield.`)
+  // 2v2: a battlefield a teammate controlled at the Beginning Phase can't be
+  // conquered for points by this player this turn (Rule 466.8.e.1).
+  if (kind === 'conquer' && s.teamMode && bfIndex != null) {
+    const heldBy = s.bfControlAtBeginning?.[bfIndex]
+    if (heldBy != null && heldBy !== player && sameTeam(s, player, heldBy))
+      return log(s, player, `${p.name} conquered ${getCard(s.battlefields[bfIndex]?.cardId)?.name ?? 'a battlefield'} — no points (a teammate held it this turn).`)
+  }
+  // The winning point (team total in 2v2) via Conquer only counts on a full
+  // conquer — your team must control every battlefield, else you draw instead.
+  const wouldWin = scoreFor(s, player) + amount >= s.pointsToWin
   if (
     kind === 'conquer' &&
-    p.points + amount >= s.pointsToWin &&
-    !s.battlefields.every((b) => b.controller === player)
+    wouldWin &&
+    !s.battlefields.every((b) => b.controller != null && sameTeam(s, player, b.controller))
   ) {
     if (p.zones.mainDeck.length) p.zones.hand.push(p.zones.mainDeck.shift()!)
     return log(
@@ -4433,7 +4718,7 @@ function awardPoints(
   fireOpponentScore(s, player) // Sumpworks Map: opponents draw when this player scores
   if (kind === 'conquer') emit({ kind: 'conquer', player })
   let next = log(s, player, `${p.name} ${reason} (+${amount}).`)
-  if (next.players[player].points >= next.pointsToWin) next = endGame(next, player)
+  if (scoreFor(next, player) >= next.pointsToWin) next = endGame(next, player)
   return next
 }
 
@@ -4674,6 +4959,9 @@ function assignDamage(
   let remaining = damage
   for (const u of units) {
     if (remaining <= 0 && !elderLethal) break
+    // Counter Strike: this unit prevents (and consumes) the next damage — it can't be
+    // defeated by this combat damage.
+    if (u.preventNextDamage) { u.preventNextDamage = false; continue }
     const hp = mightOf(u, role, xpOf(u)) + bonusOf(u, role)
     if (hp <= 0) continue
     if (elderLethal && damage > 0) { defeated.add(u.iid); continue }
@@ -4773,7 +5061,7 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     let count = 0
     if (/buffed friendly unit/.test(what)) {
       const pool = /at my battlefield|here/.test(what) ? here : friendly
-      count = pool.filter((x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid && (x.buffs ?? 0) > 0).length
+      count = pool.filter((x) => sameTeam(s, controllerOf(x), controllerOf(u)) && x.iid !== u.iid && (x.buffs ?? 0) > 0).length
     } else if (/gear/.test(what)) {
       count = owner.zones.base.filter((x) => def(x)?.type === 'gear').length + friendly.reduce((n, x) => n + (x.attached?.length ?? 0), 0)
     } else if (/temporary/.test(what)) {
@@ -4827,7 +5115,7 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   const anotherM = text.match(/while you have another unit here,? i have \+(\d+)\s*(?::rb_might:|might)/)
   if (anotherM) {
     const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
-    const others = bi >= 0 ? s.battlefields[bi].units.filter((x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid && getCard(x.cardId)?.type === 'unit').length : 0
+    const others = bi >= 0 ? s.battlefields[bi].units.filter((x) => sameTeam(s, controllerOf(x), controllerOf(u)) && x.iid !== u.iid && getCard(x.cardId)?.type === 'unit').length : 0
     if (others > 0) b += parseInt(anotherM[1], 10)
   }
   // Legend-granted global buffs.
@@ -5326,7 +5614,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     const defStep = steps.find((st) => st.side === 'defenders')
     const totalDefHp = defStep ? Object.values(defStep.hp).reduce((a, b) => a + b, 0) : 0
     const excess = Math.max(0, attackMight - totalDefHp)
-    s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer')
+    s = awardPoints(s, moverOwner, RULES.pointsPerConquer, `conquered ${bfName}`, 'conquer', bfIndex)
     markConquered(s, moverOwner, bfIndex)
     s = grantHunt(s, moverOwner, bfIndex)
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
@@ -5345,6 +5633,13 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
 
 /** Apply a spell's effects (used by both immediate showdown casts and chain
  *  resolution). Mutates the players in `s`; returns the logged state. */
+/** Dispose a spell once it has resolved: "Banish this" (Time Warp) banishes it for
+ *  good; otherwise it goes to the owner's trash. */
+function disposeResolvedSpell(p: PlayerState, instance: EngineCard, card: Card | undefined): void {
+  if (/\bbanish this\b/i.test(card?.text ?? '')) p.banished.push(instance)
+  else sendToTrash(p, instance)
+}
+
 function resolveSpellEffects(
   s: MatchState,
   controller: PlayerId,
@@ -5353,6 +5648,50 @@ function resolveSpellEffects(
 ): MatchState {
   const p = s.players[controller]
   const e = spellEffect(card)
+
+  // Time Warp: "Take a turn after this one." Queue an extra turn for the caster —
+  // consumed at END_TURN before the normal next player. Chaining multiple Time Warps
+  // (re-cast during the extra turn) stacks the queue for consecutive extra turns.
+  if (/take a turn after this one/i.test(card.text ?? '')) {
+    s.extraTurns = [...(s.extraTurns ?? []), controller]
+    return log(s, controller, `${card.name}: ${p.name} will take an extra turn.`)
+  }
+
+  // Unyielding Spirit: "Prevent all spell and ability damage this turn."
+  if (/prevent all spell and ability damage this turn/i.test(card.text ?? '')) {
+    s.preventAbilityDamageThisTurn = true
+    return log(s, controller, `${card.name}: spell & ability damage is prevented this turn.`)
+  }
+
+  // Counter Strike: shield the chosen unit from the next damage this turn, then draw.
+  if (e.preventNextDamage) {
+    const u = (targets ?? [])[0] ? findUnitAnywhere(s, targets![0]) : undefined
+    if (u) { u.preventNextDamage = true; s = log(s, controller, `${card.name}: ${getCard(u.cardId)?.name} will prevent the next damage this turn.`) }
+    else s = log(s, controller, `${card.name}: no unit chosen.`)
+    if (e.draw) drawN(p, e.draw)
+    return s
+  }
+
+  // Deathgrip: kill the chosen friendly unit ([0]); give +Might = its Might to the
+  // OTHER chosen friendly unit ([1]) this turn (skipped if none picked); then draw 1.
+  if (e.deathgrip) {
+    const killU = targets?.[0] ? findUnitAnywhere(s, targets[0]) : undefined
+    if (killU && isFriendlyTo(s, controller, killU)) {
+      const might = mightOf(killU)
+      const buffU = targets?.[1] ? findUnitAnywhere(s, targets[1]) : undefined
+      const dead = killTarget(s, killU.iid)
+      s = log(s, controller, `${card.name}: killed ${getCard(killU.cardId)?.name} (Might ${might}).`)
+      if (buffU && buffU.iid !== killU.iid && isFriendlyTo(s, controller, buffU) && might > 0) {
+        applyTempMight(s, buffU.iid, might)
+        s = log(s, controller, `${card.name}: gave +${might} Might this turn to ${getCard(buffU.cardId)?.name}.`)
+      }
+      s = fireDeaths(s, dead)
+    } else {
+      s = log(s, controller, `${card.name}: no friendly unit chosen to kill.`)
+    }
+    drawN(p, 1)
+    return log(s, controller, `${card.name}: drew 1.`)
+  }
 
   // Copy-a-unit spell (Mirror Image): play a ready Reflection copy of the chosen
   // unit to your base, Temporary. The parser can't express "copy", so handle it
@@ -5386,29 +5725,10 @@ function resolveSpellEffects(
 
   // Bone Skewer: "Choose a battlefield. An opponent reveals their hand. You may choose a
   // unit from it. They play that unit to that battlefield, ignoring any and all costs.
-  // When they do, [Stun] it." Auto-picks the opponent with the most cards, their
-  // highest-Might unit in hand, and a safe battlefield (one you control, else empty,
-  // else bf0); the unit enters as THEIRS, exhausted + stunned (deals no combat damage).
+  // When they do, [Stun] it." Interactive: pick the opponent → see their hand & pick a
+  // unit (or decline) → pick the battlefield; it enters as THEIRS, exhausted + stunned.
   if (/play that unit to that battlefield, ignoring any and all costs/i.test(card.text ?? '')) {
-    const foe = s.players
-      .filter((pl) => pl.id !== controller && !pl.out && pl.zones.hand.some((c) => getCard(c.cardId)?.type === 'unit'))
-      .sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
-    if (!foe) return log(s, controller, `${card.name}: no opponent has a unit in hand.`)
-    const pick = foe.zones.hand
-      .filter((c) => getCard(c.cardId)?.type === 'unit')
-      .sort((a, b) => mightOf(b) - mightOf(a))[0]
-    const destBf = (() => {
-      const own = s.battlefields.findIndex((b) => b.controller === controller)
-      if (own >= 0) return own
-      const empty = s.battlefields.findIndex((b) => b.units.length === 0)
-      return empty >= 0 ? empty : 0
-    })()
-    const [played] = foe.zones.hand.splice(foe.zones.hand.findIndex((c) => c.iid === pick.iid), 1)
-    s.battlefields[destBf].units.push({ ...played, exhausted: true, stunned: true, enteredTurn: s.turn, attached: [] })
-    emit({ kind: 'stun', iid: played.iid, player: controller })
-    recomputeControllers(s)
-    s = log(s, controller, `${card.name}: forced ${foe.name} to play ${getCard(played.cardId)?.name} to battlefield ${destBf + 1}, Stunned.`)
-    return fireStun(s, controller, destBf) // caster's "when you stun an enemy" payoffs
+    return startBoneSkewer(s, controller, card.name)
   }
 
   // Strike Down: a chosen equipped friendly unit deals its Might to an enemy, then
@@ -5566,7 +5886,7 @@ function resolveSpellEffects(
       return log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} dealt ${amt} to ${bf.foes.length} enemy unit(s).`)
     }
     // singleEnemy: "(ready a friendly unit.) It deals damage equal to its Might to an enemy."
-    const foe = chosen(false) ?? pickEnemyToDamage(enemiesAll, controller, amt) ?? enemiesAll.sort((a, b) => statOf(b) - statOf(a))[0]
+    const foe = chosen(false) ?? pickEnemyToDamage(s, enemiesAll, controller, amt) ?? enemiesAll.sort((a, b) => statOf(b) - statOf(a))[0]
     if (!foe) return log(s, controller, `${card.name} fizzled — no enemy unit.`)
     if (/ready a friendly unit/i.test(card.text ?? '')) { const d = findUnitAnywhere(s, dealer.iid); if (d) d.exhausted = false }
     s = log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} dealt ${amt} to ${getCard(foe.cardId)?.name}.`)
@@ -5577,20 +5897,11 @@ function resolveSpellEffects(
   for (const line of applyParsed(s, p, e)) s = log(s, controller, line)
   s = fireTokenPlay(s, controller, tokenUnitsIn(e)) // Lillia: token-unit play synergy
 
-  // "Each player kills one of their units" (Cull the Weak): every player loses
-  // their lowest-Might unit (a faithful auto-pick; firing death triggers).
+  // "Each player kills one of their units" (Cull the Weak): each player — caster
+  // first, then the rest — picks one of THEIR OWN units to kill (board-highlight pick).
   if (e.cullEachPlayer) {
-    const dead: EngineCard[] = []
-    for (const pl of s.players) {
-      const own = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-        (u) => controllerOf(u) === pl.id && getCard(u.cardId)?.type === 'unit',
-      )
-      if (!own.length) continue
-      const victim = own.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
-      dead.push(...killTarget(s, victim.iid))
-    }
-    if (dead.length) s = log(s, controller, `${card.name}: each player killed a unit.`)
-    s = fireDeaths(s, dead)
+    const order = [controller, ...s.players.map((_, i) => i as PlayerId).filter((i) => i !== controller)]
+    return offerCullNext(s, order)
   }
 
   // Targeted parts: damage / kill / Â±Might-this-turn, applied to each chosen
@@ -5762,8 +6073,8 @@ function autoSpellTargets(s: MatchState, player: PlayerId, card: Card, bfIndex: 
   const all = s.battlefields.flatMap((b) => b.units)
   const want = e.targetScope === 'friendly' ? 'friendly' : 'enemy'
   const pool = want === 'friendly'
-    ? [...s.players[player].zones.base, ...all].filter((u) => controllerOf(u) === player && def(u)?.type === 'unit')
-    : (here.some((u) => controllerOf(u) !== player) ? here : all).filter((u) => controllerOf(u) !== player && def(u)?.type === 'unit')
+    ? [...s.players[player].zones.base, ...all].filter((u) => isFriendlyTo(s, player, u) && def(u)?.type === 'unit')
+    : (here.some((u) => isEnemyTo(s, player, u)) ? here : all).filter((u) => isEnemyTo(s, player, u) && def(u)?.type === 'unit')
   const ranked = [...pool].sort((a, b) => mightOf(b) - mightOf(a))
   return ranked.slice(0, Math.max(1, e.targetCount || 1)).map((u) => u.iid)
 }
@@ -5885,7 +6196,7 @@ function resolveRevealedCard(s: MatchState, player: PlayerId, ci: EngineCard, ca
     s = firePlayTriggers(s, player, ci.iid, card, 0, true) // played from [Hidden]
     // Evelynn - Entrancing: reveal-only enemy pull. Tideturner: reveal-time swap.
     if (card.name === 'Evelynn - Entrancing') s = pullEnemyToBf(s, player, bfi, 'Evelynn - Entrancing')
-    if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Tideturner') s = tideturnerSwap(s, player, ci.iid)
+    if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Tideturner') s = startTideturner(s, player, ci.iid)
   } else if (card.type === 'gear') {
     // Edge of Night: "play from face down → attach it to a unit you control here."
     const fromFD = /when you play this from face ?down,[^.]*attach it to a unit you control/i.test(card.text ?? '')
@@ -5909,7 +6220,7 @@ function resolveRevealedCard(s: MatchState, player: PlayerId, ci: EngineCard, ca
     if (hasTargetedPart(se)) {
       const wantFriendly = se.targetScope === 'friendly'
       revealTargets = s.battlefields[bfi].units
-        .filter((u) => def(u)?.type === 'unit' && (wantFriendly ? controllerOf(u) === player : controllerOf(u) !== player))
+        .filter((u) => def(u)?.type === 'unit' && (wantFriendly ? isFriendlyTo(s, player, u) : isEnemyTo(s, player, u)))
         .sort((a, b) => mightOf(b) - mightOf(a))
         .slice(0, Math.max(1, se.targetCount || 1))
         .map((u) => u.iid)
@@ -5957,6 +6268,26 @@ function resolveTopOfChain(state: MatchState): MatchState {
     sendToTrash(p, item.instance)
     return s
   }
+  // A triggered ability on the chain (Elder Dragon's on-play). It deals 1 to each
+  // still-valid enemy target — units saved (moved/bounced/countered) during the
+  // reaction window are no longer valid and take nothing. Nothing to trash.
+  if (item.kind === 'trigger') {
+    if (item.trigger?.kind === 'elderOnPlay') {
+      const dead: EngineCard[] = []
+      const tids = item.targets ?? []
+      const locs = item.trigger.locs ?? []
+      tids.forEach((tid, i) => {
+        const u = findUnitAnywhere(s, tid)
+        // Still valid only if the unit is alive AND still at the location it was
+        // targeted at (a move/bounce during the reaction window invalidates it).
+        if (u && isEnemyTo(s, item.controller, u) && battlefieldOf(s, tid) === locs[i])
+          dead.push(...applyTargetDamage(s, tid, 1, true, item.controller))
+      })
+      if (dead.length) s = fireDeaths(s, dead, item.controller)
+      s = log(s, item.controller, 'Elder Dragon: on-play damage resolved.')
+    }
+    return s
+  }
   // A reveal-from-Hidden item enters/resolves at its hidden battlefield (units &
   // gear stay on the board; spells trash themselves inside the helper).
   if (item.reveal) {
@@ -5973,7 +6304,7 @@ function resolveTopOfChain(state: MatchState): MatchState {
       s = resolveSpellEffects(s, item.controller, card, item.targets)
     }
   }
-  sendToTrash(p, item.instance)
+  disposeResolvedSpell(p, item.instance, card)
   return s
 }
 
@@ -6001,7 +6332,7 @@ function finalizeSetup(s: MatchState): MatchState {
     .slice(0, n === 4 ? 3 : n)
   s.battlefields = bfIds.map((cardId) => ({ cardId, units: [], controller: null }))
   s.pointsToWin =
-    (n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer) +
+    (s.teamMode ? RULES.pointsToWin2v2 : n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer) +
     bfIds.reduce((sum, id) => sum + battlefieldPassive(id).winDelta, 0)
   s.setup = undefined
   return log(s, null, 'Setup complete.')
@@ -6304,7 +6635,13 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           return fail(state, `Units can't be played at ${getCard(bf.cardId)?.name ?? 'that battlefield'}.`)
       } else {
         const guard = requireActiveAction(state, action.player)
-        if (guard) return fail(state, guard)
+        if (guard) {
+          // 2v2: a teammate may play spells & gear (not units) during the Turn
+          // Player's open Action phase (Rule 316.4.f / 466.8.d).
+          const assist =
+            state.teamMode && action.type !== 'PLAY_UNIT' && sameTeam(state, action.player, state.activePlayer) && !requireActiveAction(state, state.activePlayer)
+          if (!assist) return fail(state, guard)
+        }
       }
 
       // Mageseeker Warden (enemy): "Opponents can only play units to their base."
@@ -6425,9 +6762,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Leona - Zealot (an opponent is within N points of winning).
         const monchReady = /if an opponent controls a stunned unit,[^.]*?enter(?:s)? ready/i.test(card.text ?? '')
           && [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)]
-            .some((u) => controllerOf(u) !== action.player && u.stunned)
+            .some((u) => isEnemyTo(s, action.player, u) && u.stunned)
         const leonaReady = !!scoreReadyM
-          && s.players.some((pl, i) => i !== action.player && s.pointsToWin - pl.points <= parseInt(scoreReadyM[1], 10))
+          && opponentScoreWithin(s, action.player, parseInt(scoreReadyM[1], 10))
         // General conditional enter-ready guard (Direwing, Breakneck Mech, Vayne,
         // Towering Pairofant, Dunebreaker, Xin Zhao, Shadow Watcher, Shadow).
         const guardReady = readyGuarded && enterReadyConditionMet(s, p, readyClause, action.toBattlefield ?? null)
@@ -6478,7 +6815,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const wantsConqueredBf = canPlayToBf && /conquered this turn/i.test(card.text ?? '')
         if (wantsOpenBf && action.toBattlefield != null && (s.battlefields[action.toBattlefield]?.units.length ?? 0) > 0)
           return fail(state, `${card.name} can only be played to an open battlefield.`)
-        if (wantsEnemyOccupiedBf && action.toBattlefield != null && !s.battlefields[action.toBattlefield]?.units.some((u) => controllerOf(u) !== action.player))
+        if (wantsEnemyOccupiedBf && action.toBattlefield != null && !s.battlefields[action.toBattlefield]?.units.some((u) => isEnemyTo(s, action.player, u)))
           return fail(state, `${card.name} must be played to a battlefield with enemy units.`)
         if (wantsConqueredBf && (action.toBattlefield == null || !(s.players[action.player].conqueredThisTurn ?? []).includes(action.toBattlefield)))
           return fail(state, `${card.name} can only be played to a battlefield you conquered this turn.`)
@@ -6629,7 +6966,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const statOf = (u: EngineCard) => e.dealMight!.useStat === 'assault'
             ? parseKeywords(getCard(u.cardId)).assault + (u.grantAssault ?? 0)
             : mightOf(u, null, s1.players[u.owner]?.xp ?? 0)
-          const foe = s1.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => statOf(b) - statOf(a))[0]
+          const foe = s1.battlefields.flatMap((b) => b.units).filter((u) => isEnemyTo(s1, action.player, u) && getCard(u.cardId)?.type === 'unit').sort((a, b) => statOf(b) - statOf(a))[0]
           if (self && foe) {
             const selfAmt = statOf(self)
             const foeAmt = statOf(foe)
@@ -6652,7 +6989,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // Beast Below: "return another friendly unit and an enemy unit to their owners' hands."
           if (/return another friendly unit and an enemy unit to their owners'? hands/.test(txt)) {
             const friendly = [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === action.player && u.iid !== ci.iid && isUnit(u)).sort((a, b) => mightOf(a) - mightOf(b))[0]
-            const enemy = s1.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== action.player && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
+            const enemy = s1.battlefields.flatMap((b) => b.units).filter((u) => isEnemyTo(s1, action.player, u) && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
             if (friendly) s1 = bounceUnitToHand(s1, friendly.iid, action.player, card.name, 0)
             if (enemy) s1 = bounceUnitToHand(s1, enemy.iid, action.player, card.name, 0)
           }
@@ -6697,9 +7034,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         // Tideturner: "When you play me, you may choose a unit you control at another
         // location. Move me to its location and it to my original location." Auto-picks
-        // the strongest friendly unit elsewhere and swaps (per the auto-resolve policy).
+        // location to swap with (board-highlight pick; optional).
         if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Tideturner' && !legionGated) {
-          s1 = tideturnerSwap(s1, action.player, ci.iid)
+          s1 = startTideturner(s1, action.player, ci.iid)
         }
         // Keeper of Masks: when played, play two Reflection copies of itself here.
         if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Keeper of Masks' && !legionGated) {
@@ -6815,14 +7152,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
         }
         if (card.name === 'Elder Dragon') {
-          const strongestEnemy = (units: EngineCard[]) => {
-            const en = units.filter((u) => controllerOf(u) !== action.player && getCard(u.cardId)?.type === 'unit')
-            return en.length ? en.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : null
-          }
-          const edDead: EngineCard[] = []
-          for (const bf of s1.battlefields) { const v = strongestEnemy(bf.units); if (v) edDead.push(...applyTargetDamage(s1, v.iid, 1, true, action.player)) }
-          for (const pl of s1.players) { if (pl.id === action.player) continue; const v = strongestEnemy(pl.zones.base); if (v) edDead.push(...applyTargetDamage(s1, v.iid, 1, true, action.player)) }
-          if (edDead.length) s1 = fireDeaths(s1, edDead, action.player)
+          // Passive is state-based and active the instant Elder enters: any enemy unit
+          // that already has damage dies now (before the on-play trigger resolves).
+          s1 = enforceElderLethal(s1)
+          // On-play trigger goes on the Chain, opening a reaction window so opponents
+          // can move / bounce / counter / Unyielding-Spirit to save healthy units.
+          s1 = openElderOnPlay(s1, action.player)
+          s1 = fireOpponentUnitPlay(s1, action.player, ci.iid) // Vex - Apathetic
+          if (playToBf != null) s1 = showdownOrConquerAfterEffectMove(s1, playToBf, ci.iid, priorBfController)
+          return ok(s1)
         }
         s1 = fireOpponentUnitPlay(s1, action.player, ci.iid) // Vex - Apathetic
         // A non-Ambush unit played straight to a battlefield "becomes present" there
@@ -6922,7 +7260,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s1 = log(s1, action.player, `${card.name}: Repeat — resolving its effect again.`)
           s1 = resolveSpellEffects(s1, action.player, card, action.targets)
         }
-        sendToTrash(s1.players[action.player], ci)
+        disposeResolvedSpell(s1.players[action.player], ci, card)
         return ok(s1)
       }
       emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
@@ -7107,6 +7445,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (idx < 0) return fail(state, 'That Gold token is not on your Base.')
       const tok = p.zones.base[idx]
       if (tok.cardId !== GOLD_TOKEN_ID) return fail(state, 'That is not a Gold token.')
+      // It enters exhausted and can't be cracked until it readies on your next turn.
+      if (tok.exhausted && !state.sandbox) return fail(state, 'That Gold token is exhausted — it readies on your next turn.')
       p.zones.base.splice(idx, 1) // token ceases to exist (no Trash)
       if (!p.pool) p.pool = { energy: 0, power: {} }
       p.pool.power[action.domain] = (p.pool.power[action.domain] ?? 0) + 1
@@ -7419,6 +7759,82 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s)
       }
 
+      // Card Sharp: this opponent decides yes/no on a Gold token, then the next opponent.
+      if (pc.kind === 'cardSharpGold') {
+        const pl = JSON.parse(pc.payload ?? '{}') as { caster: PlayerId; queue: PlayerId[]; yes: number }
+        let yes = pl.yes ?? 0
+        if (action.iid === 'yes') {
+          spawnGold(s.players[action.player], 1, s.turn, tokensEnterReady(s, action.player))
+          s = log(s, action.player, `Card Sharp: ${s.players[action.player].name} played a Gold token.`)
+          yes += 1
+        } else {
+          s = log(s, action.player, `Card Sharp: ${s.players[action.player].name} declined.`)
+        }
+        return ok(offerCardSharpNext(s, pl.caster, pl.queue ?? [], yes))
+      }
+
+      // Tideturner: swap with the chosen friendly unit (or skip if declined).
+      if (pc.kind === 'tideSwap') {
+        const { tideIid } = JSON.parse(pc.payload ?? '{}') as { tideIid: string }
+        if (action.iid) s = doTideturnerSwap(s, action.player, tideIid, action.iid)
+        else s = log(s, action.player, 'Tideturner: did not swap.')
+        return ok(s)
+      }
+
+      // Scuttle Crab: a read-only peek at the revealed hand — any click/close ends it.
+      if (pc.kind === 'revealView') return ok(s)
+
+      // Cull the Weak: this player kills the chosen own unit, then the next player picks.
+      if (pc.kind === 'cullKill') {
+        const queue: PlayerId[] = JSON.parse(pc.payload ?? '{}').queue ?? []
+        if (action.iid) {
+          const u = findUnitAnywhere(s, action.iid)
+          const dead = killTarget(s, action.iid)
+          s = log(s, action.player, `Cull the Weak: ${s.players[action.player].name} killed ${u ? getCard(u.cardId)?.name : 'a unit'}.`)
+          s = fireDeaths(s, dead)
+        }
+        return ok(offerCullNext(s, queue))
+      }
+
+      // "An opponent reveals their hand" — step 1: which opponent.
+      if (pc.kind === 'revealOpponent') {
+        const spec = JSON.parse(pc.payload ?? '{}') as RevealSpec
+        if (action.iid == null) return ok(log(s, action.player, `${pc.srcName ?? 'Effect'}: declined.`))
+        const foeId = parseInt(action.iid.slice(4), 10) as PlayerId
+        return ok(offerRevealHand(s, action.player, foeId, pc.srcName ?? 'Effect', spec))
+      }
+      // Step 2: pick a card from the revealed hand.
+      if (pc.kind === 'revealHandCard') {
+        const spec = JSON.parse(pc.payload ?? '{}') as RevealSpec & { opponent: PlayerId }
+        if (action.iid == null) return ok(log(s, action.player, `${pc.srcName ?? 'Effect'}: declined to take a card.`))
+        if (spec.mode === 'boneSkewer') {
+          // Defer the actual play until a battlefield is chosen (step 3).
+          offerChoice(s, {
+            player: action.player, kind: 'revealBattlefield', bfIndex: -1,
+            prompt: 'Choose a battlefield to play it to.',
+            options: s.battlefields.map((b, i) => ({ iid: `bf:${i}`, label: getCard(b.cardId)?.name ?? `Battlefield ${i + 1}` })),
+            payload: JSON.stringify({ ...spec, unitIid: action.iid }), srcName: pc.srcName,
+          })
+          return ok(s)
+        }
+        return ok(applyRevealStrip(s, action.player, spec.opponent, action.iid, pc.srcName ?? 'Effect', spec))
+      }
+      // Step 3 (Bone Skewer): the chosen unit is played to the chosen battlefield, Stunned.
+      if (pc.kind === 'revealBattlefield') {
+        const spec = JSON.parse(pc.payload ?? '{}') as { opponent: PlayerId; unitIid: string }
+        if (action.iid == null) return ok(s)
+        const bfi = parseInt(action.iid.slice(3), 10)
+        const foe = s.players[spec.opponent]
+        const idx = foe?.zones.hand.findIndex((c) => c.iid === spec.unitIid) ?? -1
+        if (idx < 0) return ok(log(s, action.player, `${pc.srcName ?? 'Bone Skewer'}: that unit is no longer in hand.`))
+        const [played] = foe.zones.hand.splice(idx, 1)
+        s.battlefields[bfi].units.push({ ...played, exhausted: true, stunned: true, enteredTurn: s.turn, attached: [] })
+        emit({ kind: 'stun', iid: played.iid, player: action.player })
+        recomputeControllers(s)
+        s = log(s, action.player, `${pc.srcName ?? 'Bone Skewer'}: forced ${foe.name} to play ${getCard(played.cardId)?.name} to ${getCard(s.battlefields[bfi].cardId)?.name ?? `Battlefield ${bfi + 1}`}, Stunned.`)
+        return ok(fireStun(s, action.player, bfi))
+      }
+
       // Insightful Investigator: "You may pay 2 XP … they discard that card and draw 1."
       // On pay: −2 XP, strip the victim's highest-cost card to trash (firing their
       // discard cascade), then the VICTIM draws 1 (per the card, not the caster).
@@ -7660,7 +8076,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
 
     case 'ACTIVATE_UNIT': {
       const guard = requireActiveAction(state, action.player)
-      if (guard) return fail(state, guard)
+      // 2v2: a teammate may activate abilities during the Turn Player's open turn.
+      if (guard && !(state.teamMode && sameTeam(state, action.player, state.activePlayer) && !requireActiveAction(state, state.activePlayer)))
+        return fail(state, guard)
       const ab = canActivateUnit(state, action.player, action.iid)
       if (!ab) return fail(state, 'That ability can\'t be activated right now.')
       const s = clone(state)
@@ -8259,10 +8677,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // one-shot "would die this turn" death/banish replacements (Highlander, Smite).
       for (const pl of s.players) {
         for (const z of Object.keys(pl.zones) as ZoneId[])
-          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false }))
+          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false, preventNextDamage: false }))
       }
       for (const bf of s.battlefields)
-        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false }))
+        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false, preventNextDamage: false }))
       // "At the end of your turn, …" effects for the ending player's permanents
       // (Dazzling Aurora's free-unit engine; Annie - Dark Child's ready-runes —
       // hence the legend is included). Base gear + units + battlefield units + legend.
@@ -8300,7 +8718,20 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (reverting.length) recomputeControllers(s)
       // Empty the ending player's resource pool.
       s.players[state.activePlayer].pool = { energy: 0, power: {} }
-      s.activePlayer = nextPlayer(s, state.activePlayer)
+      s.preventAbilityDamageThisTurn = undefined // Unyielding Spirit lasts only "this turn"
+      // Time Warp: a queued extra turn goes to its caster, deferring the normal next
+      // player (skip any whose caster has since been eliminated). Else advance normally.
+      let extra = s.extraTurns ?? []
+      while (extra.length && s.players[extra[0]]?.out) extra = extra.slice(1)
+      if (extra.length) {
+        const who = extra[0]
+        s.extraTurns = extra.slice(1)
+        s.activePlayer = who
+        s = log(s, who, `${s.players[who].name} takes an extra turn (Time Warp).`)
+      } else {
+        s.extraTurns = []
+        s.activePlayer = nextPlayer(s, state.activePlayer)
+      }
       s.turn = state.turn + 1
       return ok(beginTurn(s))
     }
@@ -8530,10 +8961,10 @@ export function getLegalTargets(state: MatchState, card: Card, player?: PlayerId
   const e = spellEffect(card)
   let units = e.battlefieldOnly ? state.battlefields.flatMap((b) => b.units) : unitsInPlay(state)
   if (player != null) {
-    if (e.targetScope === 'enemy') units = units.filter((u) => controllerOf(u) !== player)
-    else if (e.targetScope === 'friendly') units = units.filter((u) => controllerOf(u) === player)
+    if (e.targetScope === 'enemy') units = units.filter((u) => isEnemyTo(state, player!, u))
+    else if (e.targetScope === 'friendly') units = units.filter((u) => isFriendlyTo(state, player!, u))
     // Enemy units that can't be chosen by enemy spells (Unstoppable [Level 16]).
-    units = units.filter((u) => controllerOf(u) === player || !untargetableByEnemy(state, u))
+    units = units.filter((u) => isFriendlyTo(state, player!, u) || !untargetableByEnemy(state, u))
   }
   // "kill a unit with N Might or less" (Soul Harvest) — only offer small units.
   if (e.kill > 0 && e.killMightMax != null) units = units.filter((u) => mightOf(u) <= e.killMightMax!)
@@ -8593,7 +9024,13 @@ export function canPlay(state: MatchState, player: PlayerId, iid: string): PlayC
       return { valid: false, reason: 'Ambush needs a battlefield where you have units.' }
   } else {
     const guard = requireActiveAction(state, player)
-    if (guard) return { valid: false, reason: guard }
+    if (guard) {
+      // 2v2: a Turn Player's teammate may play spells & gear during the open Action
+      // phase (Rule 316.4.f / 466.8.d) — but UNITS are still only played on your turn.
+      const assist =
+        state.teamMode && type !== 'unit' && sameTeam(state, player, state.activePlayer) && !requireActiveAction(state, state.activePlayer)
+      if (!assist) return { valid: false, reason: guard }
+    }
   }
 
   // Affordability (state-aware: applies "I cost X less" / battlefield modifiers).

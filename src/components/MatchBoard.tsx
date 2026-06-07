@@ -276,6 +276,8 @@ export default function MatchBoard({
   // Move zone-targeting mode: the radial's Move wedge closes the menu and lights up
   // valid destination zones on the board; clicking one dispatches the OVERRIDE move.
   const [moveMode, setMoveMode] = useState<{ iid: string; owner: PlayerId; name: string } | null>(null)
+  // A Gold gear token awaiting a domain choice to cash in (USE_GOLD).
+  const [cashGold, setCashGold] = useState<string | null>(null)
   const pickMoveDest = (dest: { toBattlefield?: number; toZone?: string; bottom?: boolean; value?: number }) => {
     if (moveMode && onCardAction) onCardAction({ type: 'OVERRIDE', player: moveMode.owner, op: 'move', iid: moveMode.iid, ...dest } as Action)
     setMoveMode(null)
@@ -330,6 +332,8 @@ export default function MatchBoard({
   }
 
   const me = match.players[perspective]
+  // 2v2: your teammate (whose hand is open to you, Rule 412.1 / 651.2).
+  const teammate = match.teamMode ? match.players.find((p) => p.id !== perspective && p.team === me.team) : undefined
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
 
@@ -1183,6 +1187,7 @@ export default function MatchBoard({
         onInspectCard={onInspect}
         onPlay={onPlay}
         onHandDragStart={beginHandDrag}
+        onCashGold={onCardAction ? (iid) => setCashGold(iid) : undefined}
         draggingIid={dragPlay?.c.iid}
         onEndTurn={onEndTurn}
         endTurnNeedsConfirm={hasUnplayedOptions}
@@ -1239,6 +1244,29 @@ export default function MatchBoard({
           onPick={pickMoveDest}
           onCancel={() => setMoveMode(null)}
         />
+      )}
+
+      {/* Gold token cash-in: pick which Power domain to float (free — exhaust + kill). */}
+      {cashGold && onCardAction && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" onClick={() => setCashGold(null)}>
+          <div className="w-full max-w-xs rounded-2xl border border-yellow-400/40 bg-[#10131c] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-1 text-lg font-bold">🪙 Cash in Gold token</h3>
+            <p className="mb-3 text-sm text-white/55">Add 1 Power of any domain to your pool (free).</p>
+            <div className="grid grid-cols-2 gap-2">
+              {DOMAINS.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => { onCardAction({ type: 'USE_GOLD', player: perspective, iid: cashGold, domain: d }); setCashGold(null) }}
+                  className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold hover:bg-white/15"
+                >
+                  <span className="h-3 w-3 rounded-full ring-1 ring-black/40" style={{ background: DOMAIN_META[d].color }} />
+                  {DOMAIN_META[d].label}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setCashGold(null)} className="mt-3 w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white/60 hover:bg-white/10">Cancel</button>
+          </div>
+        </div>
       )}
 
       {/* Drag-to-play: a lifted hand card with physics tilt + green/red drop zones. */}
@@ -1330,11 +1358,13 @@ export default function MatchBoard({
                     <div key={item.id} className={`flex items-center justify-between gap-2 rounded px-2 py-1 text-xs ${i === 0 ? 'bg-amber-500/20' : 'bg-black/20'}`}>
                       <span>
                         {i === 0 && <span className="text-amber-300">▶ </span>}
-                        {item.kind === 'counter' ? '✗ Counter: ' : ''}
+                        {item.kind === 'counter' ? '✗ Counter: ' : item.kind === 'trigger' ? '⚡ ' : ''}
                         <span className="font-medium">{card?.name ?? item.cardId}</span>{' '}
                         <span className="text-white/40">· {match.players[item.controller].name}</span>
                       </span>
-                      {onCounter && item.kind === 'spell' && (
+                      {/* A counter card is itself a spell, so you can Counter a Counter
+                          (Defy → Defy). Triggers (Elder on-play) aren't spells → no Counter. */}
+                      {onCounter && (item.kind === 'spell' || item.kind === 'counter') && (
                         <button onClick={() => onCounter(item.id)} className="shrink-0 rounded bg-rose-500/20 px-2 py-0.5 text-[10px] text-rose-200 hover:bg-rose-500/40">
                           Counter
                         </button>
@@ -1360,6 +1390,28 @@ export default function MatchBoard({
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
         panel lands here in Stage 2. On < xl this stacks below the board. */}
     <aside className="space-y-3 xl:w-[340px] xl:shrink-0">
+      {/* 2v2: your teammate's open hand (read-only) + their score. */}
+      {teammate && (
+        <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/5 p-2">
+          <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-emerald-200/70">
+            <span>🤝 Teammate · {teammate.name.replace(/\s*\([^)]*\)\s*$/, '')}</span>
+            <span>{teammate.points} pt · {teammate.zones.hand.length} cards</span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {teammate.zones.hand.map((c) => (
+              <CardPreview key={c.iid} cardId={c.cardId} center>
+                <img
+                  src={getCard(c.cardId)?.imageUrl}
+                  alt={getCard(c.cardId)?.name}
+                  className="h-16 w-auto rounded shadow"
+                  draggable={false}
+                />
+              </CardPreview>
+            ))}
+            {teammate.zones.hand.length === 0 && <span className="text-xs text-white/30">empty hand</span>}
+          </div>
+        </div>
+      )}
       {/* Phase ribbon — always-on step indicator for the structural turn phases. */}
       {(() => {
         const STEPS: { key: string; label: string }[] = [
@@ -1426,9 +1478,11 @@ export default function MatchBoard({
                 Done ({targetProgress.picked})
               </button>
             )}
-            <button onClick={onCancelTarget} className="rounded bg-white/10 px-3 py-1 text-sm hover:bg-white/20">
-              Cancel (Esc)
-            </button>
+            {onCancelTarget && (
+              <button onClick={onCancelTarget} className="rounded bg-white/10 px-3 py-1 text-sm hover:bg-white/20">
+                Cancel (Esc)
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1929,6 +1983,7 @@ function PlayerMat({
   onOpenSearch,
   onHandDragStart,
   draggingIid,
+  onCashGold,
 }: {
   me: PlayerState
   target: number
@@ -1964,6 +2019,8 @@ function PlayerMat({
   onHandDragStart?: (e: React.PointerEvent, c: EngineCard) => void
   /** The hand card currently lifted for dragging (rendered as a faint ghost). */
   draggingIid?: string
+  /** Cash in a ready Gold gear token (opens a domain picker). */
+  onCashGold?: (iid: string) => void
 }) {
   const dndOn = !!sandbox && !!onMoveOverride
   const domains = playerDomains(me)
@@ -2154,6 +2211,7 @@ function PlayerMat({
           >
         {me.zones.base.map((u) => {
           const isUnit = getCard(u.cardId)?.type === 'unit'
+          const isGoldTok = getCard(u.cardId)?.supertype === 'token' && getCard(u.cardId)?.type === 'gear'
           const movable = myActionTurn && isUnit && !u.exhausted
           // Entered this turn and still exhausted → can't act yet (summoning sick).
           const summoningSick = isUnit && u.exhausted && u.enteredTurn === turn
@@ -2196,6 +2254,19 @@ function PlayerMat({
                 <MechanicTooltip mechanic="summoning">
                   <span className="rounded bg-white/10 px-1 text-[8px] font-semibold text-white/50">💤 can’t act</span>
                 </MechanicTooltip>
+              )}
+              {isGoldTok && onCashGold && (
+                u.exhausted ? (
+                  <span className="rounded bg-white/10 px-1 text-[8px] font-semibold text-white/40" title="Readies on your next turn">🪙 ready next turn</span>
+                ) : (
+                  <button
+                    onClick={() => onCashGold(u.iid)}
+                    title="Kill this Gold token for 1 Power of any domain"
+                    className="rounded bg-yellow-500/30 px-2 py-0.5 text-[10px] font-semibold text-yellow-100 hover:bg-yellow-500/50"
+                  >
+                    🪙 Cash (Power)
+                  </button>
+                )
               )}
             </div>
           )

@@ -54,6 +54,10 @@ export interface EngineCard {
   tempMight?: number
   /** Stunned: deals no combat damage this turn (still has Might to survive). */
   stunned?: boolean
+  /** Counter Strike: "the next time this unit would be dealt damage this turn,
+   *  prevent it." One-shot — consumed by the next damage instance (spell/ability or
+   *  combat); cleared at END_TURN if unused. */
+  preventNextDamage?: boolean
   /** This unit can't move for the rest of the turn whose number this holds
    *  (Vex - Apathetic: "They can't move it this turn."). Compared to `turn`. */
   cantMoveTurn?: number
@@ -136,6 +140,8 @@ export type ZoneId =
 export interface PlayerState {
   id: PlayerId
   name: string
+  /** Team (2v2 only): 0 = Left, 1 = Right. Undefined in 1v1 / FFA. */
+  team?: 0 | 1
   legend: EngineCard | null
   /** The Chosen Champion, set aside and always playable from here. */
   champion: EngineCard | null
@@ -322,7 +328,12 @@ export interface LogEntry {
 /** An item on the Chain (a played spell, or a Counter). Resolves LIFO. */
 export interface ChainItem {
   id: string
-  kind: 'spell' | 'counter'
+  kind: 'spell' | 'counter' | 'trigger'
+  /** For `kind: 'trigger'` — a unit's "when you play me" ability put on the chain so
+   *  opponents get a reaction window (Elder Dragon's on-play 1-damage). `locs` is the
+   *  battlefield index each target was chosen at (-1 = a base); a target that has since
+   *  moved/left that location is no longer valid and takes nothing. */
+  trigger?: { kind: 'elderOnPlay'; locs: number[] }
   controller: PlayerId
   cardId: string
   /** The played card instance (trashed after the item resolves/is countered). */
@@ -351,6 +362,21 @@ export interface MatchState {
   battlefields: BattlefieldState[]
   pointsToWin: number
   winner: PlayerId | null
+  /** 2v2 team mode: players carry `team` (0/1), Victory Score is shared per team. */
+  teamMode?: boolean
+  /** Winning team (2v2) for the end screen — set alongside `winner`. */
+  winnerTeam?: 0 | 1
+  /** Battlefield controllers snapshotted at the start of the active player's
+   *  Beginning Phase — used to disqualify conquering a teammate-held BF (§466.8.e.1). */
+  bfControlAtBeginning?: (PlayerId | null)[]
+  /** Queued extra turns (Time Warp: "Take a turn after this one"). Each entry is the
+   *  player who will take an additional turn — consumed FIFO at END_TURN before the
+   *  normal next player. Chaining multiple Time Warps stacks the queue. */
+  extraTurns?: PlayerId[]
+  /** Unyielding Spirit: "Prevent all spell and ability damage this turn." All
+   *  applyTargetDamage (spell/ability) is zeroed while set; combat is unaffected.
+   *  Cleared at END_TURN. */
+  preventAbilityDamageThisTurn?: boolean
   showdown: ShowdownState | null
   /** The Chain (LIFO). Non-empty = a Closed State / priority window is open. */
   chain: ChainItem[]
@@ -378,6 +404,18 @@ export interface MatchState {
   pendingChoice?: {
     player: PlayerId
     kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'discardReplay' | 'trashConquerReturn' | 'becomesStateReady' | 'counterUnlessPay' | 'shardKill' | 'insightfulInvestigator' | 'nameTag' | 'peekToHand' | 'stealUnit' | 'stealGear'
+      // "An opponent reveals their hand" interactive flow (Bone Skewer + the
+      // strip/recycle/banish family): pick the opponent → pick a card from their
+      // revealed hand → (Bone Skewer) pick a battlefield.
+      | 'revealOpponent' | 'revealHandCard' | 'revealBattlefield'
+      // Cull the Weak: each player board-picks one of their own units to kill.
+      | 'cullKill'
+      // Card Sharp: each opponent decides whether to play a Gold gear token.
+      | 'cardSharpGold'
+      // Tideturner: board-pick a friendly unit at another location to swap with (optional).
+      | 'tideSwap'
+      // Scuttle Crab: read-only peek at a chosen opponent's revealed hand.
+      | 'revealView'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]

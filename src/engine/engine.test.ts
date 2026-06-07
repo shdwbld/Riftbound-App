@@ -1163,8 +1163,12 @@ describe('tokens (Recruit)', () => {
     s.players[0].zones.hand.push(u)
     const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeFalsy()
-    expect(r.state.players[1].zones.trash.some((x) => x.cardId === pricey)).toBe(true) // highest-cost discarded
-    expect(r.state.players[1].zones.hand.some((x) => x.cardId === cheap)).toBe(true) // cheap kept
+    expect(r.state.pendingChoice?.kind).toBe('revealHandCard') // interactive: you pick the card
+    const pick = r.state.players[1].zones.hand.find((x) => x.cardId === pricey)!
+    const r2 = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: pick.iid })
+    expect(r2.error).toBeFalsy()
+    expect(r2.state.players[1].zones.trash.some((x) => x.cardId === pricey)).toBe(true) // chosen card discarded
+    expect(r2.state.players[1].zones.hand.some((x) => x.cardId === cheap)).toBe(true) // other kept
   })
 
   it('opponent hand-strip (Sabotage): recycle the highest-cost NON-UNIT to deck, keep units', () => {
@@ -1177,9 +1181,17 @@ describe('tokens (Recruit)', () => {
     s.players[0].zones.hand.push(u)
     const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeFalsy()
-    expect(r.state.players[1].zones.mainDeck.some((x) => x.cardId === spell)).toBe(true) // non-unit recycled to deck
-    expect(r.state.players[1].zones.hand.some((x) => x.cardId === bigUnit)).toBe(true) // unit kept (non-unit filter)
-    expect(r.state.players[1].zones.trash.some((x) => x.cardId === spell)).toBe(false) // recycled, not trashed
+    expect(r.state.pendingChoice?.kind).toBe('revealHandCard')
+    // Non-unit filter: only the spell is offered, not the unit.
+    const offered = r.state.pendingChoice!.options.map((o) => r.state.players[1].zones.hand.find((c) => c.iid === o.iid)?.cardId)
+    expect(offered).toContain(spell)
+    expect(offered).not.toContain(bigUnit)
+    const pick = r.state.players[1].zones.hand.find((x) => x.cardId === spell)!
+    const r2 = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: pick.iid })
+    expect(r2.error).toBeFalsy()
+    expect(r2.state.players[1].zones.mainDeck.some((x) => x.cardId === spell)).toBe(true) // non-unit recycled to deck
+    expect(r2.state.players[1].zones.hand.some((x) => x.cardId === bigUnit)).toBe(true) // unit kept (non-unit filter)
+    expect(r2.state.players[1].zones.trash.some((x) => x.cardId === spell)).toBe(false) // recycled, not trashed
   })
 
   it('opponentDiscards (Bewitching Spirit): opponent discards their lowest-cost card', () => {
@@ -1206,8 +1218,10 @@ describe('tokens (Recruit)', () => {
     s.players[1].zones.runePool.push(mk(furyRune.id, 1)) // victim can afford the alt-cost replay
     const u = mk(stripper, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
-    expect(r.error).toBeFalsy()
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r0.error).toBeFalsy()
+    expect(r0.state.pendingChoice?.kind).toBe('revealHandCard')
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: fc.iid }) // you pick Flame Chompers to discard
     expect(r.state.players[1].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // Flame Chompers force-discarded
     // The cascade fired the victim's own "when you discard me" reaction — offered to the VICTIM (player 1):
     expect(r.state.pendingChoice?.kind).toBe('discardReplay')
@@ -3232,7 +3246,7 @@ describe('Batch F — Spiritforged attach', () => {
     const { GOLD_TOKEN_ID } = await import('./setup')
     if (!GOLD_TOKEN_ID) return
     const s = baseState()
-    const goldTok = mk(GOLD_TOKEN_ID, 0, { exhausted: true })
+    const goldTok = mk(GOLD_TOKEN_ID, 0, { exhausted: false }) // ready (a Gold token can't be cracked while exhausted)
     s.players[0].zones.base.push(goldTok)
     const r = reduce(s, { type: 'USE_GOLD', player: 0, iid: goldTok.iid, domain: 'fury' })
     expect(r.error).toBeUndefined()
@@ -4175,7 +4189,7 @@ describe('Viktor deck — minor faithfulness', () => {
     expect(r.state.battlefields[0].units.some((u) => u.iid === target.iid)).toBe(true) // survived (floored at 1, not -1)
   })
 
-  it('Cull the Weak: each player kills their lowest-Might unit', () => {
+  it('Cull the Weak: each player chooses one of their own units to kill', () => {
     const spellId = injectCard('cull-test', 'Each player kills one of their units.', { type: 'spell', energy: 0, power: {} })
     const low = mk(injectCard('cull-low', 'A unit.', { might: 1 }), 0)
     const high = mk(injectCard('cull-high', 'A unit.', { might: 9 }), 0)
@@ -4185,10 +4199,18 @@ describe('Viktor deck — minor faithfulness', () => {
     s.players[1].zones.base.push(enemy)
     const sp = mk(spellId, 0)
     s.players[0].zones.hand.push(sp)
-    const r = resolveChainSpell(s, sp.iid)
-    expect(r.state.players[0].zones.base.some((u) => u.iid === low.iid)).toBe(false) // lowest died
-    expect(r.state.players[0].zones.base.some((u) => u.iid === high.iid)).toBe(true) // kept
-    expect(r.state.players[1].zones.base.some((u) => u.iid === enemy.iid)).toBe(false) // each player loses one
+    const r0 = resolveChainSpell(s, sp.iid)
+    // Caster picks first — and may keep the low one, killing the high (it's a choice now).
+    expect(r0.state.pendingChoice?.kind).toBe('cullKill')
+    expect(r0.state.pendingChoice?.player).toBe(0)
+    const r1 = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: high.iid })
+    expect(r1.state.players[0].zones.base.some((u) => u.iid === high.iid)).toBe(false) // chosen one died
+    expect(r1.state.players[0].zones.base.some((u) => u.iid === low.iid)).toBe(true) // kept
+    // Opponent then picks their own.
+    expect(r1.state.pendingChoice?.player).toBe(1)
+    const r2 = reduce(r1.state, { type: 'RESOLVE_CHOICE', player: 1, iid: enemy.iid })
+    expect(r2.state.players[1].zones.base.some((u) => u.iid === enemy.iid)).toBe(false)
+    expect(r2.state.pendingChoice).toBeUndefined()
   })
 })
 
@@ -6009,9 +6031,12 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     s.battlefields[0].units.push(enemy)
     const dragon = mk(dragonId, 0)
     s.players[0].zones.hand.push(dragon)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: dragon.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: dragon.iid, payment: emptyPayment() })
     expect(r.error).toBeUndefined()
-    expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)).toBe(false)
+    expect(r.state.chain.length).toBe(1) // on-play trigger opens a reaction window
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)).toBe(false) // resolved → killed
   })
 
   it('Volibear - Furious: on attack, pauses for a FREE split-damage placement that the dealer resolves', () => {
@@ -6702,7 +6727,10 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     s.players[0].zones.hand.push(ashe)
     const victimCard = mk(injectCard('a5-ashe-v', 'x', { type: 'unit', energy: 5, might: 5 }), 1)
     s.players[1].zones.hand.push(victimCard)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: ashe.iid, payment: emptyPayment() })
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: ashe.iid, payment: emptyPayment() })
+    expect(r0.error).toBeFalsy()
+    expect(r0.state.pendingChoice?.kind).toBe('revealHandCard')
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: victimCard.iid }) // you pick the card to banish
     expect(r.error).toBeFalsy()
     expect(r.state.players[1].banished.some((c) => c.iid === victimCard.iid)).toBe(true) // banished from hand
     expect(r.state.asheBanishPending?.length).toBe(1) // pending return recorded
@@ -6837,12 +6865,38 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.error).toBeFalsy()
-    expect(r.state.players[1].zones.hand.some((c) => c.iid === big.iid)).toBe(false) // pulled from hand
-    const placed = r.state.battlefields.flatMap((b) => b.units).find((u) => u.iid === big.iid)
+    // 1 opponent → straight to the hand reveal; you pick the unit (the small one here,
+    // to prove it's YOUR choice, not an auto-pick of the biggest), then the battlefield.
+    expect(r.state.pendingChoice?.kind).toBe('revealHandCard')
+    expect(r.state.pendingChoice?.options.map((o) => o.iid).sort()).toEqual([big.iid, small.iid].sort())
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: small.iid })
+    expect(r.state.pendingChoice?.kind).toBe('revealBattlefield')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'bf:1' })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === small.iid)).toBe(false) // the CHOSEN unit pulled
+    const placed = r.state.battlefields[1].units.find((u) => u.iid === small.iid)
     expect(placed).toBeTruthy()
-    expect(placed?.owner).toBe(1) // it's still the opponent's unit
+    expect(placed?.owner).toBe(1) // still the opponent's unit
     expect(placed?.stunned).toBe(true) // Stunned (deals no combat damage this turn)
-    expect(r.state.players[1].zones.hand.some((c) => c.iid === small.iid)).toBe(true) // the weaker unit kept
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === big.iid)).toBe(true) // the un-chosen unit kept
+  })
+
+  it('Bone Skewer: declining the hand reveal takes nothing', () => {
+    const bid = injectCard('a5-skewer2', 'Choose a battlefield. An opponent reveals their hand. You may choose a unit from it. They play that unit to that battlefield, ignoring any and all costs. When they do, [Stun] it.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const skewer = mk(bid, 0)
+    s.players[0].zones.hand.push(skewer)
+    const u = mk(injectCard('a5-skewer-u', 'x', { type: 'unit', energy: 1, might: 1 }), 1)
+    s.players[1].zones.hand.push(u)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: skewer.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.pendingChoice?.kind).toBe('revealHandCard')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: null }) // decline ("you may")
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice).toBeUndefined()
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === u.iid)).toBe(true) // kept
+    expect(r.state.battlefields.flatMap((b) => b.units).length).toBe(0) // nothing played
   })
 })
 
@@ -7210,11 +7264,30 @@ describe('Phase B — card wiring (conditional Might)', () => {
     s.players[0].zones.hand.push(tide)
     const ally = mk(furyUnit.id, 0)
     s.battlefields[0] = { cardId: battlefield.id, units: [ally], controller: 0 }
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: tide.iid, payment: emptyPayment() })
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: tide.iid, payment: emptyPayment() })
+    expect(r0.error).toBeFalsy()
+    expect(r0.state.pendingChoice?.kind).toBe('tideSwap') // you choose the swap partner
+    expect(r0.state.pendingChoice?.options.map((o) => o.iid)).toEqual([ally.iid])
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: ally.iid })
     expect(r.error).toBeFalsy()
     expect(r.state.battlefields[0].units.some((u) => u.iid === tide.iid)).toBe(true) // Tideturner swapped to bf0
     expect(r.state.battlefields[0].units.some((u) => u.iid === ally.iid)).toBe(false)
     expect(r.state.players[0].zones.base.some((u) => u.iid === ally.iid)).toBe(true) // ally swapped to base
+  })
+
+  it('Tideturner: declining the swap leaves it in base', () => {
+    const tid = injectCard('b-tideturner2', '[Hidden] When you play me, you may choose a unit you control at another location. Move me to its location and it to my original location.', { name: 'Tideturner', type: 'unit', energy: 0, might: 2 })
+    const s = baseState()
+    const tide = mk(tid, 0)
+    s.players[0].zones.hand.push(tide)
+    const ally = mk(furyUnit.id, 0)
+    s.battlefields[0] = { cardId: battlefield.id, units: [ally], controller: 0 }
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: tide.iid, payment: emptyPayment() })
+    expect(r0.state.pendingChoice?.kind).toBe('tideSwap')
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: null }) // skip
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((u) => u.iid === tide.iid)).toBe(true) // stayed in base
+    expect(r.state.battlefields[0].units.some((u) => u.iid === ally.iid)).toBe(true) // ally unmoved
   })
 
   it('Mageseeker Investigator: opponents pay rainbow per extra unit moved to her battlefield', () => {

@@ -26,6 +26,7 @@ import PromptModal from '../components/PromptModal'
 import BugReportModal from '../components/BugReportModal'
 import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
+import RevealHandModal from '../components/RevealHandModal'
 import TagNameModal from '../components/TagNameModal'
 import VisionPrompt from '../components/VisionPrompt'
 import DamageAssignModal from '../components/DamageAssignModal'
@@ -46,11 +47,13 @@ function costLabel(cost: KeywordCost | ResolvedCost): string {
 import {
   type Transport,
   type NetMessage,
+  type TeamLobbyEntry,
   createTransport,
   makeRoomCode,
   onlineAvailable,
 } from '../net/transport'
 import MatchBoard from '../components/MatchBoard'
+import TeamSelectLobby from '../components/TeamSelectLobby'
 import type { PingData } from '../components/PingLayer'
 import CardDetailModal from '../components/CardDetailModal'
 import { MulliganView } from './MatchPage'
@@ -60,7 +63,7 @@ import MatchEndScreen from '../components/MatchEndScreen'
 import { unitLabel } from '../lib/cardLabel'
 
 type Role = 'host' | 'guest'
-type Status = 'lobby' | 'waiting' | 'connected'
+type Status = 'lobby' | 'waiting' | 'team_select' | 'connected'
 
 /** Unit iids the given player controls (base + battlefields) — gear targets. */
 function friendlyUnitIids(m: MatchState, p: PlayerId): string[] {
@@ -109,6 +112,13 @@ export default function OnlinePage() {
   // Pending [Weaponmaster] discounted-Equip payment (after the equipment is chosen).
   const [wmPay, setWmPay] = useState<{ unitIid: string; gearIid: string; card: Card; cost: ResolvedCost } | null>(null)
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
+  // Display name shown to other players (persisted). Falls back to the deck name.
+  const [displayName, setDisplayName] = useState(() => localStorage.getItem('riftbound.displayName') ?? '')
+  const displayNameRef = useRef(displayName)
+  useEffect(() => {
+    displayNameRef.current = displayName
+    localStorage.setItem('riftbound.displayName', displayName)
+  }, [displayName])
   const [seat, setSeat] = useState<PlayerId>(0)
   const [lobbyInfo, setLobbyInfo] = useState<{ joined: number; needed: number }>({
     joined: 1,
@@ -141,6 +151,10 @@ export default function OnlinePage() {
   const joinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const seatsRef = useRef<Record<string, number>>({})
   const roomCodeRef = useRef('')
+  // 2v2 team mode: host-authoritative roster for the team-selection lobby.
+  const teamModeRef = useRef(false)
+  const rosterRef = useRef<TeamLobbyEntry[]>([])
+  const [roster, setRoster] = useState<TeamLobbyEntry[]>([])
   const graceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // An opponent dropped out of presence (not a clean leave) — waiting to reconnect.
   const [disconnected, setDisconnected] = useState(false)
@@ -245,12 +259,72 @@ export default function OnlinePage() {
     }
   }, [lastEvents])
 
+  // --- 2v2 team-selection lobby (host-authoritative roster) ----------------
+  const broadcastRoster = () => {
+    setRoster([...rosterRef.current])
+    transportRef.current?.send({ kind: 'teamlobby', roster: rosterRef.current })
+  }
+  const applyPick = (clientId: string, team: 0 | 1) => {
+    const e = rosterRef.current.find((r) => r.clientId === clientId)
+    if (!e) return
+    if (rosterRef.current.filter((r) => r.team === team && r.clientId !== clientId).length >= 2) return // full
+    e.team = team
+    e.confirmed = false // re-confirm after a move
+    broadcastRoster()
+  }
+  const applyConfirm = (clientId: string, confirmed: boolean) => {
+    const e = rosterRef.current.find((r) => r.clientId === clientId)
+    if (!e || e.team == null) return
+    e.confirmed = confirmed
+    broadcastRoster()
+    maybeStartTeamMatch()
+  }
+  const maybeStartTeamMatch = () => {
+    const r = rosterRef.current
+    if (r.length === 4 && r.every((x) => x.confirmed) && [0, 1].every((t) => r.filter((x) => x.team === t).length === 2))
+      startTeamMatchAsHost()
+  }
+  function startTeamMatchAsHost() {
+    const r = rosterRef.current
+    const left = r.filter((x) => x.team === 0)
+    const right = r.filter((x) => x.team === 1)
+    if (left.length !== 2 || right.length !== 2) return
+    // Interleave seats so turn order alternates teams: L,R,L,R → teams [0,1,0,1].
+    const order = [left[0], right[0], left[1], right[1]]
+    const deckFor = (cid: string) => (cid === clientIdRef.current ? myDeckRef.current : joinsRef.current.find((j) => j.clientId === cid)?.deck)
+    const ds = order.map((x) => deckFor(x.clientId))
+    if (ds.some((d) => !d)) return
+    const names = order.map((x) => x.name)
+    const m = createMatch(ds as Deck[], { names, teams: [0, 1, 0, 1], interactiveSetup: true })
+    const seats: Record<string, number> = {}
+    order.forEach((x, i) => (seats[x.clientId] = i))
+    startedRef.current = true
+    seatsRef.current = seats
+    seatRef.current = (seats[clientIdRef.current] ?? 0) as PlayerId
+    setSeat(seatRef.current)
+    matchRef.current = m
+    setMatch(m)
+    setStatus('connected')
+    persistSession('host', seatRef.current)
+    hostPersist(m)
+    transportRef.current?.send({ kind: 'start', state: m, seats })
+  }
+  // Local player's controls in the team lobby (host applies directly; guest sends).
+  const localPickTeam = (team: 0 | 1) => {
+    if (roleRef.current === 'host') applyPick(clientIdRef.current, team)
+    else transportRef.current?.send({ kind: 'pickteam', clientId: clientIdRef.current, team })
+  }
+  const localConfirmTeam = (confirmed: boolean) => {
+    if (roleRef.current === 'host') applyConfirm(clientIdRef.current, confirmed)
+    else transportRef.current?.send({ kind: 'confirmteam', clientId: clientIdRef.current, confirmed })
+  }
+
   function startMatchAsHost(t: Transport) {
     const myDeck = myDeckRef.current
     if (!myDeck) return
     const guests = joinsRef.current.slice(0, countRef.current - 1)
     const ds = [myDeck, ...guests.map((g) => g.deck)]
-    const names = [myDeck.name, ...guests.map((g) => g.name)]
+    const names = [displayNameRef.current.trim() || myDeck.name, ...guests.map((g) => g.name)]
     const m = createMatch(ds, { names, interactiveSetup: true })
     const seats: Record<string, number> = {}
     guests.forEach((g, i) => (seats[g.clientId] = i + 1))
@@ -283,7 +357,24 @@ export default function OnlinePage() {
           const joined = joinsRef.current.length + 1
           setLobbyInfo({ joined, needed: countRef.current })
           t.send({ kind: 'lobby', joined, needed: countRef.current })
-          if (joined >= countRef.current) startMatchAsHost(t)
+          if (joined >= countRef.current) {
+            if (teamModeRef.current) {
+              // Seed the team-selection roster and move everyone to that page.
+              rosterRef.current = [
+                { clientId: clientIdRef.current, name: displayNameRef.current.trim() || myDeckRef.current?.name || 'Host', team: null, confirmed: false },
+                ...joinsRef.current.slice(0, 3).map((g) => ({ clientId: g.clientId, name: g.name, team: null as 0 | 1 | null, confirmed: false })),
+              ]
+              startedRef.current = true // stop accepting further joins
+              setStatus('team_select')
+              broadcastRoster()
+            } else {
+              startMatchAsHost(t)
+            }
+          }
+        } else if (msg.kind === 'pickteam') {
+          applyPick(msg.clientId, msg.team)
+        } else if (msg.kind === 'confirmteam') {
+          applyConfirm(msg.clientId, msg.confirmed)
         } else if (msg.kind === 'action') {
           const cur = matchRef.current
           if (!cur) return
@@ -308,10 +399,13 @@ export default function OnlinePage() {
           hostPersist(prev)
           t.send({ kind: 'state', state: prev })
         } else if (msg.kind === 'resync') {
-          // A reconnecting guest asks for the current match — re-send start + state.
+          // A reconnecting guest asks for the current match — re-send start + state,
+          // or the team-selection roster if we haven't started yet.
           if (matchRef.current) {
             t.send({ kind: 'start', state: matchRef.current, seats: seatsRef.current })
             t.send({ kind: 'state', state: matchRef.current })
+          } else if (rosterRef.current.length) {
+            t.send({ kind: 'teamlobby', roster: rosterRef.current })
           }
         } else if (msg.kind === 'leave') {
           flash('A player left the room.')
@@ -324,6 +418,11 @@ export default function OnlinePage() {
         }
         if (msg.kind === 'lobby') {
           setLobbyInfo({ joined: msg.joined, needed: msg.needed })
+        } else if (msg.kind === 'teamlobby') {
+          rosterRef.current = msg.roster
+          setRoster(msg.roster)
+          teamModeRef.current = true
+          setStatus('team_select')
         } else if (msg.kind === 'start') {
           const mySeat = msg.seats[clientIdRef.current]
           if (mySeat === undefined) {
@@ -348,21 +447,23 @@ export default function OnlinePage() {
     })
   }
 
-  const createRoom = (count: number) => {
+  const createRoom = (count: number, team2v2 = false) => {
     const deck = getDeck(deckId)
     if (!deck) return flash('Pick a deck first.')
     const code = makeRoomCode()
     roleRef.current = 'host'
     myDeckRef.current = deck
-    countRef.current = count
+    teamModeRef.current = team2v2
+    countRef.current = team2v2 ? 4 : count
     seatRef.current = 0
     joinsRef.current = []
+    rosterRef.current = []
     startedRef.current = false
     setRole('host')
     setSeat(0)
     roomCodeRef.current = code
     setRoomCode(code)
-    setLobbyInfo({ joined: 1, needed: count })
+    setLobbyInfo({ joined: 1, needed: countRef.current })
     const t = createTransport(code, clientIdRef.current)
     transportRef.current = t
     connect(t)
@@ -384,7 +485,7 @@ export default function OnlinePage() {
     connect(t)
     setStatus('waiting')
     persistSession('guest', 0)
-    t.send({ kind: 'join', name: deck.name, deck, clientId: clientIdRef.current })
+    t.send({ kind: 'join', name: displayNameRef.current.trim() || deck.name, deck, clientId: clientIdRef.current })
     // No host responds to an invalid/expired code — give feedback instead of
     // hanging in "waiting" forever.
     if (joinTimeoutRef.current) clearTimeout(joinTimeoutRef.current)
@@ -475,9 +576,23 @@ export default function OnlinePage() {
         decks={decks}
         deckId={deckId}
         setDeckId={setDeckId}
+        displayName={displayName}
+        setDisplayName={setDisplayName}
         onCreate={createRoom}
         onJoin={joinRoom}
         toast={toast}
+      />
+    )
+
+  if (status === 'team_select')
+    return (
+      <TeamSelectLobby
+        roster={roster}
+        myClientId={clientIdRef.current}
+        roomCode={roomCode}
+        onPick={localPickTeam}
+        onConfirm={localConfirmTeam}
+        onLeave={leave}
       />
     )
 
@@ -507,6 +622,14 @@ export default function OnlinePage() {
       : match.phase === 'showdown' && match.showdown
         ? match.showdown.priority
         : match.activePlayer
+
+  // Board-highlight pending picks (Cull the Weak · Tideturner): the local seat clicks
+  // a glowing unit → RESOLVE_CHOICE. tideSwap is optional (Cancel declines).
+  const boardPick =
+    match.pendingChoice && (match.pendingChoice.kind === 'cullKill' || match.pendingChoice.kind === 'tideSwap') && match.pendingChoice.player === seat
+      ? match.pendingChoice
+      : null
+  const boardPickOptional = boardPick?.kind === 'tideSwap'
 
   const counterWith = (targetChainId: string) => {
     const me = match.players[seat]
@@ -809,16 +932,18 @@ export default function OnlinePage() {
         onActivateUnit={activateUnit}
         onAttachGear={(gearIid) => setAttachPick({ gearIid })}
         onUndo={undo}
-        targetingActive={!!targeting}
+        targetingActive={!!targeting || !!boardPick}
         legalTargets={
           targeting
             ? activeLegalTargets().filter((id) => !targeting.picked.includes(id))
-            : undefined
+            : boardPick
+              ? boardPick.options.map((o) => o.iid)
+              : undefined
         }
         targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}
-        onTarget={onTarget}
+        onTarget={boardPick ? (iid) => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid }) : onTarget}
         onConfirmTargets={confirmTargets}
-        onCancelTarget={() => setTargeting(null)}
+        onCancelTarget={boardPick ? (boardPickOptional ? () => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null }) : undefined) : () => setTargeting(null)}
         onInspect={setInspect}
         events={lastEvents}
         onPing={(x, y) => {
@@ -1028,9 +1153,22 @@ export default function OnlinePage() {
           onCancel={() => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && (
+      {match.pendingChoice && match.pendingChoice.player === seat && (match.pendingChoice.kind === 'revealHandCard' || match.pendingChoice.kind === 'revealView') && (
+        <RevealHandModal
+          title={match.pendingChoice.prompt}
+          options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
+          cardIdOf={(iid) => match.players.flatMap((p) => p.zones.hand).find((c) => c.iid === iid)?.cardId}
+          optional={match.pendingChoice.kind === 'revealView' || match.pendingChoice.srcName?.includes('Bone Skewer')}
+          onPick={(iid) => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid })}
+        />
+      )}
+      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && (
         <ChoiceModal
-          title="✦ Battlefield"
+          title={
+            match.pendingChoice.kind === 'revealOpponent' ? '🃏 Reveal a Hand'
+              : match.pendingChoice.kind === 'revealBattlefield' ? '✦ Choose a Battlefield'
+                : '✦ Battlefield'
+          }
           subtitle={match.pendingChoice.prompt}
           options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
           onPick={(iid) => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: String(iid) })}
@@ -1078,6 +1216,8 @@ function Lobby({
   decks,
   deckId,
   setDeckId,
+  displayName,
+  setDisplayName,
   onCreate,
   onJoin,
   toast,
@@ -1085,12 +1225,15 @@ function Lobby({
   decks: Deck[]
   deckId: string
   setDeckId: (v: string) => void
-  onCreate: (count: number) => void
+  displayName: string
+  setDisplayName: (v: string) => void
+  onCreate: (count: number, team2v2?: boolean) => void
   onJoin: (code: string) => void
   toast: string | null
 }) {
   const [code, setCode] = useState('')
   const [count, setCount] = useState(2)
+  const [mode, setMode] = useState<'ffa' | '2v2'>('ffa')
   if (decks.length === 0)
     return (
       <div className="rounded-xl border border-dashed border-white/15 p-10 text-center">
@@ -1123,27 +1266,53 @@ function Lobby({
         />
 
         <div className="space-y-3">
+          <div className="rounded-xl border border-white/10 bg-[#0a1428] p-5">
+            <label className="text-lg font-semibold">Display name</label>
+            <input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value.slice(0, 24))}
+              maxLength={24}
+              placeholder={decks.find((d) => d.id === deckId)?.name ?? 'Your name'}
+              className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-sky-400"
+            />
+            <p className="mt-1.5 text-[11px] text-white/40">Shown to other players. Defaults to your deck name if left blank.</p>
+          </div>
           <div className="rounded-xl border border-sky-400/40 bg-sky-500/10 p-5">
             <div className="text-lg font-semibold">Create room</div>
-            <div className="mt-2 flex items-center gap-2 text-sm">
-              <span className="text-white/60">Players:</span>
-              {[2, 3, 4].map((n) => (
+            <div className="mt-2 flex items-center gap-1 rounded-lg bg-black/30 p-0.5 text-sm">
+              {([['ffa', 'Free-for-all'], ['2v2', '2v2 Teams']] as const).map(([m, label]) => (
                 <button
-                  key={n}
-                  onClick={() => setCount(n)}
-                  className={`rounded px-2.5 py-1 text-sm font-semibold ${
-                    count === n ? 'bg-sky-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
-                  }`}
+                  key={m}
+                  onClick={() => setMode(m)}
+                  className={`flex-1 rounded-md px-2 py-1 font-semibold transition ${mode === m ? 'bg-sky-500 text-white' : 'text-white/55 hover:text-white'}`}
                 >
-                  {n}
+                  {label}
                 </button>
               ))}
             </div>
+            {mode === 'ffa' ? (
+              <div className="mt-2 flex items-center gap-2 text-sm">
+                <span className="text-white/60">Players:</span>
+                {[2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setCount(n)}
+                    className={`rounded px-2.5 py-1 text-sm font-semibold ${
+                      count === n ? 'bg-sky-500 text-white' : 'border border-white/15 text-white/70 hover:bg-white/5'
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-[11px] text-white/45">4 players, 2 teams. You'll pick Left/Right after everyone joins. First team to 11 points wins.</p>
+            )}
             <button
-              onClick={() => onCreate(count)}
+              onClick={() => (mode === '2v2' ? onCreate(4, true) : onCreate(count))}
               className="mt-3 w-full rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold hover:bg-sky-400"
             >
-              Create {count}-player room
+              {mode === '2v2' ? 'Create 2v2 room' : `Create ${count}-player room`}
             </button>
           </div>
           <div className="rounded-xl border border-white/10 bg-[#0a1428] p-5">

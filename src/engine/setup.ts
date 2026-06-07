@@ -25,6 +25,8 @@ export const RULES = {
    *  v1.2 §462+ this is 8 — only 2v2 (Magma Chamber, team mode, not implemented)
    *  uses 11. */
   pointsToWinMultiplayer: 8,
+  /** Victory Score for a 2v2 team match (Magma Chamber, Core Rules v1.2 §466). */
+  pointsToWin2v2: 11,
 }
 
 let counter = 0
@@ -158,6 +160,9 @@ export interface MatchOptions {
   names?: string[]
   firstPlayer?: PlayerId
   pointsToWin?: number
+  /** 2v2 team assignment, aligned to `decks` order (0 = Left, 1 = Right). When
+   *  present the match runs in team mode (shared Victory Score 11). */
+  teams?: (0 | 1)[]
   rng?: () => number
   /** Start in the interactive pre-game setup (roll → first → champion →
    *  battlefield → mulligan) instead of jumping straight to the mulligan. */
@@ -223,9 +228,12 @@ export function createMatch(decks: Deck[], opts: MatchOptions = {}): MatchState 
   const n = decks.length
   const names = opts.names ?? decks.map((_, i) => `Player ${i + 1}`)
   const firstPlayer = opts.firstPlayer ?? 0
-  const players: PlayerState[] = decks.map((d, i) =>
-    buildPlayer(d, i, names[i] ?? `Player ${i + 1}`, rng, !!opts.interactiveSetup),
-  )
+  const teamMode = !!opts.teams && decks.length === 4
+  const players: PlayerState[] = decks.map((d, i) => {
+    const p = buildPlayer(d, i, names[i] ?? `Player ${i + 1}`, rng, !!opts.interactiveSetup)
+    if (teamMode) p.team = opts.teams![i]
+    return p
+  })
   // Each player brings 3 battlefields and places one (Bo1: a random pick). In a
   // 4-player game the player taking the first turn removes theirs, so the
   // Battlefield Count is 3 (Core Rules v1.2 §465–466). 1v1 → 2, FFA3 → 3.
@@ -252,8 +260,9 @@ export function createMatch(decks: Deck[], opts: MatchOptions = {}): MatchState 
       units: [],
       controller: null,
     })),
+    teamMode,
     pointsToWin:
-      (opts.pointsToWin ?? (n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer)) +
+      (opts.pointsToWin ?? (teamMode ? RULES.pointsToWin2v2 : n === 2 ? RULES.pointsToWin : RULES.pointsToWinMultiplayer)) +
       // Static battlefield rule-changers (e.g. "increase points to win by 1").
       bfIds.reduce((sum, id) => sum + battlefieldPassive(id).winDelta, 0),
     winner: null,

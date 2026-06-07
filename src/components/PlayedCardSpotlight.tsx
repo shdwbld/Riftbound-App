@@ -15,7 +15,7 @@ export default function PlayedCardSpotlight({
   perspective: PlayerId
   lastPlayed: { cardId: string; player: PlayerId } | null
 }) {
-  const stack: { cardId: string; player: PlayerId; kind: 'spell' | 'counter' }[] = match.chain.length
+  const stack: { cardId: string; player: PlayerId; kind: 'spell' | 'counter' | 'trigger' }[] = match.chain.length
     ? [...match.chain].reverse().map((it) => ({ cardId: it.cardId, player: it.controller, kind: it.kind }))
     : lastPlayed
       ? [{ cardId: lastPlayed.cardId, player: lastPlayed.player, kind: 'spell' }]

@@ -9,9 +9,21 @@ import type { MatchState, Action, GameEvent } from '../engine/types'
 //   - Supabase Realtime: true cross-device (when env keys are configured)
 // ---------------------------------------------------------------------------
 
+/** One player's row in the 2v2 team-selection lobby. */
+export interface TeamLobbyEntry {
+  clientId: string
+  name: string
+  team: 0 | 1 | null
+  confirmed: boolean
+}
+
 export type NetMessage =
   | { kind: 'join'; name: string; deck: Deck; clientId: string }
   | { kind: 'lobby'; joined: number; needed: number }
+  /** 2v2 team-selection lobby (host-authoritative roster). */
+  | { kind: 'pickteam'; clientId: string; team: 0 | 1 }
+  | { kind: 'confirmteam'; clientId: string; confirmed: boolean }
+  | { kind: 'teamlobby'; roster: TeamLobbyEntry[] }
   | { kind: 'start'; state: MatchState; seats: Record<string, number> }
   | { kind: 'state'; state: MatchState; events?: GameEvent[] }
   | { kind: 'action'; action: Action }

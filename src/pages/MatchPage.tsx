@@ -22,6 +22,7 @@ import PromptModal from '../components/PromptModal'
 import BugReportModal from '../components/BugReportModal'
 import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
+import RevealHandModal from '../components/RevealHandModal'
 import TagNameModal from '../components/TagNameModal'
 import VisionPrompt from '../components/VisionPrompt'
 import SetupScreen from '../components/SetupScreen'
@@ -315,6 +316,15 @@ export default function MatchPage() {
           ? match.pendingChoice.player
           : match.activePlayer
 
+  // Board-highlight pending picks (Cull the Weak: kill own unit · Tideturner: swap
+  // partner): the local player clicks a glowing unit → RESOLVE_CHOICE. tideSwap is
+  // optional (the Cancel button declines); cullKill is mandatory (no Cancel).
+  const boardPick =
+    match.pendingChoice && (match.pendingChoice.kind === 'cullKill' || match.pendingChoice.kind === 'tideSwap') && match.pendingChoice.player === controlling
+      ? match.pendingChoice
+      : null
+  const boardPickOptional = boardPick?.kind === 'tideSwap'
+
   const counterWith = (targetChainId: string) => {
     const me = match.players[controlling]
     const reaction = me.zones.hand.find((c) => {
@@ -580,12 +590,12 @@ export default function MatchPage() {
         onAttachGear={(gearIid) => setAttachPick({ gearIid })}
         onMoveGear={(gearIid, fromUnitIid, owner) => setMovePick({ gearIid, fromUnitIid, owner })}
         onUndo={undo}
-        targetingActive={!!targeting}
-        legalTargets={targeting ? activeLegalTargets().filter((id) => !targeting.picked.includes(id)) : undefined}
+        targetingActive={!!targeting || !!boardPick}
+        legalTargets={targeting ? activeLegalTargets().filter((id) => !targeting.picked.includes(id)) : boardPick ? boardPick.options.map((o) => o.iid) : undefined}
         targetProgress={targeting && targeting.count > 1 ? { picked: targeting.picked.length, count: targeting.count } : undefined}
-        onTarget={onTarget}
+        onTarget={boardPick ? (iid) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid }) : onTarget}
         onConfirmTargets={confirmTargets}
-        onCancelTarget={() => setTargeting(null)}
+        onCancelTarget={boardPick ? (boardPickOptional ? () => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null }) : undefined) : () => setTargeting(null)}
         onInspect={setInspect}
         events={lastEvents}
         onPing={(x, y) => addPing(x, y, match.players[controlling]?.name?.replace(/\s*\([^)]*\)\s*$/, ''))}
@@ -859,14 +869,27 @@ export default function MatchPage() {
           onCancel={() => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && (
+      {match.pendingChoice && match.pendingChoice.player === controlling && (match.pendingChoice.kind === 'revealHandCard' || match.pendingChoice.kind === 'revealView') && (
+        <RevealHandModal
+          title={match.pendingChoice.prompt}
+          options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
+          cardIdOf={(iid) => match.players.flatMap((p) => p.zones.hand).find((c) => c.iid === iid)?.cardId}
+          optional={match.pendingChoice.kind === 'revealView' || match.pendingChoice.srcName?.includes('Bone Skewer')}
+          onPick={(iid) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid })}
+        />
+      )}
+      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && (
         <ChoiceModal
           title={
             match.pendingChoice.kind === 'stealUnit'
               ? '⚔ Take Control of a Unit'
               : match.pendingChoice.kind === 'stealGear'
                 ? '⚙ Steal a Gear'
-                : '✦ Battlefield'
+                : match.pendingChoice.kind === 'revealOpponent'
+                  ? '🃏 Reveal a Hand'
+                  : match.pendingChoice.kind === 'revealBattlefield'
+                    ? '✦ Choose a Battlefield'
+                    : '✦ Battlefield'
           }
           subtitle={match.pendingChoice.prompt}
           options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}

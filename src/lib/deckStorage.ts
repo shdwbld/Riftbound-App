@@ -140,6 +140,34 @@ export function exportDeck(deck: Deck): string {
   return lines.join('\n')
 }
 
+/** A card's display name in the "TCG Arena" convention: drop any trailing
+ *  "(Alternate Art)"/"[CODE]" suffix and use a comma subtitle ("Annie, Dark
+ *  Child") instead of our internal dash ("Annie - Dark Child"). */
+function arenaName(id: string): string {
+  const raw = getCard(id)?.name ?? id
+  return raw.replace(/\s*[([][^)\]]*[)\]]\s*$/, '').replace(/\s+-\s+/g, ', ').trim()
+}
+
+/** Export in the plain "<count> <name>" decklist format used by TCG Arena:
+ *  legend, champion, battlefields, runes, then main, then a `Sideboard:` footer.
+ *  Same-named cards (e.g. alt-art runes) are aggregated onto one line. */
+export function exportDeckArena(deck: Deck): string {
+  const lines: string[] = []
+  const group = (pairs: Array<[string, number]>) => {
+    const agg = new Map<string, number>()
+    for (const [id, n] of pairs) { const nm = arenaName(id); agg.set(nm, (agg.get(nm) ?? 0) + n) }
+    for (const [nm, n] of agg) lines.push(`${n} ${nm}`)
+  }
+  if (deck.legendId) lines.push(`1 ${arenaName(deck.legendId)}`)
+  if (deck.championId) lines.push(`1 ${arenaName(deck.championId)}`)
+  group(deck.battlefields.map((id) => [id, 1]))
+  group(Object.entries(deck.runes))
+  group(Object.entries(deck.main))
+  lines.push('Sideboard:')
+  group(Object.entries(deck.sideboard))
+  return lines.join('\n')
+}
+
 type Section = 'main' | 'runes' | 'battlefields' | 'legend' | 'champion' | 'sideboard' | null
 
 /** Split a card line into count, name, and a code (from [..]/(..) or a trailing

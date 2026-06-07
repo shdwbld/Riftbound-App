@@ -88,6 +88,12 @@ export interface ParsedEffect {
   /** Strike Down: a chosen equipped friendly unit deals damage equal to its Might
    *  to an enemy, then detaches an Equipment. Hand-resolved with auto-targets. */
   strikeDown: boolean
+  /** Deathgrip: "Kill a friendly unit. If you do, give +Might equal to its Might to
+   *  another friendly unit this turn." Two friendly targets — [0] killed, [1] buffed. */
+  deathgrip: boolean
+  /** Counter Strike: "Choose a unit. The next time it would be dealt damage this turn,
+   *  prevent it." One chosen unit (any side). */
+  preventNextDamage: boolean
   /** Generic "deal damage equal to Might" (`dealMight`). `dealer`: the source unit
    *  ('self' — trigger cards), a chosen friendly, or any chosen unit. `target`:
    *  one enemy / all enemies at a bf / split among enemies / mutual (the two chosen
@@ -167,6 +173,8 @@ export interface ParsedEffect {
    *  (trash), Sabotage (deck/recycle, non-unit), Ashe - Focused (banish). Auto-picks
    *  the highest-cost matching card from the opponent holding the most cards. */
   opponentHandStrip: { to: 'trash' | 'deck' | 'banish'; nonUnit: boolean } | null
+  /** Informational reveal of an opponent's hand with no card taken (Scuttle Crab). */
+  revealOppHandView: boolean
   /** "Choose a player/opponent. They discard N." — the opponent loses N cards of
    *  THEIR choice (auto: their lowest-cost). Bewitching Spirit. */
   opponentDiscards: number
@@ -278,6 +286,8 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   readyAllUnits: false,
   readyOrExhaustLegend: false,
   strikeDown: false,
+  deathgrip: false,
+  preventNextDamage: false,
   dealMight: null,
   goldTokens: 0,
   namedToken: null,
@@ -304,6 +314,7 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
   gearKillControllerDraw: 0,
   playGearFromHand: null,
   opponentHandStrip: null,
+  revealOppHandView: false,
   opponentDiscards: 0,
   recycleFromTrash: 0,
   playUnitFromTrash: null,
@@ -329,11 +340,11 @@ export const EMPTY_EFFECT = (): ParsedEffect => ({
 
 /** The part of an effect that requires choosing target unit(s). */
 export function hasTargetedPart(e: ParsedEffect): boolean {
-  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.moveToBase || e.moveUnit || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.grantShield > 0 || e.grantTank || e.deathShield
+  return e.damage > 0 || e.kill > 0 || e.tempMight !== 0 || e.bounce !== null || e.moveToBase || e.moveUnit || e.stun > 0 || e.grantAssault > 0 || e.grantGanking || e.grantShield > 0 || e.grantTank || e.deathShield || e.deathgrip || e.preventNextDamage
 }
 /** The part of an effect that resolves with no target (draw/channel/etc.). */
 export function hasUntargetedPart(e: ParsedEffect): boolean {
-  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || e.grantShieldHere > 0 || !!e.killGear || e.bounceGear || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0 || e.moveSourceToBf
+  return e.draw > 0 || e.discard > 0 || e.drawPerBattlefield > 0 || e.drawPerMighty > 0 || e.channel > 0 || e.channelExhausted > 0 || e.recruits > 0 || e.goldTokens > 0 || !!e.namedToken || e.readyUnits > 0 || e.readyRunes > 0 || e.buff > 0 || !!e.buffAll || e.tempMightSelf !== 0 || e.tempMightAll !== 0 || e.tempMightAllEnemy !== 0 || !!e.tempMightTag || e.cullEachPlayer || e.grantAssaultHere > 0 || e.grantShieldHere > 0 || !!e.killGear || e.bounceGear || !!e.returnFromTrash || !!e.playUnitFromTrash || !!e.playUnitFromHand || e.revealPlayFromDeck || !!e.peekDraw || !!e.peekToHand || !!e.peekBanishPlay || e.score > 0 || !!e.opponentHandStrip || e.opponentDiscards > 0 || e.moveSourceToBf || e.revealOppHandView
 }
 
 const WORD_NUM: Record<string, number> = {
@@ -503,6 +514,10 @@ function parse(text: string): ParsedEffect {
   // Strike Down: "choose an equipped friendly unit. It deals damage equal to its
   // Might to an enemy unit. Then detach an Equipment from it."
   if (/choose an equipped friendly unit\.[\s\S]*deals damage equal to its might[\s\S]*then detach/.test(t)) { eff.strikeDown = true; hit = true }
+  // Deathgrip: "Kill a friendly unit. If you do, give +Might equal to its Might to another friendly unit…"
+  if (/kill a friendly unit\.[\s\S]*equal to its might to another friendly unit/.test(t)) { eff.deathgrip = true; hit = true }
+  // Counter Strike: "Choose a unit. The next time that unit would be dealt damage this turn, prevent it."
+  if (/the next time that unit would be dealt damage this turn, prevent it/.test(t)) { eff.preventNextDamage = true; hit = true }
   // Generic "deal damage equal to Might/Assault" (everything except Strike Down).
   const dmM = !eff.strikeDown ? t.match(/deals? damage equal to (?:its|my|their|our) (\[?assault\]?|mights?)/) : null
   if (dmM) {
@@ -667,6 +682,9 @@ function parse(text: string): ParsedEffect {
     eff.opponentHandStrip = { to, nonUnit: !!ohsM[1] }
     hit = true
   }
+  // Informational reveal with NO card taken (Scuttle Crab: "Choose an opponent. They
+  // reveal their hand. You can look at their facedown cards this turn."). A read-only peek.
+  else if (/they reveal their hand/.test(t)) { eff.revealOppHandView = true; hit = true }
   // "Choose a player/opponent. They discard N." — opponent's own choice (Bewitching
   // Spirit). Distinct from self-discard (e.discard) and the strip above.
   const odM = !ohsM ? t.match(/(?:choose (?:a player|an opponent)[\s\S]*?)?they discard (\d+|a|an|one)\b/) : null
@@ -901,6 +919,11 @@ function parse(text: string): ParsedEffect {
                   ? 'any' // an unrestricted "kill a unit" may target either side — e.g. Hidden Blade, where killing YOUR OWN unit is how you draw 2
                   : 'enemy' // damage / debuff default to enemies
   }
+  // Deathgrip picks two friendly units: [0] to kill, [1] to buff (it's "up to 2" —
+  // killing is enough if there's no second friendly to buff).
+  if (eff.deathgrip) { eff.targetScope = 'friendly'; eff.targetCount = 2 }
+  // Counter Strike: choose any one unit to shield from the next damage.
+  if (eff.preventNextDamage) { eff.targetScope = 'any'; eff.targetCount = 1 }
 
   // [Level N][>] activated gate (Wuju Apprentice — "[Level 6][>] … draw 1"): a
   // resource effect (draw/channel/recruit/token) that lives ONLY inside the gated
