@@ -327,9 +327,9 @@ export default function MatchBoard({
   //  • A NON-CHAIN play (unit or gear) → glowing card for everyone. Spells/counters
   //    are chain-related and use ChainResponsePopup instead (mutually exclusive).
   //  • One of MY draws → reveal the drawn card(s), shorter, private to me.
-  const [announce, setAnnounce] = useState<{ seq: number; cards: string[]; heading: string; sub?: string; durationMs: number; flip?: boolean; delayMs?: number; sfx?: 'cardFlip' } | null>(null)
+  const [announce, setAnnounce] = useState<{ seq: number; cards: string[]; iids?: string[]; heading: string; sub?: string; durationMs: number; flip?: boolean; delayMs?: number; sfx?: 'cardFlip' } | null>(null)
   // A turn-start draw waits here until the end-turn recap is dismissed, then flips in.
-  const [pendingDraw, setPendingDraw] = useState<{ seq: number; cards: string[]; heading: string } | null>(null)
+  const [pendingDraw, setPendingDraw] = useState<{ seq: number; cards: string[]; iids?: string[]; heading: string } | null>(null)
   const prevActiveRef = useRef(match.activePlayer)
   const firstBloodRef = useRef(false)
   const winnerAnnouncedRef = useRef(false)
@@ -358,7 +358,7 @@ export default function MatchBoard({
             if (u) { unitName = getCard(u.cardId)?.name; break }
           }
       }
-      setAnnounce({ seq: match.seq, cards: [equip.cardId], heading: getCard(equip.cardId)?.name ?? 'Equipment', sub: unitName ? `⚔ equipped to ${unitName}` : 'equipped', durationMs: 3000 })
+      setAnnounce({ seq: match.seq, cards: [equip.cardId], iids: equip.iid ? [equip.iid] : undefined, heading: getCard(equip.cardId)?.name ?? 'Equipment', sub: unitName ? `⚔ equipped to ${unitName}` : 'equipped', durationMs: 3000 })
       return
     }
     const play = evs
@@ -366,21 +366,23 @@ export default function MatchBoard({
       .pop()
     if (play?.cardId) {
       const who = play.player != null ? match.players[play.player]?.name?.replace(/\s*\([^)]*\)\s*$/, '') : undefined
-      setAnnounce({ seq: match.seq, cards: [play.cardId], heading: getCard(play.cardId)?.name ?? 'Played', sub: who ? `${who} played this` : undefined, durationMs: 10000 })
+      setAnnounce({ seq: match.seq, cards: [play.cardId], iids: play.iid ? [play.iid] : undefined, heading: getCard(play.cardId)?.name ?? 'Played', sub: who ? `${who} played this` : undefined, durationMs: 10000 })
       return
     }
     const myDraw = evs.filter((e) => e.kind === 'draw' && e.player === perspective).reduce((s, e) => s + (e.amount ?? 1), 0)
     if (myDraw > 0) {
       const hand = me.zones.hand
-      const drawn = hand.slice(Math.max(0, hand.length - myDraw)).map((c) => c.cardId).slice(0, 2)
+      const drawnInst = hand.slice(Math.max(0, hand.length - myDraw)).slice(0, 2)
+      const drawn = drawnInst.map((c) => c.cardId)
+      const drawnIids = drawnInst.map((c) => c.iid)
       const heading = myDraw > 1 ? `You drew ${myDraw}` : 'You drew'
       // The flip+zoom draw reveal is opt-out (settings → Draw animation). Off = the
       // card just lands in hand with no 80% popup.
       if (drawn.length && audio.settings.drawAnimation !== false) {
         if (turnStarted)
           // Turn start: defer until the end-turn recap is dismissed (see effect below).
-          setPendingDraw({ seq: match.seq, cards: drawn, heading })
-        else setAnnounce({ seq: match.seq, cards: drawn, heading, durationMs: 3500, sfx: 'cardFlip' })
+          setPendingDraw({ seq: match.seq, cards: drawn, iids: drawnIids, heading })
+        else setAnnounce({ seq: match.seq, cards: drawn, iids: drawnIids, heading, durationMs: 3500, sfx: 'cardFlip' })
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -390,7 +392,7 @@ export default function MatchBoard({
   // a 2–3s pause, then the card flips + zooms into the 80% reveal (cardFlip SFX).
   useEffect(() => {
     if (!pendingDraw || recapOpen) return
-    setAnnounce({ seq: pendingDraw.seq, cards: pendingDraw.cards, heading: pendingDraw.heading, durationMs: 2900, flip: true, delayMs: 2500, sfx: 'cardFlip' })
+    setAnnounce({ seq: pendingDraw.seq, cards: pendingDraw.cards, iids: pendingDraw.iids, heading: pendingDraw.heading, durationMs: 2900, flip: true, delayMs: 2500, sfx: 'cardFlip' })
     setPendingDraw(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recapOpen, pendingDraw])
@@ -1240,6 +1242,7 @@ export default function MatchBoard({
       <PlayedCardAnnouncement
         seq={announce?.seq ?? -1}
         cards={announce?.cards ?? []}
+        iids={announce?.iids}
         heading={announce?.heading ?? ''}
         sub={announce?.sub}
         durationMs={announce?.durationMs ?? 10000}
