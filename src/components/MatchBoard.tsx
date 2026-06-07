@@ -374,11 +374,14 @@ export default function MatchBoard({
       const hand = me.zones.hand
       const drawn = hand.slice(Math.max(0, hand.length - myDraw)).map((c) => c.cardId).slice(0, 2)
       const heading = myDraw > 1 ? `You drew ${myDraw}` : 'You drew'
-      if (drawn.length && turnStarted)
-        // Turn start: defer until the end-turn recap is dismissed (see effect below).
-        setPendingDraw({ seq: match.seq, cards: drawn, heading })
-      else if (drawn.length)
-        setAnnounce({ seq: match.seq, cards: drawn, heading, durationMs: 3500, sfx: 'cardFlip' })
+      // The flip+zoom draw reveal is opt-out (settings → Draw animation). Off = the
+      // card just lands in hand with no 80% popup.
+      if (drawn.length && audio.settings.drawAnimation !== false) {
+        if (turnStarted)
+          // Turn start: defer until the end-turn recap is dismissed (see effect below).
+          setPendingDraw({ seq: match.seq, cards: drawn, heading })
+        else setAnnounce({ seq: match.seq, cards: drawn, heading, durationMs: 3500, sfx: 'cardFlip' })
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.seq])

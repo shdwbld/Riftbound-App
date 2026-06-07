@@ -63,6 +63,16 @@ export default function AudioSettings() {
                 className="mt-1 w-full accent-amber-400"
               />
             </label>
+            <div className="flex items-center justify-between border-t border-white/10 pt-2">
+              <span className="text-sm font-semibold">Draw animation</span>
+              <button
+                onClick={() => audio.setSettings({ drawAnimation: !s.drawAnimation })}
+                title="The flip+zoom 80% reveal when you draw. Turn off for instant draws."
+                className={`rounded px-2 py-1 text-xs font-semibold ${s.drawAnimation ? 'bg-emerald-500/25 text-emerald-200' : 'bg-white/10 text-white/50'}`}
+              >
+                {s.drawAnimation ? 'On' : 'Off'}
+              </button>
+            </div>
             <p className="text-[10px] text-white/35">Saved on this device. Battle music stays low by default.</p>
           </div>
         </>

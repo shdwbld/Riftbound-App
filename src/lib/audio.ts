@@ -55,11 +55,15 @@ export interface AudioSettings {
   sfxVolume: number // 0..1
   musicVolume: number // 0..1 (battle music + ambience; files asked for ~10-20%)
   muted: boolean
+  /** Show the turn-start / draw-reveal flip+zoom 80% card animation. Some players
+   *  want the flourish, others want fast draws — toggled in the settings panel.
+   *  (Not audio per se, but it rides the same persisted, reactive settings store.) */
+  drawAnimation: boolean
 }
 const SETTINGS_KEY = 'riftbound.audio.v1'
 // Music + ambience default to OFF (they share the music bus); SFX on. Players
 // can raise music in settings. Match start always force-unmutes so SFX are heard.
-const DEFAULTS: AudioSettings = { sfxVolume: 0.7, musicVolume: 0, muted: false }
+const DEFAULTS: AudioSettings = { sfxVolume: 0.7, musicVolume: 0, muted: false, drawAnimation: true }
 
 function loadSettings(): AudioSettings {
   try {
