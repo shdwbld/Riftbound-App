@@ -104,10 +104,9 @@ export default function PlayedCardAnnouncement({
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[62] flex flex-col items-center justify-center gap-4 p-4">
-      {/* Draw reveals (flip) dismiss on a click ANYWHERE — a full-screen catcher
-          behind the content. Plays keep the board usable underneath (no catcher);
-          you dismiss those by clicking the card. Removed once the fly-home starts. */}
-      {flip && !flying && (
+      {/* Click ANYWHERE to dismiss (draw reveals and plays alike) — a full-screen
+          catcher behind the content. Removed once the fly-home starts. */}
+      {!flying && (
         <div className="pointer-events-auto absolute inset-0" onClick={dismiss} aria-hidden />
       )}
       {!flying && (
@@ -155,7 +154,7 @@ export default function PlayedCardAnnouncement({
           <div className="pointer-events-none h-1.5 w-64 overflow-hidden rounded bg-white/10">
             <div className="announcement-drain h-full bg-sky-400/70" style={{ animationDuration: `${durationMs}ms` }} />
           </div>
-          <div className="pointer-events-none text-[10px] uppercase tracking-wide text-white/40">{flip ? 'click anywhere to dismiss' : 'click a card to dismiss'}</div>
+          <div className="pointer-events-none text-[10px] uppercase tracking-wide text-white/40">click anywhere to dismiss</div>
         </>
       )}
     </div>

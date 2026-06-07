@@ -85,6 +85,21 @@ export interface EngineCard {
   /** This instance has [Temporary] granted to it (killed at the start of its
    *  controller's Beginning Phase), independent of its card's keywords. */
   temporary?: boolean
+  /** Who currently CONTROLS this unit, when it differs from `owner` (a unit
+   *  stolen by Possession / Hostile Takeover). `owner` stays immutable (Rule
+   *  126.1 — owner is who brought the card); control is what decides friendly/
+   *  enemy, combat sides, triggers, and scoring. Read via `controllerOf(u)`
+   *  (= `controlledBy ?? owner`). Undefined / equal to owner = normal. */
+  controlledBy?: PlayerId
+  /** Jhin - Virtuoso (legend): card ids of 4+-Energy spells "banished with me",
+   *  accumulating across turns. When it reaches 4 the payoff fires (channel 4,
+   *  draw 1) and it resets to empty. Persistent — not cleared at turn end. */
+  jhinBanished?: string[]
+  /** Set with `controlledBy` by Hostile Takeover: the steal expires at the end
+   *  of the CURRENT turn — the END_TURN cleanup clears `controlledBy` and recalls
+   *  the unit to its OWNER's base. (Possession sets `controlledBy` WITHOUT this
+   *  flag — it is a permanent steal.) */
+  stolenUntilEot?: boolean
   /** [Assault N] granted to this unit THIS TURN (Square Up, Vault Breaker, Lord
    *  Broadmane). Cleared at end of turn. Adds to combat Might while attacking. */
   grantAssault?: number
@@ -145,6 +160,10 @@ export interface PlayerState {
   /** Whether this player has gained XP this turn (gates Wily Newtfish's +1 Might
    *  and [Ganking]). Cleared at turn start. */
   xpGainedThisTurn?: boolean
+  /** Total colored Power (any domain) this player has spent this turn (Sivir -
+   *  Mercenary: "if you've spent at least 2 Power this turn, +2 Might & [Ganking]").
+   *  Incremented in applyPayment; cleared at turn start. */
+  powerSpentThisTurn?: number
   /** Whether Zilean - Time Mage's once-per-turn token-doubling has fired this turn.
    *  Cleared at turn start. */
   zileanDoubledThisTurn?: boolean
@@ -314,6 +333,11 @@ export interface ChainItem {
   countersId?: string
   /** [Repeat]: extra times to resolve this spell's effect (paid for on play). */
   repeat?: number
+  /** Set when this chain item is a card being played FROM HIDDEN (reveal). On
+   *  resolution the card enters/resolves at `bfIndex` (its hidden battlefield)
+   *  rather than via the generic spell path. Lets opponents respond/Counter the
+   *  reveal before it resolves (Rule 737.1.c.3). */
+  reveal?: { bfIndex: number }
 }
 
 export interface MatchState {
@@ -353,7 +377,7 @@ export interface MatchState {
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {
     player: PlayerId
-    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'discardReplay' | 'trashConquerReturn' | 'becomesStateReady' | 'counterUnlessPay' | 'shardKill' | 'insightfulInvestigator' | 'nameTag' | 'peekToHand'
+    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'discardReplay' | 'trashConquerReturn' | 'becomesStateReady' | 'counterUnlessPay' | 'shardKill' | 'insightfulInvestigator' | 'nameTag' | 'peekToHand' | 'stealUnit' | 'stealGear'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]
@@ -377,6 +401,11 @@ export interface MatchState {
    *  `owner` = the Ashe player; `victimId` = the opponent whose hold returns it
    *  (returns even if Ashe has since left the board). */
   asheBanishPending?: { banishedIid: string; owner: PlayerId; victimId: PlayerId }[]
+  /** Gear stolen by Akshan - Mischievous: "You control it until I leave the
+   *  board." When the owning Akshan instance leaves play (death / bounce /
+   *  recall / sandbox move) the gear returns to `originalOwner`'s base.
+   *  `gearCardId` is kept so the EngineCard can be reconstructed on return. */
+  akshanStolenGears?: { gearIid: string; gearCardId: string; originalOwner: PlayerId; akshanIid: string }[]
 }
 
 /** Interactive pre-game setup (Core Rules §111–120): roll for turn order, the
@@ -530,6 +559,10 @@ export type Action =
    *  gear attaches). Not on the turn you hid it; Reaction speed thereafter. */
   | { type: 'REVEAL'; player: PlayerId; iid: string }
   | { type: 'RETREAT'; player: PlayerId; iid: string }
+  /** Standard move-back-to-base for several units at once (multi-select). Each is
+   *  retreated independently; invalid ones are skipped. One action = one seq, so the
+   *  UI can animate all the recalls simultaneously. */
+  | { type: 'RETREAT_UNITS'; player: PlayerId; iids: string[] }
   | { type: 'PASS'; player: PlayerId }
   /** Pass priority on the chain; when all players pass, the top item resolves. */
   | { type: 'PASS_PRIORITY'; player: PlayerId }
@@ -561,6 +594,9 @@ export type GameEventKind =
   | 'conquer'
   | 'counter'
   | 'channel'
+  /** A Hidden (face-down) card was auto-trashed because its owner lost control of
+   *  its battlefield — drives the dissolve VFX. Carries iid + cardId. */
+  | 'hiddenTrashed'
   /** A card's cost was paid: carries how many runes were exhausted / recycled
    *  (for the end-of-turn recap). Emitted alongside the matching 'play' event. */
   | 'payment'

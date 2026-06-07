@@ -1,6 +1,7 @@
 import { getCard } from '../data/cards'
 import type { Card, Domain } from '../types/cards'
 import type { PlayerState, Payment, ResolvedCost, EngineCard, MatchState, PlayerId } from './types'
+import { controllerOf } from './engine'
 
 // ---------------------------------------------------------------------------
 // Auto-pay: pick a valid Payment from a player's ready rune pool for a given
@@ -41,7 +42,7 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
 
   const controlsTag = (tag: string): boolean =>
     [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)].some(
-      (u) => u.owner === player && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
+      (u) => controllerOf(u) === player && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
     )
   const controlsBF = (name: string): boolean =>
     state.battlefields.some((b) => b.controller === player && (getCard(b.cardId)?.name ?? '').toLowerCase().startsWith(name))
@@ -66,7 +67,7 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
   // Scales → Dragons). Applies when the card being costed carries that tag.
   const cardTags = (card.tags ?? []).map((x) => x.toLowerCase())
   if (cardTags.length) {
-    const perms = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units.filter((u) => u.owner === player)), ...(p.legend ? [p.legend] : [])]
+    const perms = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units.filter((u) => controllerOf(u) === player)), ...(p.legend ? [p.legend] : [])]
     for (const perm of perms) {
       const pt = (getCard(perm.cardId)?.text ?? '').toLowerCase()
       const am = pt.match(/your ([a-z' -]+?)s'? energy costs? (?:are )?reduced by :rb_energy_(\d+):(?:[^.]*?minimum of :rb_energy_(\d+):)?/)
@@ -89,7 +90,7 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
     const TRIBES = ['bird', 'cat', 'dog', 'poro']
     const present = new Set<string>()
     for (const u of [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)]) {
-      if (u.owner !== player) continue
+      if (controllerOf(u) !== player) continue
       for (const x of getCard(u.cardId)?.tags ?? []) if (TRIBES.includes(x.toLowerCase())) present.add(x.toLowerCase())
     }
     energy -= Number(perTagM[1]) * present.size
@@ -102,7 +103,7 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
     const oppHasStunned = [
       ...state.battlefields.flatMap((b) => b.units),
       ...state.players.flatMap((pl) => pl.zones.base),
-    ].some((u) => u.owner !== player && u.stunned)
+    ].some((u) => controllerOf(u) !== player && u.stunned)
     if (oppHasStunned) energy -= Number(monchM[1])
   }
 
@@ -121,7 +122,7 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
   if (jaullM) {
     const mighty = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units)].filter((u) => {
       const d = getCard(u.cardId)
-      return u.owner === player && d?.type === 'unit' && (d.might + (u.buffs ?? 0) + (u.tempMight ?? 0) - u.damage) >= 5
+      return controllerOf(u) === player && d?.type === 'unit' && (d.might + (u.buffs ?? 0) + (u.tempMight ?? 0) - u.damage) >= 5
     }).length
     energy -= Number(jaullM[1]) * mighty
   }
@@ -143,7 +144,7 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
   // Irelia - Graceful (aura): "Your spells that choose me cost N (or 1 wild) less" —
   // applies when this spell's chosen targets include her.
   if (card.type === 'spell' && opts?.targets?.length) {
-    const perms2 = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units.filter((u) => u.owner === player)), ...(p.legend ? [p.legend] : [])]
+    const perms2 = [...p.zones.base, ...state.battlefields.flatMap((b) => b.units.filter((u) => controllerOf(u) === player)), ...(p.legend ? [p.legend] : [])]
     for (const perm of perms2) {
       const gm = (getCard(perm.cardId)?.text ?? '').toLowerCase().match(/your spells that choose me cost :rb_energy_(\d+):(?: or :rb_rune_[a-z]+:)? less/)
       if (gm && opts.targets.includes(perm.iid)) energy -= Number(gm[1])
@@ -168,7 +169,7 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
     const sb = state.battlefields[state.showdown.battlefield]?.units ?? []
     const vex = sb.find((u) => /while (?:i'?m|i am) in combat, friendly spells cost/i.test(getCard(u.cardId)?.text ?? ''))
     if (vex) {
-      if (vex.owner === player) { energy -= 2; floor = Math.max(floor, 1) }
+      if (controllerOf(vex) === player) { energy -= 2; floor = Math.max(floor, 1) }
       else vexEnemy = 2
     }
   }
@@ -212,6 +213,17 @@ export function effectiveCostOf(state: MatchState, player: PlayerId, card: Card,
 
   // Ornn's Forge: non-token gear you play costs 1 less while you control it.
   if (card.type === 'gear' && card.supertype !== 'token' && controlsBF("ornn's forge")) energy -= 1
+
+  // Eager Apprentice: "While I'm at a battlefield, the Energy cost for spells you
+  // play is reduced by 1, to a minimum of 1." Stacks per copy AT A BATTLEFIELD; the
+  // "min 1" only bites when the spell costs ≥1 to begin with.
+  if (card.type === 'spell' && base.energy >= 1) {
+    const eager = state.battlefields
+      .flatMap((b) => b.units)
+      .filter((u) => controllerOf(u) === player && /while i'?m at a battlefield, the energy costs? for spells you play (?:is |are )?reduced by :rb_energy_(\d+):/i.test(getCard(u.cardId)?.text ?? ''))
+      .length
+    if (eager > 0) { energy -= eager; floor = Math.max(floor, 1) }
+  }
 
   energy = Math.max(floor, Math.max(0, energy))
 

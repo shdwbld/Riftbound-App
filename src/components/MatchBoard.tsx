@@ -25,6 +25,9 @@ import CardPreview from './CardPreview'
 import CardText, { DomainIcon } from './CardText'
 import PlayedCardSpotlight from './PlayedCardSpotlight'
 import PlayedCardAnnouncement from './PlayedCardAnnouncement'
+import RecallAnimation, { type RecallItem } from './RecallAnimation'
+import HiddenTether from './HiddenTether'
+import HiddenDissolve, { type DissolveItem } from './HiddenDissolve'
 import ChainResponsePopup from './ChainResponsePopup'
 import ControlHUD from './ControlHUD'
 import PingLayer, { type PingData } from './PingLayer'
@@ -32,11 +35,11 @@ import CardSearchOverlay, { type SearchSource } from './CardSearchOverlay'
 import { useFitToViewport } from '../lib/useFitToViewport'
 import { champBase, matSplashUrl } from '../lib/championArt'
 import ConnectorArcLayer from './ConnectorArcLayer'
-
-/** A context-menu entry (a normal action, a unit-activation, or a gear-attach). */
-type MenuItem = { label: string; action?: Action; activateIid?: string; attachGearIid?: string; moveGearIid?: { gearIid: string; fromUnitIid: string; owner: PlayerId }; stepper?: { title: string; make: (n: number) => Action }; openSearch?: { source: SearchSource; owner: PlayerId } }
-/** A drill-down category in the right-click menu (collapses the rest when open). */
-type MenuGroup = { label: string; items: MenuItem[] }
+import RadialMenu, { type MenuItem, type MenuGroup, type RadialCenter } from './RadialMenu'
+import MoveTargetLayer from './MoveTargetLayer'
+import DragPlayLayer from './DragPlayLayer'
+import MatchControlsPanel from './MatchControlsPanel'
+import RulesSearch from './RulesSearch'
 import FeedbackLayer from './FeedbackLayer'
 
 /** Name of a unit anywhere on the board, by iid (for combat banners). */
@@ -58,6 +61,8 @@ export interface MatchBoardProps {
   onPlay: (c: EngineCard) => void
   /** Move one or more selected units to a battlefield (group standard move). */
   onMove: (iids: string[], bf: number) => void
+  /** Move one or more selected units back to base (standard recall). */
+  onRecall?: (iids: string[]) => void
   onPass: () => void
   onPassPriority?: () => void
   onCounter?: (targetChainId: string) => void
@@ -191,6 +196,7 @@ export default function MatchBoard({
   canAct,
   onPlay,
   onMove,
+  onRecall,
   onPass,
   onPassPriority,
   onCounter,
@@ -217,29 +223,112 @@ export default function MatchBoard({
   const [selectedUnits, setSelectedUnits] = useState<string[]>([])
   const toggleSelected = (iid: string) =>
     setSelectedUnits((s) => (s.includes(iid) ? s.filter((x) => x !== iid) : [...s, iid]))
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; groups?: MenuGroup[]; statuses?: MenuItem[] } | null>(null)
-  const [drill, setDrill] = useState<number | null>(null) // open drill-down category
-  const [sub, setSub] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null) // hover flyout (Add status effect)
-  const [stepper, setStepper] = useState<{ title: string; value: number; make: (n: number) => Action } | null>(null) // inline −/value/+ set
+  // Recall (move-back-to-base) flourish: source rects captured at click time (so the
+  // card can fly from where it WAS), consumed by the retreat-event effect below.
+  const [recallFx, setRecallFx] = useState<{ seq: number; items: RecallItem[] } | null>(null)
+  const recallSrcRef = useRef<Record<string, { left: number; top: number; width: number; height: number }>>({})
+  // Hidden auto-trash dissolve: track each face-down card's on-screen rect so we can
+  // dissolve it at its last spot once the engine trashes it (control lost).
+  const [dissolveFx, setDissolveFx] = useState<{ seq: number; items: DissolveItem[] } | null>(null)
+  const facedownRectRef = useRef<Record<string, { left: number; top: number; width: number; height: number }>>({})
+  useLayoutEffect(() => {
+    const next: Record<string, { left: number; top: number; width: number; height: number }> = {}
+    for (const bf of match.battlefields) {
+      const fd = bf.facedown
+      if (!fd) continue
+      const node = document.querySelector(`[data-iid="${CSS.escape(fd.iid)}"]`) as HTMLElement | null
+      if (node) { const r = node.getBoundingClientRect(); next[fd.iid] = { left: r.left, top: r.top, width: r.width, height: r.height } }
+    }
+    facedownRectRef.current = { ...facedownRectRef.current, ...next }
+  })
+  // Recall the current selection to base: capture each selected battlefield unit's
+  // on-screen rect, then dispatch the batched retreat (one action → one seq → all
+  // recalls animate simultaneously). Base units in the selection are already home.
+  const recallSelected = () => {
+    if (!onRecall || !selectedUnits.length) return
+    const onBf = new Set(match.battlefields.flatMap((b) => b.units.map((u) => u.iid)))
+    const iids = selectedUnits.filter((iid) => onBf.has(iid))
+    if (!iids.length) { setSelectedUnits([]); return }
+    const src: Record<string, { left: number; top: number; width: number; height: number }> = {}
+    for (const iid of iids) {
+      const node = document.querySelector(`[data-iid="${CSS.escape(iid)}"]`) as HTMLElement | null
+      if (node) { const r = node.getBoundingClientRect(); src[iid] = { left: r.left, top: r.top, width: r.width, height: r.height } }
+    }
+    recallSrcRef.current = src
+    onRecall(iids)
+    setSelectedUnits([])
+  }
+  // Right-click radial menu: the builders set its data + center (the target shown
+  // in the donut hole). The radial overlay itself owns selection/branch/stepper state.
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[]; groups?: MenuGroup[]; statuses?: MenuItem[]; center?: RadialCenter } | null>(null)
   const [searchOverlay, setSearchOverlay] = useState<{ owner: PlayerId; source: SearchSource } | null>(null) // big search/tutor pop-up
   const [selectedIid, setSelectedIid] = useState<string | null>(null) // the card the ControlHUD's Selected tab manages (sandbox)
   const [hudOpen, setHudOpen] = useState(true) // ControlHUD expanded/collapsed (sandbox)
-  // Keep the right-click menu + status flyout inside the viewport: after each render
-  // measure the panel and, if it overflows the bottom/right edge, shift it back in
-  // (effectively opening upward / leftward). Runs pre-paint so there's no flash.
-  const menuRef = useRef<HTMLDivElement>(null)
-  const subRef = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    const clamp = (el: HTMLDivElement | null) => {
-      if (!el) return
+  // Dispatch a chosen menu item (everything except stepper/search, which the radial
+  // overlay routes to onStepperConfirm/onSearch). Closes the menu after.
+  const runItem = (it: MenuItem) => {
+    if (it.activateIid) onActivateUnit?.(it.activateIid)
+    else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
+    else if (it.moveGearIid) onMoveGear?.(it.moveGearIid.gearIid, it.moveGearIid.fromUnitIid, it.moveGearIid.owner)
+    else if (it.action) onCardAction?.(it.action)
+    setMenu(null)
+  }
+  // Move zone-targeting mode: the radial's Move wedge closes the menu and lights up
+  // valid destination zones on the board; clicking one dispatches the OVERRIDE move.
+  const [moveMode, setMoveMode] = useState<{ iid: string; owner: PlayerId; name: string } | null>(null)
+  const pickMoveDest = (dest: { toBattlefield?: number; toZone?: string; bottom?: boolean; value?: number }) => {
+    if (moveMode && onCardAction) onCardAction({ type: 'OVERRIDE', player: moveMode.owner, op: 'move', iid: moveMode.iid, ...dest } as Action)
+    setMoveMode(null)
+  }
+
+  // --- Drag-to-play (a parallel input to the Play button) -------------------
+  // Pressing + dragging a hand card past a small threshold lifts it; valid zones
+  // glow green (a legal play) or red (override is on → turn it off first). Dropping
+  // on a green zone fires the SAME onPlay flow (cost popup and all).
+  const [dragPlay, setDragPlay] = useState<{
+    name: string; imageUrl?: string; start: { x: number; y: number }
+    origin: { left: number; top: number; width: number; height: number }
+    zones: string[]; active: boolean; c: EngineCard
+  } | null>(null)
+  const dragStartedRef = useRef(false) // suppresses the click (inspect) that would follow a drag
+  const beginHandDrag = (e: React.PointerEvent, c: EngineCard) => {
+    if (e.button !== 0 || dragPlay) return
+    const el = e.currentTarget as HTMLElement
+    const sx = e.clientX, sy = e.clientY
+    const move = (ev: PointerEvent) => {
+      if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return
+      cleanup()
+      dragStartedRef.current = true
       const r = el.getBoundingClientRect()
-      const m = 8
-      if (r.bottom > window.innerHeight - m) el.style.top = `${Math.max(m, window.innerHeight - r.height - m)}px`
-      if (r.right > window.innerWidth - m) el.style.left = `${Math.max(m, window.innerWidth - r.width - m)}px`
+      const def = getCard(c.cardId)
+      const kw = parseKeywords(def)
+      const combat = match.chain.length > 0 || match.phase === 'showdown'
+      const toBf = (kw.action || kw.reaction || kw.ambush) && combat
+      const candidates = ['base', ...(toBf ? match.battlefields.map((_, i) => `battlefield-${i}`) : [])]
+      const playable = canPlay(match, perspective, c.iid).valid
+      // sandbox → show RED warning zones; else green only when actually playable.
+      const zones = match.sandbox ? candidates : (playable ? candidates : [])
+      setDragPlay({
+        c, name: def?.name ?? '', imageUrl: def?.imageUrl,
+        start: { x: ev.clientX, y: ev.clientY },
+        origin: { left: r.left, top: r.top, width: r.width, height: r.height },
+        zones, active: !match.sandbox && playable,
+      })
     }
-    clamp(menuRef.current)
-    clamp(subRef.current)
-  }, [menu, drill, sub, stepper])
+    const up = () => cleanup()
+    const cleanup = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const dragZoneLabel = (key: string) => {
+    if (key === 'base') return 'Base'
+    if (key.startsWith('battlefield-')) {
+      const i = parseInt(key.slice('battlefield-'.length), 10)
+      return getCard(match.battlefields[i]?.cardId)?.name ?? `Battlefield ${i + 1}`
+    }
+    return key
+  }
+
   const me = match.players[perspective]
   // Only surface the XP meter when some card in the match actually uses XP.
   const usesXp = useMemo(() => matchUsesXp(match), [match])
@@ -425,8 +514,29 @@ export default function MatchBoard({
     if (kinds.has('draw') && !events.some((e) => e.kind === 'draw' && e.player === perspective)) audio.play('cardFlip')
     if (kinds.has('channel')) audio.play('shuffle', { volume: 0.6 })
     // A retreat off a battlefield (→ base or hand) gets the recall whoosh; other moves the throw.
-    if (events.some((e) => e.kind === 'move' && e.retreat)) void audio.playGeneric('recall')
-    else if (kinds.has('move')) audio.play('cardThrow')
+    const retreats = events.filter((e) => e.kind === 'move' && e.retreat)
+    if (retreats.length) {
+      void audio.playGeneric('recall')
+      // Recall flourish (pulse → spin → fly → land), opt-out via settings. Source
+      // rects come from the click capture when this client initiated the recall;
+      // engine-driven recalls/bounces start at the card's landed home instead.
+      if (audio.settings.recallAnimation !== false) {
+        const items: RecallItem[] = retreats
+          .filter((e) => e.kind === 'move' && e.iid && e.cardId)
+          .map((e) => ({ iid: (e as { iid: string }).iid, cardId: (e as { cardId: string }).cardId, srcRect: recallSrcRef.current[(e as { iid: string }).iid] ?? null }))
+        if (items.length) setRecallFx({ seq: match.seq, items })
+      }
+      recallSrcRef.current = {}
+    } else if (kinds.has('move')) audio.play('cardThrow')
+    // Hidden card auto-trashed (lost its battlefield) → dissolve it at its last spot.
+    const trashedHidden = events.filter((e) => e.kind === 'hiddenTrashed' && e.iid)
+    if (trashedHidden.length) {
+      audio.play('unitKilled', { volume: 0.5 })
+      const items: DissolveItem[] = trashedHidden
+        .map((e) => ({ iid: (e as { iid: string }).iid, rect: facedownRectRef.current[(e as { iid: string }).iid] }))
+        .filter((x): x is DissolveItem => !!x.rect)
+      if (items.length) setDissolveFx({ seq: match.seq, items })
+    }
     if (kinds.has('damage')) audio.play(Math.random() < 0.5 ? 'sword' : 'punch')
     if (kinds.has('defeat')) {
       audio.play('unitKilled')
@@ -533,9 +643,18 @@ export default function MatchBoard({
         for (const d of DOMAINS)
           items.push({ label: `🪙→ ${DOMAIN_META[d].label} Power`, action: { type: 'USE_GOLD', player: perspective, iid: ci.iid, domain: d } })
       }
-      // Reveal your own facedown unit at a battlefield.
-      if (zone === 'battlefield' && ci.facedown)
-        items.push({ label: '👁 Reveal', action: { type: 'REVEAL', player: perspective, iid: ci.iid } })
+      // Reveal your own facedown card at a battlefield. It gains Reaction next turn,
+      // so it can't be revealed the turn it was hidden — offer Reveal only when legal,
+      // else show a disabled "can't reveal yet" hint.
+      if (zone === 'battlefield' && ci.facedown) {
+        const revealable = ((ci as { hiddenTurn?: number }).hiddenTurn ?? -1) < match.turn
+        if (revealable) items.push({ label: '👁 Reveal', action: { type: 'REVEAL', player: perspective, iid: ci.iid } })
+        else items.push({ label: '🙈 Hidden — can’t reveal until next turn' })
+      }
+      // Standard move-back-to-base for a unit you control (alternative to clicking
+      // your Base zone). On your action turn, ready, not Hidden.
+      if (onRecall && zone === 'battlefield' && card?.type === 'unit' && !ci.facedown && myActionTurn && !ci.exhausted && (((ci as { controlledBy?: number }).controlledBy ?? ci.owner) === perspective))
+        items.push({ label: '↩ Move to base', action: { type: 'RETREAT', player: perspective, iid: ci.iid } })
       // Hide a [Hidden] card from your HAND facedown at a battlefield you control
       // (empty slot), paying 1 Wild Power (recycle a ready rune). One entry per legal
       // battlefield so you can choose where to hide it when you control more than one.
@@ -594,22 +713,17 @@ export default function MatchBoard({
           statuses.push({ label: `${mark((cc.buffs ?? 0) >= 1)}[Mighty] (buff)`, action: ov((cc.buffs ?? 0) >= 1 ? 'unbuff' : 'buff') })
         }
         if (zone !== 'hand') statuses.push({ label: '↩ Bounce to hand', action: mv('hand', undefined) })
-        groups.push({ label: 'Might & damage', items: [
-          { label: 'Might +1', action: ov('mightUp') },
-          { label: 'Might +5', action: ov('mightUp', { amount: 5 }) },
-          { label: 'Might −1', action: ov('mightDown') },
-          { label: 'Damage +1', action: ov('damage', { amount: 1 }) },
-          { label: 'Damage −1', action: ov('damage', { amount: -1 }) },
-          { label: 'Set damage 0', action: ov('setDamage', { value: 0 }) },
-          { label: 'Set damage 2', action: ov('setDamage', { value: 2 }) },
-          { label: 'Set damage 4', action: ov('setDamage', { value: 4 }) },
-          { label: 'Set damage 6', action: ov('setDamage', { value: 6 }) },
-          { label: '♥ Heal (clear damage)', action: ov('setDamage', { value: 0 }) },
-          { label: 'Buff (net)… ⇄', stepper: { title: 'Net buff counters', make: (n: number) => (n >= 0 ? ov('buff', { amount: n }) : ov('unbuff', { amount: -n })) } },
-          { label: 'Might (net, this turn)… ⇄', stepper: { title: 'Net temp Might (this turn)', make: (n: number) => (n >= 0 ? ov('mightUp', { amount: n }) : ov('mightDown', { amount: -n })) } },
-          { label: 'Set temp Might (exact)… ⇄', stepper: { title: 'Set temp Might to (this turn)', make: (n: number) => ov('setTempMight', { value: n }) } },
-          { label: 'Damage (net)… ⇄', stepper: { title: 'Net damage', make: (n: number) => ov('damage', { amount: n }) } },
-        ] })
+        // Modify: a unified panel — pick a stat (chips) then dial the net change with
+        // − [value] +. (Replaces the old long list of presets + steppers.)
+        groups.push({
+          label: 'Might & damage',
+          items: [],
+          modify: [
+            { key: 'buff', label: 'Buff', icon: 'buff', current: cc.buffs ?? 0, make: (n: number) => (n >= 0 ? ov('buff', { amount: n }) : ov('unbuff', { amount: -n })) },
+            { key: 'might', label: 'Temp Might', icon: 'modify', current: ci.tempMight ?? 0, make: (n: number) => (n >= 0 ? ov('mightUp', { amount: n }) : ov('mightDown', { amount: -n })) },
+            { key: 'damage', label: 'Damage', icon: 'heart', current: ci.damage ?? 0, make: (n: number) => ov('damage', { amount: n }) },
+          ],
+        })
         // Manually set who controls the battlefield this unit stands on.
         if (zone === 'battlefield') {
           const bfi = match.battlefields.findIndex((b) => b.units.some((x) => x.iid === ci.iid))
@@ -679,21 +793,9 @@ export default function MatchBoard({
         }
         groups.push({ label: 'Attached gear', items: gearItems })
       }
-      const moveItems: MenuItem[] = []
-      if (zone !== 'hand') moveItems.push({ label: 'Hand', action: mv('hand', undefined) })
-      if (zone !== 'base') moveItems.push({ label: 'Base', action: mv('base', undefined) })
-      for (let i = 0; i < match.battlefields.length; i++)
-        if (!(zone === 'battlefield' && match.battlefields[i].units.some((u) => u.iid === ci.iid)))
-          moveItems.push({ label: `Battlefield ${i + 1}`, action: mv(undefined, i) })
-      moveItems.push({ label: 'Deck (top)', action: mv('mainDeck', undefined) })
-      moveItems.push({ label: 'Deck (bottom)', action: mv('mainDeck', undefined, true) })
-      moveItems.push({ label: 'Deck (X from top)… ⇄', stepper: { title: 'Insert X cards from the top of the deck', make: (n: number) => ({ type: 'OVERRIDE', player: owner, op: 'move', iid: ci.iid, toZone: 'mainDeck', value: Math.max(0, n) }) as Action } })
-      if (card?.type === 'rune') moveItems.push({ label: 'Rune deck (top)', action: mv('runeDeck', undefined) })
-      moveItems.push({ label: 'Trash', action: mv('trash', undefined) })
-      moveItems.push({ label: 'Banished', action: mv('banished', undefined) })
-      if (zone !== 'legend') moveItems.push({ label: 'Legend zone', action: mv('legend', undefined) })
-      if (zone !== 'champion') moveItems.push({ label: 'Champion zone', action: mv('champion', undefined) })
-      groups.push({ label: 'Move to…', items: moveItems })
+      // Move → board zone-targeting mode (the radial closes; the board highlights
+      // valid destinations to click). A single direct wedge, not a dropdown.
+      groups.push({ label: 'Move to…', direct: true, items: [{ label: 'Move', boardMove: { iid: ci.iid, owner, name: getCard(ci.cardId)?.name ?? 'card' } }] })
       groups.push({ label: 'Remove', items: [
         { label: 'Kill', action: ov('kill') },
         { label: 'Sacrifice (ignore shields)', action: ov('sacrifice') },
@@ -707,10 +809,8 @@ export default function MatchBoard({
       ] })
     }
     if (items.length || groups.length || statuses.length) {
-      setDrill(null)
-      setSub(null)
-      setStepper(null)
-      setMenu({ x: e.clientX, y: e.clientY, items, groups: groups.length ? groups : undefined, statuses: statuses.length ? statuses : undefined })
+      const center: RadialCenter = { cardId: ci.cardId, faceDown: !!ci.facedown && ci.owner !== perspective }
+      setMenu({ x: e.clientX, y: e.clientY, items, groups: groups.length ? groups : undefined, statuses: statuses.length ? statuses : undefined, center })
     }
   }
 
@@ -744,8 +844,8 @@ export default function MatchBoard({
       // base / battlefield
       items.push({ label: '🛠 Ready all units', action: O('readyAll') })
     }
-    setDrill(null)
-    setMenu({ x: e.clientX, y: e.clientY, items })
+    const zoneIcon = kind === 'deck' || kind === 'runeDeck' ? 'layers' : kind === 'trash' ? 'trash' : 'actions'
+    setMenu({ x: e.clientX, y: e.clientY, items, center: { label: `${match.players[owner]?.name ?? ''} ${kind}`, iconKey: zoneIcon } })
   }
 
   // Right-click a battlefield's art. When its identity was replaced by a token
@@ -765,10 +865,7 @@ export default function MatchBoard({
         action: { type: 'OVERRIDE', player: perspective, op: 'revertBf', toBattlefield: bfIndex } as Action,
       },
     ]
-    setDrill(null)
-    setSub(null)
-    setStepper(null)
-    setMenu({ x: e.clientX, y: e.clientY, items })
+    setMenu({ x: e.clientX, y: e.clientY, items, center: { label: getCard(bf.cardId)?.name ?? 'Battlefield', iconKey: 'control' } })
   }
 
   // Manual keyboard shortcuts (sandbox): track held letter keys, then route a
@@ -963,6 +1060,7 @@ export default function MatchBoard({
           perspective={perspective}
           fx={fx}
           selectedUnits={selectedUnits}
+          onToggleUnit={toggleSelected}
           myActionTurn={myActionTurn}
           onMoveTo={move}
           inspect={inspect}
@@ -1080,9 +1178,12 @@ export default function MatchBoard({
         canRespond={myChainPriority}
         selectedUnits={selectedUnits}
         onToggleUnit={toggleSelected}
-        onInspect={inspect}
+        onRecall={recallSelected}
+        onInspect={(c) => { if (dragStartedRef.current) { dragStartedRef.current = false; return } inspect(c) }}
         onInspectCard={onInspect}
         onPlay={onPlay}
+        onHandDragStart={beginHandDrag}
+        draggingIid={dragPlay?.c.iid}
         onEndTurn={onEndTurn}
         endTurnNeedsConfirm={hasUnplayedOptions}
         onConcede={onConcede}
@@ -1111,113 +1212,48 @@ export default function MatchBoard({
     </div>{/* /fitScaler */}
     </div>{/* /fitWrap */}
 
-      {/* Right-click context menu — categorized drill-down (click a category to
-          expand just its items; ‹ Back returns; click anywhere else closes). */}
+      {/* Right-click context menu — a centered radial (donut) menu: wedges are
+          categories; selecting one branches its options out to the side; a quantity
+          action opens a small stepper popover. Click-away / Escape closes. */}
       {menu && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => { setMenu(null); setDrill(null); setSub(null); setStepper(null) }} onContextMenu={(e) => { e.preventDefault(); setMenu(null); setDrill(null); setSub(null); setStepper(null) }} />
-          <div
-            ref={menuRef}
-            className="fixed z-50 max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-white/15 bg-[#0a1e33] text-sm shadow-xl"
-            style={{ left: menu.x, top: menu.y }}
-          >
-            {(() => {
-              const closeAll = () => { setMenu(null); setDrill(null); setSub(null); setStepper(null) }
-              const run = (it: MenuItem) => {
-                // A stepper item opens the inline −/value/+ panel instead of dispatching.
-                if (it.stepper) { setSub(null); setStepper({ title: it.stepper.title, value: 0, make: it.stepper.make }); return }
-                // A search item opens the big card-search overlay.
-                if (it.openSearch) { setSearchOverlay(it.openSearch); closeAll(); return }
-                if (it.activateIid) onActivateUnit?.(it.activateIid)
-                else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
-                else if (it.moveGearIid) onMoveGear?.(it.moveGearIid.gearIid, it.moveGearIid.fromUnitIid, it.moveGearIid.owner)
-                else if (it.action) onCardAction?.(it.action)
-                closeAll()
-              }
-              const Item = (it: MenuItem) => (
-                <button key={it.label} onClick={() => run(it)} onMouseEnter={() => setSub(null)} className="block w-full px-3 py-1.5 text-left hover:bg-white/10">
-                  {it.label}
-                </button>
-              )
-              // Inline stepper view: −/value/+ then Confirm dispatches one net OVERRIDE.
-              if (stepper) {
-                return (
-                  <div className="min-w-[11rem]">
-                    <button onClick={() => setStepper(null)} className="block w-full border-b border-white/10 px-3 py-1.5 text-left text-white/50 hover:bg-white/10">‹ Back</button>
-                    <div className="px-3 py-2">
-                      <div className="mb-2 text-center text-[11px] text-white/60">{stepper.title}</div>
-                      <div className="flex items-center justify-center gap-3">
-                        <button onClick={() => setStepper({ ...stepper, value: stepper.value - 1 })} className="h-7 w-7 rounded bg-white/10 text-base font-bold hover:bg-white/20">−</button>
-                        <span className="w-10 text-center text-lg font-bold tabular-nums">{stepper.value > 0 ? `+${stepper.value}` : stepper.value}</span>
-                        <button onClick={() => setStepper({ ...stepper, value: stepper.value + 1 })} className="h-7 w-7 rounded bg-white/10 text-base font-bold hover:bg-white/20">+</button>
-                      </div>
-                      <button onClick={() => { onCardAction?.(stepper.make(stepper.value)); closeAll() }} className="mt-2 block w-full rounded bg-emerald-500/30 px-3 py-1.5 text-center font-semibold hover:bg-emerald-500/50">Confirm</button>
-                    </div>
-                  </div>
-                )
-              }
-              if (drill != null && menu.groups?.[drill]) {
-                const g = menu.groups[drill]
-                return (
-                  <>
-                    <button onClick={() => setDrill(null)} onMouseEnter={() => setSub(null)} className="block w-full border-b border-white/10 px-3 py-1.5 text-left text-white/50 hover:bg-white/10">‹ Back</button>
-                    {g.items.map(Item)}
-                  </>
-                )
-              }
-              return (
-                <>
-                  {menu.items.map(Item)}
-                  {/* Hover flyout entry: opens the status list to the right (Add status effect). */}
-                  {menu.statuses && (
-                    <button
-                      onMouseEnter={(ev) => {
-                        const r = ev.currentTarget.getBoundingClientRect()
-                        const w = 184
-                        const x = r.right + w > window.innerWidth ? r.left - w + 2 : r.right - 2
-                        setSub({ x, y: r.top, items: menu.statuses! })
-                      }}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left font-semibold text-emerald-200 hover:bg-emerald-500/20"
-                    >
-                      <span>✨ Add status effect</span>
-                      <span className="text-white/40">▸</span>
-                    </button>
-                  )}
-                  {menu.groups?.map((g, gi) => (
-                    <button
-                      key={g.label}
-                      onClick={() => setDrill(gi)}
-                      onMouseEnter={() => setSub(null)}
-                      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left font-semibold text-amber-200 hover:bg-amber-500/20"
-                    >
-                      <span>{g.label}</span>
-                      <span className="text-white/40">▸</span>
-                    </button>
-                  ))}
-                </>
-              )
-            })()}
-          </div>
-          {/* Status-effect flyout — a second panel to the right of the entry. */}
-          {sub && (
-            <div
-              ref={subRef}
-              className="fixed z-[51] max-h-[80vh] min-w-44 overflow-y-auto rounded-lg border border-emerald-400/30 bg-[#13161b] text-sm shadow-xl"
-              style={{ left: sub.x, top: sub.y }}
-              onMouseLeave={() => setSub(null)}
-            >
-              {sub.items.map((it) => (
-                <button
-                  key={it.label}
-                  onClick={() => { if (it.action) onCardAction?.(it.action); setMenu(null); setDrill(null); setSub(null) }}
-                  className="block w-full px-3 py-1.5 text-left hover:bg-emerald-500/15"
-                >
-                  {it.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </>
+        <RadialMenu
+          anchor={{ x: menu.x, y: menu.y }}
+          items={menu.items}
+          groups={menu.groups}
+          statuses={menu.statuses}
+          center={menu.center}
+          onRun={runItem}
+          onStepperConfirm={(make, n) => { onCardAction?.(make(n)); setMenu(null) }}
+          onSearch={(s) => { setSearchOverlay(s); setMenu(null) }}
+          onBoardMove={(m) => { setMenu(null); setMoveMode(m) }}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      {/* Move zone-targeting mode: scrim + glowing destination overlays. */}
+      {moveMode && (
+        <MoveTargetLayer
+          name={moveMode.name}
+          cardIid={moveMode.iid}
+          deckCount={match.players[moveMode.owner]?.zones.mainDeck.length ?? 0}
+          onPick={pickMoveDest}
+          onCancel={() => setMoveMode(null)}
+        />
+      )}
+
+      {/* Drag-to-play: a lifted hand card with physics tilt + green/red drop zones. */}
+      {dragPlay && (
+        <DragPlayLayer
+          name={dragPlay.name}
+          imageUrl={dragPlay.imageUrl}
+          start={dragPlay.start}
+          origin={dragPlay.origin}
+          zones={dragPlay.zones}
+          active={dragPlay.active}
+          zoneLabel={dragZoneLabel}
+          onDrop={() => { const c = dragPlay.c; setDragPlay(null); dragStartedRef.current = false; onPlay(c) }}
+          onCancel={() => { setDragPlay(null); dragStartedRef.current = false }}
+        />
       )}
 
       {/* Big search / tutor pop-up (sandbox) — trash / rune deck / main deck. */}
@@ -1231,6 +1267,9 @@ export default function MatchBoard({
         />
       )}
 
+
+      {/* Searchable Core Rules (bottom-left trigger + modal). */}
+      <RulesSearch />
 
       {/* Floating feedback toasts */}
       <FeedbackLayer events={events} seq={match.seq} players={match.players} />
@@ -1250,6 +1289,16 @@ export default function MatchBoard({
         delayMs={announce?.delayMs}
         sfx={announce?.sfx}
       />
+      <RecallAnimation
+        seq={recallFx?.seq ?? -1}
+        items={recallFx?.items ?? []}
+        onDone={() => setRecallFx(null)}
+      />
+      <HiddenDissolve
+        seq={dissolveFx?.seq ?? -1}
+        items={dissolveFx?.items ?? []}
+        onDone={() => setDissolveFx(null)}
+      />
       <ChainResponsePopup
         chainItemId={respondChainTop?.id ?? null}
         cardId={respondChainTop?.cardId ?? null}
@@ -1262,6 +1311,50 @@ export default function MatchBoard({
       {/* Cause→effect arcs (acting card → units it hits). Sibling of the other
           overlays: OUTSIDE the board's scale transform so node rects map 1:1. */}
       <ConnectorArcLayer events={events} seq={match.seq} />
+
+      {/* CENTER response prompt — when it's your decision to respond/Counter/Pass,
+          the actionable controls surface in the middle of the board (the right rail
+          keeps the chain list for reference). Non-blocking: only the panel catches
+          clicks, so you can still play a Reaction from hand. */}
+      {canRespondNow && (
+        <div className="pointer-events-none fixed inset-x-0 top-1/2 z-[55] flex -translate-y-1/2 justify-center px-4">
+          <div className="pointer-events-auto w-[min(92vw,420px)] rounded-2xl border border-amber-400/50 bg-[#0b1322]/95 p-4 shadow-2xl fx-ready">
+            <div className="mb-2 text-center text-sm font-bold text-amber-200">
+              {myChainPriority ? `⛓ Your priority — Chain (${match.chain.length})` : '⚔ Showdown — respond or Pass'}
+            </div>
+            {myChainPriority && chainOpen && (
+              <div className="mb-3 flex flex-col gap-1">
+                {[...match.chain].reverse().map((item, i) => {
+                  const card = getCard(item.cardId)
+                  return (
+                    <div key={item.id} className={`flex items-center justify-between gap-2 rounded px-2 py-1 text-xs ${i === 0 ? 'bg-amber-500/20' : 'bg-black/20'}`}>
+                      <span>
+                        {i === 0 && <span className="text-amber-300">▶ </span>}
+                        {item.kind === 'counter' ? '✗ Counter: ' : ''}
+                        <span className="font-medium">{card?.name ?? item.cardId}</span>{' '}
+                        <span className="text-white/40">· {match.players[item.controller].name}</span>
+                      </span>
+                      {onCounter && item.kind === 'spell' && (
+                        <button onClick={() => onCounter(item.id)} className="shrink-0 rounded bg-rose-500/20 px-2 py-0.5 text-[10px] text-rose-200 hover:bg-rose-500/40">
+                          Counter
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <div className="flex items-center justify-center gap-2">
+              <button onClick={passResponse} className="rounded-lg bg-amber-500/30 px-5 py-2 text-sm font-bold text-amber-100 hover:bg-amber-500/50">
+                {hasPlayableResponse ? `Pass (${myChainPriority ? 'A' : 'Space'})` : `No response — Pass (${myChainPriority ? 'A' : 'Space'})`}
+              </button>
+            </div>
+            <p className="mt-2 text-center text-[11px] text-white/45">
+              {hasPlayableResponse ? 'Play a Reaction from hand to respond, Counter a spell, or Pass.' : 'Nothing to play — Pass to continue.'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>{/* /rootRef center column */}
 
     {/* RIGHT RAIL — last-played spotlight (top) · log (bottom). The middle Action
@@ -1315,14 +1408,6 @@ export default function MatchBoard({
           }`}
         >
           <span>{banner.text}</span>
-          {canRespondNow && (
-            <button
-              onClick={passResponse}
-              className="shrink-0 rounded bg-white/15 px-3 py-1 text-xs font-semibold hover:bg-white/25"
-            >
-              {hasPlayableResponse ? 'Pass (Space)' : 'No response — Pass (Space)'}
-            </button>
-          )}
         </div>
       )}
 
@@ -1358,14 +1443,6 @@ export default function MatchBoard({
                 : `waiting for ${match.priority != null ? match.players[match.priority].name : '…'}`}
               {match.passes ? ` · ${match.passes} pass${match.passes > 1 ? 'es' : ''}` : ''}
             </span>
-            {myChainPriority && onPassPriority && (
-              <button
-                onClick={onPassPriority}
-                className="shrink-0 rounded bg-amber-500/30 px-3 py-1 text-sm font-semibold text-amber-100 hover:bg-amber-500/50"
-              >
-                Pass (A)
-              </button>
-            )}
           </div>
           {/* Top of chain is last; show top-first */}
           <div className="flex flex-col gap-1">
@@ -1384,23 +1461,10 @@ export default function MatchBoard({
                     <span className="font-medium">{card?.name ?? item.cardId}</span>{' '}
                     <span className="text-white/40">· {match.players[item.controller].name}</span>
                   </span>
-                  {myChainPriority && onCounter && item.kind === 'spell' && (
-                    <button
-                      onClick={() => onCounter(item.id)}
-                      className="shrink-0 rounded bg-rose-500/20 px-2 py-0.5 text-[10px] text-rose-200 hover:bg-rose-500/40"
-                    >
-                      Counter
-                    </button>
-                  )}
                 </div>
               )
             })}
           </div>
-          {myChainPriority && (
-            <p className="mt-2 text-[11px] text-white/40">
-              Play a Reaction spell to respond, Counter a spell, or Pass (A) to let the top resolve.
-            </p>
-          )}
         </div>
       )}
 
@@ -1415,6 +1479,9 @@ export default function MatchBoard({
           ))}
         </div>
       </div>
+
+      {/* Controls cheat-sheet + sound/animation settings. */}
+      <MatchControlsPanel sandbox={!!match.sandbox} />
     </aside>
     </div>
   )
@@ -1613,6 +1680,7 @@ function BattlefieldZone({
   perspective,
   fx,
   selectedUnits,
+  onToggleUnit,
   myActionTurn,
   onMoveTo,
   inspect,
@@ -1626,6 +1694,7 @@ function BattlefieldZone({
   perspective: PlayerId
   fx: Fx
   selectedUnits: string[]
+  onToggleUnit: (iid: string) => void
   myActionTurn: boolean
   onMoveTo: (bf: number) => void
   inspect: (ci: EngineCard) => void
@@ -1636,13 +1705,21 @@ function BattlefieldZone({
   onBfContext?: (e: React.MouseEvent, bfIndex: number) => void
 }) {
   const dndOn = !!match.sandbox && !!onMoveOverride
+  // Hover-tether: a hidden card → the units holding its battlefield.
+  const [tether, setTether] = useState<{ src: string; targets: string[] } | null>(null)
   return (
+    <>
+    <HiddenTether sourceIid={tether?.src ?? null} targetIids={tether?.targets ?? []} />
     <div className="grid h-full gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(match.battlefields.length, 4)}, minmax(0,1fr))` }}>
       {match.battlefields.map((bf, i) => {
         const bfCard = getCard(bf.cardId)
         const ctrl = bf.controller
         const ctrlDomains = ctrl != null ? playerDomains(match.players[ctrl]) : []
-        const targetable = selectedUnits.length > 0 && myActionTurn
+        // A move destination is valid while units are selected — except a battlefield
+        // that already holds one of the selected units (you can't gank to where you
+        // already stand; the engine would reject the whole group move).
+        const hasSelectedHere = bf.units.some((u) => selectedUnits.includes(u.iid))
+        const targetable = selectedUnits.length > 0 && myActionTurn && !hasSelectedHere
         const isFury = ctrlDomains[0] === 'fury'
         const isLight = ctrlDomains[0] === 'order' || ctrlDomains[0] === 'mind'
         const effectClass = bfEffectClass(bfCard?.name)
@@ -1650,6 +1727,7 @@ function BattlefieldZone({
         return (
           <div
             key={i}
+            data-movezone={`battlefield-${i}`}
             onClick={() => targetable && onMoveTo(i)}
             {...dropTgt(dndOn, { toBattlefield: i }, onMoveOverride)}
             className={`relative rounded-xl border-2 p-1.5 transition ${
@@ -1727,16 +1805,28 @@ function BattlefieldZone({
               {bf.facedown && (() => {
                 const fd = bf.facedown
                 const mine = fd.owner === perspective
+                const revealable = ((fd as { hiddenTurn?: number }).hiddenTurn ?? -1) < match.turn
                 return (
                   <button
                     key={fd.iid}
-                    title={mine ? `Your Hidden card (${getCard(fd.cardId)?.name}) — right-click to Reveal (play for 0)` : 'A Hidden card (facedown)'}
+                    data-iid={fd.iid}
+                    title={mine ? `Your Hidden card (${getCard(fd.cardId)?.name}) — ${revealable ? 'right-click to Reveal (play for 0)' : "can't reveal until next turn"}` : 'A Hidden card (facedown)'}
                     onClick={(e) => e.stopPropagation()}
                     onContextMenu={(e) => { e.stopPropagation(); if (mine) openMenu(e, fd, 'battlefield') }}
-                    className="relative"
+                    onMouseEnter={() => setTether({ src: fd.iid, targets: bf.units.map((u) => u.iid) })}
+                    onMouseLeave={() => setTether(null)}
+                    className="relative inline-block"
                   >
-                    <CardBack size="sm" />
-                    <span className="absolute -right-1 -top-1 z-10 rounded-full bg-amber-500/90 px-1 text-[8px] font-bold text-black shadow" title="Hidden (facedown)">H</span>
+                    {mine ? (
+                      // Owner: the real face, dimmed with a dashed amber overlay so you
+                      // can read your own trap; opponents only ever see the card-back.
+                      <span className="relative inline-block rounded opacity-60 ring-2 ring-amber-400/70" style={{ outline: '2px dashed rgba(251,191,36,0.8)', outlineOffset: '-3px' }}>
+                        <BoardCard ci={fd} size="sm" xp={match.players[fd.owner].xp} />
+                      </span>
+                    ) : (
+                      <CardBack size="sm" />
+                    )}
+                    <span className="absolute -right-1 -top-1 z-10 rounded-full bg-amber-500/90 px-1 text-[9px] font-bold text-black shadow" title="Hidden (facedown)">🙈</span>
                   </button>
                 )
               })()}
@@ -1760,30 +1850,41 @@ function BattlefieldZone({
                 // Ganking: your unit here may move directly to another
                 // battlefield — pulse it to advertise the gank.
                 const canGank = u.owner === perspective && myActionTurn && !u.exhausted && keywordsAt(getCard(u.cardId), match.players[u.owner].xp).ganking
+                const isSel = selectedUnits.includes(u.iid)
                 return (
-                  <span key={cf.key} className="relative inline-block">
-                    <CardPreview cardId={u.cardId}>
+                  <div key={cf.key} className="flex flex-col items-center gap-0.5">
+                    <span className="relative inline-block">
+                      <CardPreview cardId={u.cardId}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            inspect(u)
+                          }}
+                          onContextMenu={(e) => {
+                            e.stopPropagation()
+                            openMenu(e, u, 'battlefield')
+                          }}
+                          {...dragSrc(dndOn, u.iid)}
+                          title={canGank ? 'Ganking — use ⚡ Gank to select, then click another battlefield to move there' : u.facedown ? 'Your Hidden unit — right-click to Reveal' : undefined}
+                          className={`relative ${(((u as { controlledBy?: number }).controlledBy ?? u.owner) === perspective) ? '' : 'opacity-90'} ${u.facedown ? 'rounded ring-2 ring-amber-300/60' : ''} ${canGank && !isSel ? 'fx-gank rounded' : ''} ${isSel ? 'rounded ring-2 ring-sky-400' : ''}`}
+                        >
+                          <BoardCard ci={u} size="sm" selected={isSel} flash={cf.flash} glow={isSel ? undefined : cf.glow} dim={cf.dim} xp={match.players[u.owner].xp} auraBonus={auraMightFor(match, i, u)} />
+                          {canGank && (
+                            <span className="absolute -right-1 -top-1 z-10 rounded-full bg-amber-500/90 px-1 text-[8px] font-bold text-white shadow">⚡G</span>
+                          )}
+                        </button>
+                      </CardPreview>
+                      <GearPeek unit={u} onInspectGear={(cid) => { const c = getCard(cid); if (c) onInspect?.(c) }} />
+                    </span>
+                    {canGank && (
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          inspect(u)
-                        }}
-                        onContextMenu={(e) => {
-                          e.stopPropagation()
-                          openMenu(e, u, 'battlefield')
-                        }}
-                        {...dragSrc(dndOn, u.iid)}
-                        title={canGank ? 'Ganking — can move directly to another battlefield' : u.facedown ? 'Your Hidden unit — right-click to Reveal' : undefined}
-                        className={`relative ${u.owner === perspective ? '' : 'opacity-90'} ${u.facedown ? 'rounded ring-2 ring-amber-300/60' : ''} ${canGank ? 'fx-gank rounded' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); onToggleUnit(u.iid) }}
+                        className={`rounded px-2 py-0.5 text-[10px] font-semibold ${isSel ? 'bg-sky-500 text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'}`}
                       >
-                        <BoardCard ci={u} size="sm" flash={cf.flash} glow={cf.glow} dim={cf.dim} xp={match.players[u.owner].xp} auraBonus={auraMightFor(match, i, u)} />
-                        {canGank && (
-                          <span className="absolute -right-1 -top-1 z-10 rounded-full bg-amber-500/90 px-1 text-[8px] font-bold text-white shadow">⚡G</span>
-                        )}
+                        {isSel ? '✓ Ganking' : '⚡ Gank'}
                       </button>
-                    </CardPreview>
-                    <GearPeek unit={u} onInspectGear={(cid) => { const c = getCard(cid); if (c) onInspect?.(c) }} />
-                  </span>
+                    )}
+                  </div>
                 )
               })}
               {bf.units.length === 0 && <span className="self-center text-[10px] text-white/30">uncontested</span>}
@@ -1792,6 +1893,7 @@ function BattlefieldZone({
         )
       })}
     </div>
+    </>
   )
 }
 
@@ -1805,6 +1907,7 @@ function PlayerMat({
   canRespond,
   selectedUnits,
   onToggleUnit,
+  onRecall,
   onInspect,
   onInspectCard,
   onPlay,
@@ -1824,6 +1927,8 @@ function PlayerMat({
   onActivateLegendOwn,
   legendOwnLabel,
   onOpenSearch,
+  onHandDragStart,
+  draggingIid,
 }: {
   me: PlayerState
   target: number
@@ -1832,6 +1937,7 @@ function PlayerMat({
   canRespond?: boolean
   selectedUnits: string[]
   onToggleUnit: (iid: string) => void
+  onRecall?: () => void
   onInspect: (ci: EngineCard) => void
   onInspectCard?: (card: Card) => void
   onPlay: (c: EngineCard) => void
@@ -1854,6 +1960,10 @@ function PlayerMat({
   /** The legend's own printed activated ability (Lee Sin, …) + its label. */
   onActivateLegendOwn?: () => void
   legendOwnLabel?: string
+  /** Begin a drag-to-play gesture from a hand card (pointer down). */
+  onHandDragStart?: (e: React.PointerEvent, c: EngineCard) => void
+  /** The hand card currently lifted for dragging (rendered as a faint ghost). */
+  draggingIid?: string
 }) {
   const dndOn = !!sandbox && !!onMoveOverride
   const domains = playerDomains(me)
@@ -1964,7 +2074,7 @@ function PlayerMat({
         </div>
 
         {/* Legend Zone */}
-        <div className="pm-zone pm-legend flex flex-col items-center gap-1">
+        <div className="pm-zone pm-legend flex flex-col items-center gap-1" data-movezone="legend">
           <div className="pm-zone-label self-start">Legend Zone</div>
           {me.legend ? (
             <>
@@ -2007,7 +2117,7 @@ function PlayerMat({
         </div>
 
         {/* Champion Zone */}
-        <div className="pm-zone pm-champion flex flex-col items-center gap-1">
+        <div className="pm-zone pm-champion flex flex-col items-center gap-1" data-movezone="champion">
           <div className="pm-zone-label self-start">Champion Zone</div>
           {me.champion ? (
             <>
@@ -2032,9 +2142,16 @@ function PlayerMat({
         </div>
 
         {/* Base: Units + Gears */}
-        <div className="pm-zone pm-baseunits" onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('pm-zone-label')) onZoneContext(e, 'base') } : undefined}>
-          <div className="pm-zone-label mb-1">Base: Units + Gears ({me.zones.base.length})</div>
-          <div className="flex min-h-[var(--card-h)] flex-wrap gap-1.5" {...dropTgt(dndOn, { toZone: 'base' }, onMoveOverride)}>
+        <div className="pm-zone pm-baseunits" data-movezone="base" onContextMenu={onZoneContext ? (e) => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('pm-zone-label')) onZoneContext(e, 'base') } : undefined}>
+          <div className="pm-zone-label mb-1">
+            Base: Units + Gears ({me.zones.base.length})
+            {onRecall && selectedUnits.length > 0 && myActionTurn && <span className="ml-2 text-sky-300">— click here to recall selected ↩</span>}
+          </div>
+          <div
+            className={`flex min-h-[var(--card-h)] flex-wrap gap-1.5 ${onRecall && selectedUnits.length > 0 && myActionTurn ? 'cursor-pointer rounded-lg ring-2 ring-sky-400/50' : ''}`}
+            onClick={(e) => { if (onRecall && selectedUnits.length > 0 && myActionTurn && e.target === e.currentTarget) onRecall() }}
+            {...dropTgt(dndOn, { toZone: 'base' }, onMoveOverride)}
+          >
         {me.zones.base.map((u) => {
           const isUnit = getCard(u.cardId)?.type === 'unit'
           const movable = myActionTurn && isUnit && !u.exhausted
@@ -2088,7 +2205,7 @@ function PlayerMat({
         </div>
 
         {/* Main Deck */}
-        <div className="pm-zone pm-maindeck flex flex-col items-center justify-center gap-1" {...dropTgt(dndOn, { toZone: 'mainDeck' }, onMoveOverride)} onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'deck') : undefined}>
+        <div className="pm-zone pm-maindeck flex flex-col items-center justify-center gap-1" data-movezone="mainDeck" {...dropTgt(dndOn, { toZone: 'mainDeck' }, onMoveOverride)} onContextMenu={onZoneContext ? (e) => onZoneContext(e, 'deck') : undefined}>
           <div className="pm-zone-label self-start">Main Deck</div>
           <button onClick={onRevealTop} title="Reveal top card" className="rounded transition hover:ring-2 hover:ring-sky-400/50">
             <CardBack size="sm" count={me.zones.mainDeck.length} />
@@ -2152,7 +2269,7 @@ function PlayerMat({
         </div>
 
         {/* Trash (+ Banished) */}
-        <div className="pm-zone pm-trash flex flex-col items-center justify-center gap-1">
+        <div className="pm-zone pm-trash flex flex-col items-center justify-center gap-1" data-movezone="trash">
           <div className="pm-zone-label self-start">Trash</div>
           <div className="flex items-end gap-2">
             {(() => {
@@ -2210,7 +2327,13 @@ function PlayerMat({
                 </span>
               )}
               <CardPreview cardId={c.cardId} center>
-                <button className="card-lift" onClick={() => onInspect(c)} onContextMenu={(e) => onContext?.(e, c, 'hand')} {...dragSrc(dndOn, c.iid)}>
+                <button
+                  className="card-lift touch-none"
+                  style={draggingIid === c.iid ? { opacity: 0.2 } : undefined}
+                  onClick={() => onInspect(c)}
+                  onContextMenu={(e) => onContext?.(e, c, 'hand')}
+                  onPointerDown={onHandDragStart ? (e) => onHandDragStart(e, c) : undefined}
+                >
                   <BoardCard
                     ci={c}
                     flash={cf.flash}

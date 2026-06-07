@@ -1610,8 +1610,10 @@ describe('tokens (Recruit)', () => {
     const u = mk(hid, 0, { facedown: true, hiddenTurn: 4 })
     s.battlefields[0] = { cardId: battlefield.id, units: [], controller: 0 }
     s.battlefields[0].facedown = u
-    const r = reduce(s, { type: 'REVEAL', player: 0, iid: u.iid })
+    let r = reduce(s, { type: 'REVEAL', player: 0, iid: u.iid })
     expect(r.error).toBeFalsy()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 }) // reveal opens a chain
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 }) // …both pass → resolves
     expect(r.state.battlefields[0].units.find((x) => x.iid === u.iid)?.exhausted).toBe(false) // entered ready via Breacher
   })
 
@@ -1765,6 +1767,8 @@ describe('tokens (Recruit)', () => {
     r.state.battlefields[0].facedown = fd
     r = reduce(r.state, { type: 'REVEAL', player: 0, iid: fd.iid })
     expect(r.error).toBeFalsy()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 }) // reveal opens a chain
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.state.players[0].zones.base.find((x) => x.iid === em.iid)?.tempMight).toBe(2)
   })
 
@@ -2944,8 +2948,10 @@ describe('Batch D — Banish + Hidden', () => {
     expect(reduce(s, { type: 'REVEAL', player: 0, iid: u.iid }).error).toBeTruthy()
     // A later turn → reveal plays it faceup into the battlefield.
     s.turn = 6
-    const r = reduce(s, { type: 'REVEAL', player: 0, iid: u.iid })
+    let r = reduce(s, { type: 'REVEAL', player: 0, iid: u.iid })
     expect(r.error).toBeFalsy()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 }) // reveal opens a chain
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.state.battlefields[0].facedown).toBeNull()
     expect(r.state.battlefields[0].units.some((x) => x.iid === u.iid && !x.facedown)).toBe(true)
   })
@@ -3095,8 +3101,10 @@ describe('Batch F — Spiritforged attach', () => {
     s.battlefields[0] = { cardId: battlefield.id, units: [host], controller: 0 }
     const g = mk(gear, 0, { facedown: true, hiddenTurn: 4 })
     s.battlefields[0].facedown = g
-    const r = reduce(s, { type: 'REVEAL', player: 0, iid: g.iid })
+    let r = reduce(s, { type: 'REVEAL', player: 0, iid: g.iid })
     expect(r.error).toBeFalsy()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 }) // reveal opens a chain
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     const h = r.state.battlefields[0].units.find((x) => x.iid === host.iid)
     expect(h?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true)
     expect(r.state.players[0].zones.base.some((x) => x.iid === g.iid)).toBe(false) // not unattached at base
@@ -6302,8 +6310,10 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     s.battlefields[0].facedown = evel
     const enemy = mk(furyUnit.id, 1, { exhausted: true })
     s.battlefields[1] = { cardId: battlefield.id, units: [enemy], controller: 1 }
-    const r = reduce(s, { type: 'REVEAL', player: 0, iid: evel.iid })
+    let r = reduce(s, { type: 'REVEAL', player: 0, iid: evel.iid })
     expect(r.error).toBeUndefined()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 }) // reveal opens a chain
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.state.battlefields[0].units.some((x) => x.iid === enemy.iid)).toBe(true) // pulled to Evelynn's battlefield
   })
 

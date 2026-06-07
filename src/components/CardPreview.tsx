@@ -137,7 +137,9 @@ export default function CardPreview({
   }
 
   return (
-    <span ref={ref} style={{ display: 'contents' }} onMouseEnter={show} onMouseLeave={hide}>
+    // Pressing the card (to drag or click) immediately cancels the hover preview so it
+    // never pops up mid-drag and fights the lifted card.
+    <span ref={ref} style={{ display: 'contents' }} onMouseEnter={show} onMouseLeave={hide} onPointerDown={hide}>
       {children}
       {anchor && <PreviewPanel card={card} anchor={anchor} center={center} />}
     </span>

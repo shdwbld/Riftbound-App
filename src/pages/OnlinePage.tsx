@@ -1119,7 +1119,7 @@ function Lobby({
           decks={decks}
           value={deckId}
           onChange={setDeckId}
-          gridClassName="max-h-[62vh] grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5"
+          gridClassName="max-h-[62vh] grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
         />
 
         <div className="space-y-3">

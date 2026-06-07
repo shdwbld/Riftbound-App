@@ -106,24 +106,42 @@ export function DeckTile({
     <button
       type="button"
       onClick={onSelect}
-      className={`group relative block overflow-hidden rounded-xl border text-left transition ${
+      className={`group relative flex gap-3 overflow-hidden rounded-xl border p-2.5 text-left transition ${
         selected ? 'border-amber-300 shadow-[0_0_18px_-4px_rgba(200,155,60,0.7)]' : 'border-white/10 hover:border-white/25'
       }`}
       style={{ transform: selected ? 'scale(1.03)' : undefined, opacity: dimmed && !selected ? 0.7 : 1 }}
     >
-      <LegendBanner legend={m.legend} identity={m.identity} />
-      <div className="space-y-1 p-2.5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-bold">{deck.name}</div>
-            <div className="truncate text-[11px] text-white/50">{m.championName || 'No legend'}</div>
-          </div>
-          <span className="shrink-0 rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-semibold text-white/70">{m.mainCount} cards</span>
+      {/* Full legend photo at full vertical height (whole image, uncropped). */}
+      <div className="flex shrink-0 items-center" style={{ background: identityGradient(m.identity), borderRadius: '0.5rem' }}>
+        {m.legend?.imageUrl ? (
+          <img src={m.legend.imageUrl} alt="" loading="lazy" className="h-36 w-auto rounded-lg object-contain" />
+        ) : (
+          <div className="flex h-36 w-24 items-center justify-center rounded-lg text-center text-[10px] text-white/50">No legend</div>
+        )}
+      </div>
+      {/* Description on the right. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="min-w-0">
+          <div className="text-sm font-bold leading-tight">{deck.name}</div>
+          <div className="truncate text-[11px] text-white/50">{m.championName || 'No legend'}</div>
         </div>
         <div className="flex flex-wrap gap-1">
           {m.identity.map((d) => (
             <span key={d} className="h-2.5 w-2.5 rounded-full ring-1 ring-black/40" style={{ background: DOMAIN_META[d].color }} title={DOMAIN_META[d].label} />
           ))}
+        </div>
+        {m.keyCards.length > 0 && (
+          <ul className="space-y-0.5 text-[11px] text-white/65">
+            {m.keyCards.slice(0, 4).map((c) => (
+              <li key={c.id} className="truncate">
+                <span className="text-amber-300/70">{c.supertype === 'champion' ? '★' : '✦'}</span> {cleanName(c.name)}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-auto flex items-center gap-2 text-[10px] text-white/45">
+          <span className="rounded-full bg-black/40 px-2 py-0.5 font-semibold text-white/70">{m.mainCount} cards</span>
+          <span>{m.runeCount} runes · {deck.battlefields.length} BF</span>
         </div>
       </div>
     </button>
@@ -185,7 +203,7 @@ export function DeckPicker({
   decks,
   value,
   onChange,
-  gridClassName = 'max-h-72 grid-cols-2 sm:grid-cols-3',
+  gridClassName = 'max-h-[30rem] grid-cols-1 sm:grid-cols-2',
 }: {
   label?: string
   decks: Deck[]

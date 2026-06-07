@@ -223,6 +223,7 @@ Stack reality the proposals lean on: React + Tailwind v4, board cards in `BoardC
 
 ### O4 — "Your turn / their turn" transition banner + interactivity dimming
 - **Desc:** A 1–2s "Your Turn" banner on turn handoff plus dimming all my interactive elements during the opponent's turn, reinforcing whose window it is. Distinct from the persistent priority banner.
+Make sure that it doesn't happen at the same time a person draws a card where two events happen at once. Drawing a card should be moved so its 2 seconds after the dismiss and this transition banner. transition banner > draw card
 - **Impact:** Med · **Effort:** Small · **Needs engine:** No
 - **Builds on:** `CombatBanner.tsx` (reuse the banner shell), the priority banner derivation in MatchBoard, `canAct`.
 

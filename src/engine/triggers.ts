@@ -33,13 +33,15 @@ export type TriggerEvent =
   | 'becomesState' // a unit gains a state (e.g. becomes [Mighty])
   | 'buff' // a unit you control is buffed (Simian Ancestor)
   | 'targeted' // a unit is chosen as a spell/ability target (Jae Medarda, Irelia - Fervent)
+  | 'hide' // you hide a card facedown (Katarina - Reckless)
+  | 'opponentMove' // an opponent moves a unit to a battlefield (Volibear - Imposing)
 
 /** Runtime list of all trigger events (mirrors the TriggerEvent union above) —
  *  used by the card-spec editor vocabulary so its options can't drift from the engine. */
 export const TRIGGER_EVENTS: TriggerEvent[] = [
   'play', 'conquer', 'hold', 'death', 'startOfTurn', 'attack', 'defend', 'move',
   'winCombat', 'stun', 'enemyDeath', 'discard', 'recycleRune', 'recycleCard', 'spendBuff',
-  'becomesState', 'buff', 'targeted',
+  'becomesState', 'buff', 'targeted', 'hide', 'opponentMove',
 ]
 
 export interface TriggeredAbility {
@@ -121,6 +123,11 @@ const PATTERNS: Pattern[] = [
   { event: 'spendBuff', scope: 'global', re: /when(?:ever)?\s+you\s+spend\s+a\s+buff/i },
   // "When you buff me, …" (Simian Ancestor) — self.
   { event: 'buff', scope: 'self', re: /when(?:ever)?\s+you\s+buff\s+(?:me|this(?:\s+unit)?)/i },
+  // "When you hide a card, …" (Katarina - Reckless: ready me) — global.
+  { event: 'hide', scope: 'global', re: /when(?:ever)?\s+you\s+hide\s+a\s+card/i },
+  // "When an opponent moves to a battlefield other than mine, …" (Volibear -
+  // Imposing: draw 1) — global, fired off the opponent's move-resolution path.
+  { event: 'opponentMove', scope: 'global', re: /when(?:ever)?\s+an\s+opponent\s+moves?\s+to\s+a\s+battlefield/i },
   // "When you choose/target me with a spell …" (Jae Medarda), "choose or ready me"
   // (Irelia - Fervent) — self. "me"/"this" must follow choose/target within ~40 chars.
   { event: 'targeted', scope: 'self', re: /when(?:ever)?\s+(?:you|a player)\s+(?:choose|chooses|target|targets)\b[^.]{0,40}?\b(?:me|this(?:\s+unit)?)\b/i },

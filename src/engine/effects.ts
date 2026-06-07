@@ -245,7 +245,7 @@ export interface ParsedEffect {
    *  needs the relevant battlefield's index, supplied at the trigger site.
    *  `xpAtLeast` gates a `[Level N][>]` effect on the controller's XP (Wuju
    *  Apprentice — "[Level 6][>] … draw 1"). */
-  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast' | 'excessAtLeast' | 'controlsTribe' | 'allTribeTags' | 'wasMighty' | 'diedAlone' | 'diedNotAlone' | 'oppScoreWithin'; value: number; tag?: string } | null
+  condition: { kind: 'handAtMost' | 'handAtLeast' | 'unitsHereAtLeast' | 'xpAtLeast' | 'excessAtLeast' | 'controlsTribe' | 'allTribeTags' | 'wasMighty' | 'diedAlone' | 'diedNotAlone' | 'oppScoreWithin' | 'totalMightAtLeast'; value: number; tag?: string } | null
   /** True when there's text we couldn't auto-resolve. */
   manual: boolean
 }
@@ -389,6 +389,13 @@ function parse(text: string): ParsedEffect {
   // (Poppy - Paragon's ready+XP). Gates the whole effect via conditionMet.
   const oppScoreM = t.match(/if an opponent'?s score is within (\d+) points? of the victory score,/)
   if (oppScoreM) eff.condition = { kind: 'oppScoreWithin', value: parseInt(oppScoreM[1], 10) }
+  // "draw 1 if your other units have total Might N or more" (Kinkou Initiate) —
+  // gates on the summed Might of the controller's OTHER friendly units.
+  const totalMightM = t.match(/if your other units have total might (\d+) or more/)
+  if (totalMightM) eff.condition = { kind: 'totalMightAtLeast', value: parseInt(totalMightM[1], 10) }
+  // NOTE: "if you spent :rb_energy_N: or more" (Revna, Jhin) is NOT a state
+  // condition — per the Unleashed FAQ it means the Energy spent on THIS spell, so
+  // it's gated at play time in playTriggerMatches (engine.ts), not here.
   // "+N Might … for each of the following tags … Bird … Poro" (Friendship) — the
   // chosen target's temp-Might is multiplied by the live distinct-tribe count.
   if (/for each of the following tags[^.]*?\bporo\b/.test(t)) eff.tribeTagCount = true

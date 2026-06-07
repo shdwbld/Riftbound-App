@@ -1,5 +1,6 @@
 import type { MatchState, EngineCard, ZoneId } from './types'
 import { getCard } from '../data/cards'
+import { controllerOf } from './engine'
 
 // Report-only sanity checks on a MatchState — NEVER throws. Returns a list of
 // human-readable violations (empty = clean). Used by bug-capture (stored on each
@@ -47,7 +48,7 @@ export function checkInvariants(s: MatchState): string[] {
     if (b.controller == null) return
     if (b.controller < 0 || b.controller >= s.players.length) v.push(`bf${bi} controller index ${b.controller} out of range`)
     else if (b.units.length === 0) v.push(`bf${bi} has a controller (P${b.controller}) but no units`)
-    else if (!b.units.some((u) => u.owner === b.controller)) v.push(`bf${bi} controller P${b.controller} holds no unit there`)
+    else if (!b.units.some((u) => controllerOf(u) === b.controller)) v.push(`bf${bi} controller P${b.controller} holds no unit there`)
   })
 
   // 4. Chain / priority / showdown consistency.

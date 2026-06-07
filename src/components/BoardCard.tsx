@@ -84,8 +84,8 @@ export default function BoardCard({
         display: 'inline-block',
         borderRadius: '0.375rem',
         ['--sig-glow' as string]: domainGlow(def!.domains),
-        animationDelay: `${(h % 30) / 10}s`,
-        animationDuration: `${4 + ((h >>> 3) % 10) / 10}s`,
+        ['--sig-delay' as string]: `${(h % 30) / 10}s`,
+        ['--sig-dur' as string]: `${4 + ((h >>> 3) % 10) / 10}s`,
       }
     : { display: 'contents' }
   const borderClass =
@@ -134,6 +134,22 @@ export default function BoardCard({
           aria-hidden
         />
       ) : null}
+      {/* Stolen: this unit is controlled by someone other than its owner
+          (Possession / Hostile Takeover). Fuchsia pill, top-right. */}
+      {(() => {
+        const sc = ci as CardInstance & { controlledBy?: number; stolenUntilEot?: boolean; owner?: number }
+        const cb = sc.controlledBy
+        if (cb == null || cb === sc.owner || faceDown) return null
+        return (
+          <span
+            className="absolute right-0 top-0 z-10 rounded-bl bg-fuchsia-600/90 px-0.5 text-[8px] font-bold leading-none text-white shadow ring-1 ring-black/60"
+            title={`Stolen — controlled by ${cb + 1}${sc.stolenUntilEot ? ' (until end of turn)' : ''}; owner ${(sc.owner ?? 0) + 1}`}
+            aria-label="stolen"
+          >
+            ⚔{sc.stolenUntilEot ? '' : '∞'}
+          </span>
+        )
+      })()}
       {def && isUnit(def) && !faceDown && (() => {
         const base = effectiveMight(ci, def.might)
         const lvl = levelBonus(def, xp)

@@ -569,6 +569,7 @@ export default function MatchPage() {
         canAct
         onPlay={play}
         onMove={(iids, bf) => act({ type: 'MOVE_UNITS', player: controlling, iids, toBattlefield: bf })}
+        onRecall={(iids) => act({ type: 'RETREAT_UNITS', player: controlling, iids })}
         onPass={() => act({ type: 'PASS', player: controlling })}
         onPassPriority={() => act({ type: 'PASS_PRIORITY', player: controlling })}
         onCounter={counterWith}
@@ -860,7 +861,13 @@ export default function MatchPage() {
       )}
       {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && (
         <ChoiceModal
-          title="✦ Battlefield"
+          title={
+            match.pendingChoice.kind === 'stealUnit'
+              ? '⚔ Take Control of a Unit'
+              : match.pendingChoice.kind === 'stealGear'
+                ? '⚙ Steal a Gear'
+                : '✦ Battlefield'
+          }
           subtitle={match.pendingChoice.prompt}
           options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
           onPick={(iid) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: String(iid) })}

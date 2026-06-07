@@ -111,7 +111,7 @@ const aliveCount = (s: MatchState): number =>
 function showdownParticipants(s: MatchState): PlayerId[] {
   const sd = s.showdown
   if (!sd) return []
-  const combatants = s.battlefields[sd.battlefield].units.map((u) => u.owner)
+  const combatants = s.battlefields[sd.battlefield].units.map((u) => controllerOf(u))
   return [...new Set([...combatants, ...(sd.helpers ?? [])])].filter((p) => !s.players[p].out)
 }
 
@@ -227,6 +227,9 @@ function applyPayment(
     pool.power[d] = (pool.power[d] ?? 0) - (n ?? 0)
     if ((pool.power[d] ?? 0) <= 0) delete pool.power[d]
   }
+  // Track total colored Power spent this turn (Sivir - Mercenary's ≥2 gate).
+  const totalPowerPaid = Object.values(cost.power).reduce((a, b) => a + (b ?? 0), 0)
+  if (totalPowerPaid > 0) p.powerSpentThisTurn = (p.powerSpentThisTurn ?? 0) + totalPowerPaid
   return null
 }
 
@@ -280,7 +283,7 @@ export function weaponmasterChoices(
   const p = s.players[player]
   for (const g of p.zones.base) if (getCard(g.cardId)?.type === 'gear') out.push({ gearIid: g.iid, cardId: g.cardId })
   for (const u of [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
-    if (u.owner !== player || u.iid === unitIid) continue
+    if (controllerOf(u) !== player || u.iid === unitIid) continue
     for (const ref of u.attached ?? []) {
       const [cid, giid] = ref.split('|')
       out.push({ gearIid: giid, cardId: cid, hostIid: u.iid, hostName: getCard(u.cardId)?.name })
@@ -500,7 +503,7 @@ const TRIBE_TAGS = ['Bird', 'Cat', 'Dog', 'Poro']
 function tribeTagCount(s: MatchState, player: PlayerId): number {
   const present = new Set<string>()
   for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
-    if (u.owner !== player) continue
+    if (controllerOf(u) !== player) continue
     for (const tag of getCard(u.cardId)?.tags ?? []) if (TRIBE_TAGS.includes(tag)) present.add(tag)
   }
   return present.size
@@ -508,11 +511,11 @@ function tribeTagCount(s: MatchState, player: PlayerId): number {
 /** Whether a player controls a unit carrying `tag` (case-insensitive). */
 function controlsTribeTag(s: MatchState, player: PlayerId, tag: string): boolean {
   return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
-    (u) => u.owner === player && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag.toLowerCase()),
+    (u) => controllerOf(u) === player && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag.toLowerCase()),
   )
 }
 
-function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, excess = 0): boolean {
+function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, excess = 0, sourceIid?: string): boolean {
   if (!e.condition) return true
   // Death-state gates are pre-evaluated at death time in fireDeaths; pass here.
   if (e.condition.kind === 'wasMighty' || e.condition.kind === 'diedAlone' || e.condition.kind === 'diedNotAlone') return true
@@ -520,7 +523,7 @@ function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: 
   if (e.condition.kind === 'allTribeTags') return tribeTagCount(s, p.id) >= 4
   if (e.condition.kind === 'unitsHereAtLeast') {
     if (bfIndex == null) return false
-    const count = s.battlefields[bfIndex]?.units.filter((u) => u.owner === p.id).length ?? 0
+    const count = s.battlefields[bfIndex]?.units.filter((u) => controllerOf(u) === p.id).length ?? 0
     return count >= e.condition.value
   }
   // "if you assigned N+ excess damage" — supplied by the conquer trigger site.
@@ -529,6 +532,14 @@ function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: 
   if (e.condition.kind === 'oppScoreWithin') return opponentScoreWithin(s, p.id, e.condition.value)
   // [Level N][>] gate — the controller must have N+ XP (Wuju Apprentice).
   if (e.condition.kind === 'xpAtLeast') return p.xp >= e.condition.value
+  // "if your other units have total Might N or more" (Kinkou Initiate) — sum the
+  // live Might of the controller's OTHER friendly units (excludes the source).
+  if (e.condition.kind === 'totalMightAtLeast') {
+    const sum = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+      .filter((u) => controllerOf(u) === p.id && def(u)?.type === 'unit' && u.iid !== sourceIid)
+      .reduce((n, u) => n + mightOf(u, null, s.players[u.owner]?.xp ?? 0), 0)
+    return sum >= e.condition.value
+  }
   const hand = p.zones.hand.length
   return e.condition.kind === 'handAtMost' ? hand <= e.condition.value : hand >= e.condition.value
 }
@@ -560,7 +571,7 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
   if (!e.buff && !e.buffAll) return []
   const lines: string[] = []
   const give = (u: EngineCard | undefined) => {
-    if (!u || u.owner !== p.id || (u.buffs ?? 0) >= 1) return false
+    if (!u || controllerOf(u) !== p.id || (u.buffs ?? 0) >= 1) return false
     u.buffs = 1
     emit({ kind: 'buff', iid: u.iid, player: p.id })
     lines.push(`Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
@@ -575,11 +586,11 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
   if (e.buffAll) {
     const hereBf = e.buffAll === 'here' && sourceIid ? bfIndexOfUnit(s, sourceIid) : -1
     const pool = hereBf >= 0 ? (s.battlefields[hereBf]?.units ?? []) : [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-    for (const u of pool) if (u.owner === p.id && def(u)?.type === 'unit' && u.iid !== sourceIid) give(u)
+    for (const u of pool) if (controllerOf(u) === p.id && def(u)?.type === 'unit' && u.iid !== sourceIid) give(u)
   }
   if (!e.buffSelf && !e.buffAll && e.buff) {
     const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-      .filter((u) => u.owner === p.id && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
+      .filter((u) => controllerOf(u) === p.id && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
       .filter((u) => !(e.buffExcludesSelf && u.iid === sourceIid))
       .sort((a, b) => (def(b)?.type === 'unit' ? (def(b) as { might: number }).might : 0) - (def(a)?.type === 'unit' ? (def(a) as { might: number }).might : 0))
     for (let i = 0; i < e.buff && i < candidates.length; i++) give(candidates[i])
@@ -632,7 +643,7 @@ function fireBuffTriggers(s: MatchState, p: PlayerState, buffedIid: string): str
  *  unit's own controller is the chooser ("you"). Returns the threaded state. */
 function fireTargetedSelf(s: MatchState, chooser: PlayerId, iid: string): MatchState {
   const u = findUnitAnywhere(s, iid)
-  if (!u || u.owner !== chooser) return s
+  if (!u || controllerOf(u) !== chooser) return s
   for (const ab of triggersFor(getCard(u.cardId), 'targeted')) {
     if (ab.scope !== 'self') continue
     const bfi = bfIndexOfUnit(s, u.iid)
@@ -647,7 +658,7 @@ function fireTargetedSelf(s: MatchState, chooser: PlayerId, iid: string): MatchS
 function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: number, sourceIid?: string, excess = 0): string[] {
   const lines: string[] = []
   // A gated effect does nothing when its condition isn't met.
-  if (!conditionMet(s, p, e, bfIndex, excess)) return lines
+  if (!conditionMet(s, p, e, bfIndex, excess, sourceIid)) return lines
   // Discard resolves BEFORE the draw so "discard N, then draw N" doesn't toss a
   // freshly-drawn card. Auto-discards the N lowest-cost cards from hand.
   if (e.discard) {
@@ -672,7 +683,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.drawPerMighty) {
     // "draw 1 for each of your [Mighty] units" (Kadregrin, Show of Strength) — counts
     // EFFECTIVE-Mighty units in play (base + buffs + temp + gear + level).
-    const n = [...s.battlefields.flatMap((b) => b.units), ...p.zones.base].filter((u) => u.owner === p.id && stateActive(s, u, 'mighty')).length
+    const n = [...s.battlefields.flatMap((b) => b.units), ...p.zones.base].filter((u) => controllerOf(u) === p.id && stateActive(s, u, 'mighty')).length
     if (n > 0) lines.push(`Drew ${drawN(p, e.drawPerMighty * n)} (per [Mighty] unit).`)
   }
   if (e.channel) lines.push(`Channeled ${channelN(p, e.channel)}.`)
@@ -732,7 +743,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     }
   }
   if (e.bounceGear) {
-    const gears = allGearInPlay(s).filter((g) => g.owner === p.id)
+    const gears = allGearInPlay(s).filter((g) => controllerOf(g) === p.id)
     if (gears.length) {
       const pick = gears.reduce((lo, g) => (gearEnergyOf(g) <= gearEnergyOf(lo) ? g : lo))
       const nm = getCard(pick.cardId)?.name ?? 'a gear'
@@ -945,7 +956,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // Ivern - Nurturer: "if you revealed a Bird/Cat/Dog/Poro, [Buff] a friendly unit."
     if (thenBuffIfTribe && top.some((c) => (getCard(c.cardId)?.tags ?? []).some((tg) => thenBuffIfTribe.includes(tg)))) {
       const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-        (u) => u.owner === p.id && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
+        (u) => controllerOf(u) === p.id && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
       )
       if (friendly.length) {
         const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
@@ -1022,7 +1033,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.tempMightAll) {
     // Board-wide temp Might to all the controller's units (Grand Strategem).
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => u.owner === p.id && getCard(u.cardId)?.type === 'unit',
+      (u) => controllerOf(u) === p.id && getCard(u.cardId)?.type === 'unit',
     )
     for (const u of units) u.tempMight = (u.tempMight ?? 0) + e.tempMightAll
     if (units.length) lines.push(`${e.tempMightAll > 0 ? '+' : ''}${e.tempMightAll} Might this turn to ${units.length} unit(s).`)
@@ -1030,7 +1041,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.tempMightAllEnemy) {
     // Board-wide temp Might to all ENEMY units (Thousand-Tailed Watcher: -3, min 1).
     const enemies = [...s.players.flatMap((pl) => pl.zones.base), ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => u.owner !== p.id && getCard(u.cardId)?.type === 'unit',
+      (u) => controllerOf(u) !== p.id && getCard(u.cardId)?.type === 'unit',
     )
     let n = 0
     for (const u of enemies) { applyTempMight(s, u.iid, e.tempMightAllEnemy, e.tempMightFloor); n++ }
@@ -1040,7 +1051,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // Tag-scoped temp Might to your tagged units (Danger Zone: "your Mechs +1").
     const { tag, amount } = e.tempMightTag
     const units = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => u.owner === p.id && (getCard(u.cardId)?.tags ?? []).includes(tag),
+      (u) => controllerOf(u) === p.id && (getCard(u.cardId)?.tags ?? []).includes(tag),
     )
     for (const u of units) u.tempMight = (u.tempMight ?? 0) + amount
     if (units.length) lines.push(`${amount > 0 ? '+' : ''}${amount} Might this turn to ${units.length} ${tag}(s).`)
@@ -1049,7 +1060,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // "ready your units" (Shurelya's Requiem) — pure benefit, auto-ready them all.
     let n = 0
     for (const u of [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)])
-      if (u.owner === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
+      if (controllerOf(u) === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit') { u.exhausted = false; n++ }
     if (n > 0) lines.push(`Readied ${n} unit(s).`)
   }
   if (e.readyOrExhaustLegend) {
@@ -1064,7 +1075,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // ANOTHER unit" (First Mate) excludes the source unit from the choices.
     const excludeIid = e.readyExcludesSelf ? sourceIid : undefined
     const exhausted = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-      (u) => u.owner === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit' && u.iid !== excludeIid,
+      (u) => controllerOf(u) === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id) && getCard(u.cardId)?.type === 'unit' && u.iid !== excludeIid,
     )
     const cnt = Math.min(e.readyUnits, exhausted.length)
     if (cnt > 0) {
@@ -1086,7 +1097,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     let n = 0
     if (bi >= 0)
       for (const u of s.battlefields[bi].units)
-        if (u.owner === p.id && u.iid !== sourceIid) { u.grantAssault = (u.grantAssault ?? 0) + e.grantAssaultHere; n++ }
+        if (controllerOf(u) === p.id && u.iid !== sourceIid) { u.grantAssault = (u.grantAssault ?? 0) + e.grantAssaultHere; n++ }
     if (n) lines.push(`Gave [Assault ${e.grantAssaultHere}] to ${n} other unit(s) here this turn.`)
   }
   if (e.grantShieldHere && sourceIid != null) {
@@ -1095,7 +1106,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     let n = 0
     if (bi >= 0)
       for (const u of s.battlefields[bi].units)
-        if (u.owner === p.id && u.iid !== sourceIid) { u.grantShield = (u.grantShield ?? 0) + e.grantShieldHere; n++ }
+        if (controllerOf(u) === p.id && u.iid !== sourceIid) { u.grantShield = (u.grantShield ?? 0) + e.grantShieldHere; n++ }
     if (n) lines.push(`Gave [Shield ${e.grantShieldHere}] to ${n} other unit(s) here this turn.`)
   }
   // "spend a buff to buff me and ready me" (Wildclaw Shaman): pay the cost by
@@ -1104,7 +1115,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   let costPaid = true
   if (e.spendBuff && (e.buffSelf || e.readySelf)) {
     const donor = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].find(
-      (u) => u.owner === p.id && (u.buffs ?? 0) > 0 && u.iid !== sourceIid,
+      (u) => controllerOf(u) === p.id && (u.buffs ?? 0) > 0 && u.iid !== sourceIid,
     )
     if (donor) {
       donor.buffs = (donor.buffs ?? 0) - 1
@@ -1117,7 +1128,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (costPaid && e.readySelf && sourceIid) {
     // The source may be a legend (Sivir - Battle Mistress: "… ready me").
     const u = findUnitAnywhere(s, sourceIid) ?? (p.legend?.iid === sourceIid ? p.legend : undefined)
-    if (u && u.owner === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id)) {
+    if (u && controllerOf(u) === p.id && u.exhausted && !unitCantBeReadied(u) && !enemyWardenAtBf(s, p.id)) {
       u.exhausted = false
       emit({ kind: 'buff', iid: u.iid, player: p.id })
       lines.push(`Readied ${getCard(u.cardId)?.name}.`)
@@ -1126,7 +1137,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   if (e.moveSourceToBf && sourceIid && bfIndex != null && bfIndex >= 0) {
     // "you may move me there" (Loyal Pup): relocate the source unit to bfIndex.
     const src = findUnitAnywhere(s, sourceIid)
-    if (src && src.owner === p.id && battlefieldOf(s, sourceIid) !== bfIndex) {
+    if (src && controllerOf(src) === p.id && battlefieldOf(s, sourceIid) !== bfIndex) {
       const fromBf = battlefieldOf(s, sourceIid)
       if (fromBf >= 0) {
         const fi = s.battlefields[fromBf].units.findIndex((u) => u.iid === sourceIid)
@@ -1145,7 +1156,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
   // (on-play, reveal, end-of-turn) applies it, not just fireTriggers/ACTIVATE_UNIT.
   if (e.tempMightSelf && sourceIid) {
     const u = findUnitAnywhere(s, sourceIid) ?? (p.legend?.iid === sourceIid ? p.legend : undefined)
-    if (u && u.owner === p.id) {
+    if (u && controllerOf(u) === p.id) {
       u.tempMight = (u.tempMight ?? 0) + e.tempMightSelf
       emit({ kind: 'buff', iid: u.iid, player: p.id })
       lines.push(`${e.tempMightSelf > 0 ? '+' : ''}${e.tempMightSelf} Might this turn.`)
@@ -1210,8 +1221,8 @@ function countFriendlyUnitsWithKeyword(s: MatchState, player: PlayerId, kw: stri
     return false
   }
   let n = 0
-  for (const bf of s.battlefields) for (const u of bf.units) if (u.owner === player && has(u)) n++
-  for (const u of s.players[player].zones.base) if (u.owner === player && has(u)) n++
+  for (const bf of s.battlefields) for (const u of bf.units) if (controllerOf(u) === player && has(u)) n++
+  for (const u of s.players[player].zones.base) if (controllerOf(u) === player && has(u)) n++
   return n
 }
 
@@ -1219,8 +1230,17 @@ function countFriendlyUnitsWithKeyword(s: MatchState, player: PlayerId, kw: stri
  *  ATTACHED to a unit — stored as a "cardId|iid" ref on the unit, not an EngineCard
  *  in any zone — surfaced here as a virtual permanent so its triggered/passive
  *  abilities (Vanguard Helm, etc.) are collected, not just unattached base gear. */
+/** Who currently CONTROLS a unit. Owner is immutable (Rule 126.1); a unit
+ *  stolen by Possession / Hostile Takeover carries `controlledBy`, and control
+ *  — not ownership — decides friendly/enemy, combat sides, triggers, scoring,
+ *  ready-sweep, targeting. Zone routing (trash/hand/banish) must stay on
+ *  `owner` (Rule 107.1.d), and recall routes to the controller's base (Rule 428). */
+export function controllerOf(u: EngineCard): PlayerId {
+  return u.controlledBy ?? u.owner
+}
+
 function controlledPermanents(s: MatchState, player: PlayerId): EngineCard[] {
-  const units = [...s.battlefields.flatMap((b) => b.units.filter((u) => u.owner === player)), ...s.players[player].zones.base]
+  const units = [...s.battlefields.flatMap((b) => b.units.filter((u) => controllerOf(u) === player)), ...s.players[player].zones.base]
   const out: EngineCard[] = [...units]
   if (s.players[player].legend) out.push(s.players[player].legend!)
   for (const u of units) {
@@ -1349,7 +1369,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // (previously fired unconditionally).
     const enemyAloneOk = !/if an enemy unit is alone here/i.test(ability.text) || (() => {
       const bi = battlefieldOf(s, sourceIid ?? '')
-      return bi >= 0 && s.battlefields[bi].units.filter((u) => u.owner !== player).length === 1
+      return bi >= 0 && s.battlefields[bi].units.filter((u) => controllerOf(u) !== player).length === 1
     })()
     // Vex - Mocking: a stun trigger's "you may move me to that battlefield" needs the
     // stunned enemy's bfIndex threaded into applyParsed (moveSourceToBf) — the same way
@@ -1371,7 +1391,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // gating condition (Daisy! — only "while your units have all 4 tags").
     if (e.stun && sourceIid && !gated) {
       const bi = battlefieldOf(s, sourceIid)
-      const target = bi >= 0 ? s.battlefields[bi].units.find((u) => u.owner !== player && !u.stunned) : undefined
+      const target = bi >= 0 ? s.battlefields[bi].units.find((u) => controllerOf(u) !== player && !u.stunned) : undefined
       if (target) {
         target.stunned = true
         emit({ kind: 'stun', iid: target.iid, player })
@@ -1433,7 +1453,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if (ability.event === 'attack' && sourceIid && srcName === 'Warwick - Hunter') {
       // "When I attack, kill all damaged enemy units here."
       const bi = battlefieldOf(s, sourceIid)
-      const victims = bi >= 0 ? s.battlefields[bi].units.filter((u) => u.owner !== player && (u.damage ?? 0) > 0).map((u) => u.iid) : []
+      const victims = bi >= 0 ? s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && (u.damage ?? 0) > 0).map((u) => u.iid) : []
       const dead: EngineCard[] = []
       for (const iid of victims) dead.push(...killTarget(s, iid))
       if (victims.length) s = log(s, player, `${label}: ${srcName} killed ${victims.length} damaged enemy unit(s).`)
@@ -1466,7 +1486,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const bi = battlefieldOf(s, sourceIid)
       if (bi >= 0) {
         const tokens = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
-          .filter((u) => u.owner === player && u.iid !== sourceIid && (getCard(u.cardId)?.supertype === 'token' || u.token) && battlefieldOf(s, u.iid) !== bi)
+          .filter((u) => controllerOf(u) === player && u.iid !== sourceIid && (getCard(u.cardId)?.supertype === 'token' || u.token) && battlefieldOf(s, u.iid) !== bi)
         let n = 0
         for (const tok of tokens) { const pl = pluckCardAnywhere(s, tok.iid); if (pl) { s.battlefields[bi].units.push(pl); n++ } }
         if (n) { recomputeControllers(s); s = log(s, player, `${label}: Azir - Sovereign moved ${n} token unit(s) here.`) }
@@ -1487,7 +1507,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
           const main = pickEnemyToDamage(here, player, 2)
           const dead: EngineCard[] = []
           if (main) dead.push(...applyTargetDamage(s, main.iid, 2, true, player))
-          for (const u of here) if (u.owner !== player && u.iid !== main?.iid) dead.push(...applyTargetDamage(s, u.iid, 1, true, player))
+          for (const u of here) if (controllerOf(u) !== player && u.iid !== main?.iid) dead.push(...applyTargetDamage(s, u.iid, 1, true, player))
           s = fireDeaths(s, dead)
           s = log(s, player, `${label}: Twisted Fate (Fury) dealt 2 + 1 to enemies here.`)
         } else if (domains.includes('mind')) {
@@ -1558,7 +1578,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       handled = true
     }
     if (ability.event === 'conquer' && srcName === 'Sivir - Ambitious' && excess >= 5) {
-      const enemies = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)].filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit')
+      const enemies = [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)].filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit')
       if (enemies.length) {
         const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
         s = log(s, player, `${label}: Sivir - Ambitious dealt ${excess} to ${getCard(target.cardId)?.name}.`)
@@ -1616,7 +1636,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         const kw = parseKeywords(getCard(kato.cardId))
         const katoMight = mightOf(kato)
         const allies = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
-          .filter((u) => u.owner === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit')
+          .filter((u) => controllerOf(u) === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit')
         const target = allies.length ? allies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : undefined
         if (target) {
           if (kw.deflect > 0) target.grantDeflect = (target.grantDeflect ?? 0) + kw.deflect
@@ -1639,7 +1659,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const self = findUnitAnywhere(s, sourceIid)
       if (bi >= 0 && self) {
         const myMight = mightOf(self)
-        const targets = s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit' && mightOf(u) < myMight)
+        const targets = s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit' && mightOf(u) < myMight)
         if (targets.length) {
           const victim = targets.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
           const destIdx = (() => {
@@ -1692,7 +1712,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if (ability.event === 'attack' && srcName === 'Sinister Poro' && sourceIid) {
       const bi = battlefieldOf(s, sourceIid)
       if (bi >= 0) {
-        const enemies = s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit')
+        const enemies = s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit')
         if (enemies.length && makeBfApi(s).payEnergy(player, 1)) {
           const victim = enemies.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
           if (sendUnitToBase(s, victim.iid))
@@ -1708,9 +1728,9 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const bi = battlefieldOf(s, sourceIid)
       if (bi >= 0) {
         const dead: EngineCard[] = []
-        const defenders = new Set(s.battlefields[bi].units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit').map((u) => u.owner))
+        const defenders = new Set(s.battlefields[bi].units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit').map((u) => controllerOf(u)))
         for (const owner of defenders) {
-          const theirs = s.battlefields[bi].units.filter((u) => u.owner === owner && getCard(u.cardId)?.type === 'unit')
+          const theirs = s.battlefields[bi].units.filter((u) => controllerOf(u) === owner && getCard(u.cardId)?.type === 'unit')
           if (!theirs.length) continue
           const victim = theirs.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
           s = log(s, player, `${label}: Atakhan forces ${s.players[owner].name} to kill ${getCard(victim.cardId)?.name ?? 'a unit'}.`)
@@ -1761,7 +1781,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // +3 Might and [Tank] this turn." Auto-picks a friendly other unit at the bf.
     if ((ability.event === 'attack' || ability.event === 'defend') && srcName === 'Yuumi - Magical Cat' && sourceIid) {
       const bi = battlefieldOf(s, sourceIid)
-      const ally = bi >= 0 ? s.battlefields[bi].units.find((u) => u.owner === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit') : undefined
+      const ally = bi >= 0 ? s.battlefields[bi].units.find((u) => controllerOf(u) === player && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit') : undefined
       if (ally) {
         ally.tempMight = (ally.tempMight ?? 0) + 3
         ally.grantTank = true
@@ -1781,7 +1801,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       if (mech) {
         const cost = cardCost(mech) // recycled Might must cover the whole cost (free)
         const spare = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-          .filter((x) => x.owner === player && x.iid !== sourceIid && !x.token && getCard(x.cardId)?.supertype !== 'token' && getCard(x.cardId)?.type === 'unit' && mightOf(x) >= cost && mightOf(x) < mightOf(mech))
+          .filter((x) => controllerOf(x) === player && x.iid !== sourceIid && !x.token && getCard(x.cardId)?.supertype !== 'token' && getCard(x.cardId)?.type === 'unit' && mightOf(x) >= cost && mightOf(x) < mightOf(mech))
           .sort((a, b) => mightOf(a) - mightOf(b))[0]
         if (spare) {
           for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === spare.iid); if (i >= 0) bf.units.splice(i, 1) }
@@ -1883,6 +1903,10 @@ function deathknellMultiplier(s: MatchState, player: PlayerId): number {
  *  player's "when an enemy unit dies" triggers (Pyke - Returned, Sivir). */
 function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): MatchState {
   if (defeated.length) s.unitDiedThisTurn = true // gates conditional enter-ready
+  // Akshan - Mischievous dying counts as leaving the board → return his stolen gear
+  // to its owner. By now the dead unit's own gear was detached to its owner's base
+  // by sendToTrash; revert re-routes any stolen piece to the real owner (no dupe).
+  for (const u of defeated) revertAkshanStolenGears(s, u.iid)
   const isRecruit = (u: EngineCard) => (getCard(u.cardId)?.tags ?? []).includes('Recruit')
   // At-death snapshots for Deathknell state gates (the dying unit's stats are still
   // intact). "Mighty" ignores the lethal damage (its Might stat was 5+). "Alone" =
@@ -1893,8 +1917,8 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
   }
   const aloneAtDeath = (u: EngineCard) => {
     const bf = u.diedAtBf != null ? s.battlefields[u.diedAtBf] : null
-    const survivors = bf ? bf.units.filter((x) => x.owner === u.owner && x.iid !== u.iid).length : 0
-    const otherDead = defeated.filter((x) => x.iid !== u.iid && x.owner === u.owner && x.diedAtBf === u.diedAtBf).length
+    const survivors = bf ? bf.units.filter((x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid).length : 0
+    const otherDead = defeated.filter((x) => x.iid !== u.iid && controllerOf(x) === controllerOf(u) && x.diedAtBf === u.diedAtBf).length
     return survivors + otherDead === 0
   }
   const fired: FiredTrigger[] = []
@@ -1972,6 +1996,20 @@ function playTriggerMatches(text: string, card: Card, cost?: number, mighty?: bo
   if (moreM && (cost == null || cost < parseInt(moreM[1], 10))) return false
   const lessM = lc.match(/costs?\s*(?::rb_energy_)?(\d+):?\s*or less/)
   if (lessM && (cost == null || cost > parseInt(lessM[1], 10))) return false
+  // "if you (have )spent :rb_energy_N: or more" — Revna the Lorekeeper. Per the
+  // Unleashed FAQ this is the cost spent on THIS spell (not a turn total), so it's
+  // gated against the played card's cost like the "costs N or more" thresholds.
+  const spentM = lc.match(/if you (?:have )?spent\s*(?::rb_energy_)?(\d+):?\s*or more/)
+  if (spentM && (cost == null || cost < parseInt(spentM[1], 10))) return false
+  // Power-cost threshold: "with power cost :rb_rune_rainbow::rb_rune_rainbow: or more"
+  // (Yordle Explorer) — N rainbow pips = the played card's total colored-Power cost.
+  const powerMoreM = lc.match(/with power cost ((?::rb_rune_rainbow:)+)\s*or more/)
+  if (powerMoreM) {
+    const need = (powerMoreM[1].match(/:rb_rune_rainbow:/g) ?? []).length
+    const powerObj = (card as { power?: Record<string, number> }).power ?? {}
+    const have = Object.values(powerObj).reduce((a: number, b) => a + (Number(b) || 0), 0)
+    if (have < need) return false
+  }
   return true
 }
 
@@ -2003,8 +2041,12 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   // "When you play a card on an opponent's turn" (Viktor - Innovator) — only fires
   // while it's NOT the controller's turn.
   all = all.filter((f) => !/on an opponent'?s turn/i.test(f.ability.text) || s.activePlayer !== player)
-  // "When you play a card from [Hidden]" (Ember Monk) — only on a reveal-play.
-  all = all.filter((f) => /\bfrom \[?hidden\]?/i.test(f.ability.text) ? fromHidden : true)
+  // "When you play a card from [Hidden]" (Ember Monk) / "from face down" (Katarina -
+  // Reckless, Black Market Broker) — only on a reveal-play, never on a normal play.
+  all = all.filter((f) => /\bfrom \[?hidden\]?|\bfrom face[- ]?down\b/i.test(f.ability.text) ? fromHidden : true)
+  // "When you play a unit during a showdown" (Fresh Beans) — only while a showdown
+  // is open.
+  all = all.filter((f) => /during a showdown/i.test(f.ability.text) ? s.showdown != null : true)
   if (playedCard) {
     // For a "play a [Mighty] unit" filter, test the live state of the played
     // instance (effective Might, incl. buffs/gear), not its base stat.
@@ -2012,25 +2054,83 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
     const mighty = inst ? stateActive(s, inst, 'mighty') : undefined
     all = all.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost, mighty))
   }
-  // Triggers that pay by exhausting their own source ("…exhaust me…") aren't
-  // auto-resolved by fireTriggers (they'd fire for free). Fire the rest normally,
-  // then handle the pure-upside "exhaust me to channel N (exhausted)" play payoff
-  // explicitly — Volibear - Relentless Storm: "When you play a [Mighty] unit, you
-  // may exhaust me to channel 1 rune exhausted." (Mirrors fireBecomesState.)
+  // Optional-cost triggers aren't auto-resolved by fireTriggers (it would apply
+  // their effect for free). Split them out and pay the cost ourselves when it's
+  // pure upside (per the auto-resolve preference):
+  //  • "exhaust me/this to channel N / draw N" (Volibear - Relentless Storm, Fresh
+  //    Beans) — exhaust the source if it's ready.
+  //  • "you may pay :rb_energy_N: to <effect>" (Blood Rose) — auto-pay N Energy
+  //    (pool first, then exhaust ready runes) if affordable, then apply the effect.
   const exhaustMe = (t: string) => /exhaust me\b|exhaust this\b/i.test(t)
-  s = fireTriggers(s, all.filter((f) => !exhaustMe(f.ability.text)))
+  const payEnergyOpt = (t: string) => /you may pay :rb_energy_\d+: to\b/i.test(t)
+  const findPerm = (iid: string | undefined) =>
+    [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units), ...(s.players[player].legend ? [s.players[player].legend!] : [])].find((c) => c.iid === iid)
+  // Jhin's payoff lives in his card's 2nd sentence, which the clause parser drops —
+  // detect him by the SOURCE card's full text, not the (first-sentence) clause.
+  const isJhin = (f: FiredTrigger) => /banished with me/i.test(getCard(f.sourceCardId ?? '')?.text ?? '')
+  s = fireTriggers(s, all.filter((f) => !exhaustMe(f.ability.text) && !payEnergyOpt(f.ability.text) && !isJhin(f)))
+  // Jhin - Virtuoso (bespoke): "When you play a spell, if you spent 4+ Energy, you
+  // may banish it. Then, if four spells are banished with me, put each in its trash,
+  // channel 4, draw 1." The 4+-Energy gate already filtered `all` (playTriggerMatches);
+  // the banish is modeled as a persistent counter on Jhin, every 4th fires the payoff.
+  const jhinAb = all.find((f) => isJhin(f))
+  if (jhinAb && playedCard?.type === 'spell') {
+    const jhin = s.players[player].legend
+    if (jhin && jhin.iid === jhinAb.sourceIid) {
+      jhin.jhinBanished = [...(jhin.jhinBanished ?? []), playedCard.id]
+      s = log(s, player, `Jhin - Virtuoso: banished ${playedCard.name} (${jhin.jhinBanished.length}/4).`)
+      if (jhin.jhinBanished.length >= 4) {
+        jhin.jhinBanished = []
+        const ch = channelN(s.players[player], 4, false)
+        drawN(s.players[player], 1)
+        s = log(s, player, `Jhin - Virtuoso: four spells banished — channeled ${ch} and drew 1.`)
+      }
+    }
+  }
+  // exhaust-the-source payoffs.
   for (const f of all.filter((f) => exhaustMe(f.ability.text))) {
-    const chM = f.ability.text.match(/exhaust me to channel (\d+|a|an|one) rune/i)
-    if (!chM) continue // other "exhaust me" play payoffs stay manual (not auto-resolved)
-    const src = findUnitAnywhere(s, f.sourceIid ?? '') ?? (s.players[player].legend?.iid === f.sourceIid ? s.players[player].legend! : undefined)
-    if (src && !src.exhausted) {
+    const t = f.ability.text
+    const chM = t.match(/exhaust (?:me|this) to channel (\d+|a|an|one) rune/i)
+    const drM = t.match(/exhaust (?:me|this) to draw (\d+|a|an|one)\b/i)
+    const src = findPerm(f.sourceIid)
+    if (!src || src.exhausted) continue
+    if (chM) {
       src.exhausted = true
-      const exhausted = /exhausted/i.test(f.ability.text)
+      const exhausted = /exhausted/i.test(t)
       const n = channelN(s.players[player], /\d/.test(chM[1]) ? parseInt(chM[1], 10) : 1, exhausted)
-      s = log(s, player, `${getCard(f.sourceCardId ?? '')?.name ?? 'A unit'}: exhausted to channel ${n}${exhausted ? ' (exhausted)' : ''} — played a [Mighty] unit.`)
+      s = log(s, player, `${getCard(f.sourceCardId ?? '')?.name ?? 'A card'}: exhausted to channel ${n}${exhausted ? ' (exhausted)' : ''}.`)
+    } else if (drM) {
+      src.exhausted = true
+      const n = /\d/.test(drM[1]) ? parseInt(drM[1], 10) : 1
+      drawN(s.players[player], n)
+      s = log(s, player, `${getCard(f.sourceCardId ?? '')?.name ?? 'A card'}: exhausted to draw ${n}.`)
+    }
+    // other "exhaust me" payoffs stay manual.
+  }
+  // pay-Energy optional payoffs (Blood Rose).
+  for (const f of all.filter((f) => payEnergyOpt(f.ability.text))) {
+    const m = f.ability.text.match(/you may pay :rb_energy_(\d+): to\b/i)
+    if (!m) continue
+    const pl = s.players[player]
+    if (payEnergyAuto(pl, parseInt(m[1], 10))) {
+      for (const l of applyParsed(s, pl, f.ability.effect, undefined, f.sourceIid)) s = log(s, player, l)
     }
   }
   return s
+}
+
+/** Auto-pay N Energy from a player's pool first, then by exhausting ready runes.
+ *  Returns false (and pays nothing) if N Energy isn't affordable. */
+function payEnergyAuto(pl: PlayerState, n: number): boolean {
+  if (!pl.pool) pl.pool = { energy: 0, power: {} }
+  const ready = pl.zones.runePool.filter((r) => !r.exhausted)
+  if (pl.pool.energy + ready.length < n) return false
+  let need = n
+  const fromPool = Math.min(need, pl.pool.energy)
+  pl.pool.energy -= fromPool
+  need -= fromPool
+  for (let i = 0; i < need; i++) ready[i].exhausted = true
+  return true
 }
 
 /** Fire OPPONENTS' "when an opponent plays a unit while I'm at a battlefield"
@@ -2044,7 +2144,7 @@ function fireOpponentUnitPlay(s: MatchState, player: PlayerId, playedIid: string
   for (let pid = 0; pid < s.players.length; pid++) {
     if (pid === player || s.players[pid]?.out) continue
     // Responder's units that are AT A BATTLEFIELD with the matching trigger text.
-    const atBf = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === pid)
+    const atBf = s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) === pid)
     for (const vex of atBf) {
       const t = (getCard(vex.cardId)?.text ?? '').toLowerCase()
       if (!/when an opponent plays a unit[^.]*?\bstun\b|when an opponent plays a unit[^.]*?\[stun\]/.test(t)) continue
@@ -2058,13 +2158,32 @@ function fireOpponentUnitPlay(s: MatchState, player: PlayerId, playedIid: string
   return s
 }
 
+/** Volibear - Imposing: "When an opponent moves to a battlefield other than mine,
+ *  draw 1." Fired once per move action by `mover` to `destBfIndex` (always a
+ *  battlefield — base moves never reach here, satisfying "bases are not
+ *  battlefields"). Each opponent's Volibear draws if it is NOT at the destination
+ *  ("mine"); a Volibear at base has no battlefield, so every battlefield move
+ *  qualifies. */
+function fireOpponentMove(s: MatchState, mover: PlayerId, destBfIndex: number): MatchState {
+  for (let pid = 0; pid < s.players.length; pid++) {
+    if (pid === mover || s.players[pid]?.out) continue
+    for (const perm of controlledPermanents(s, pid)) {
+      for (const ab of triggersFor(getCard(perm.cardId), 'opponentMove')) {
+        if (bfIndexOfUnit(s, perm.iid) === destBfIndex) continue // moved to "mine"
+        for (const l of applyParsed(s, s.players[pid], ab.effect, undefined, perm.iid)) s = log(s, pid, `${getCard(perm.cardId)?.name}: ${l}`)
+      }
+    }
+  }
+  return s
+}
+
 /** Fire OPPONENTS' "when an opponent scores, draw N" gear as `scorer` scores
  *  (Sumpworks Map). Mutates `s` in place (draws + logs), so it can be called right
  *  after each score emit without the caller reassigning its state. */
 function fireOpponentScore(s: MatchState, scorer: PlayerId): void {
   for (let pid = 0; pid < s.players.length; pid++) {
     if (pid === scorer || s.players[pid]?.out) continue
-    for (const g of allGearInPlay(s).filter((x) => x.owner === pid)) {
+    for (const g of allGearInPlay(s).filter((x) => controllerOf(x) === pid)) {
       const m = (getCard(g.cardId)?.text ?? '').toLowerCase().match(/when an opponent scores,?\s*draw (\d+)/)
       if (!m) continue
       const n = parseInt(m[1], 10) || 1
@@ -2080,7 +2199,7 @@ function fireOpponentScore(s: MatchState, scorer: PlayerId): void {
 function fireSecondCardPlayed(s: MatchState, player: PlayerId): void {
   if (s.players[player]?.cardsPlayedThisTurn !== 2) return
   for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
-    if (u.owner !== player) continue
+    if (controllerOf(u) !== player) continue
     const tx = (getCard(u.cardId)?.text ?? '').toLowerCase()
     if (!/when you play your second card in a turn/.test(tx)) continue
     const bm = tx.match(/give me \+(\d+)\s*(?::rb_might:|might) this turn/)
@@ -2182,7 +2301,7 @@ function fireSpendBuffInline(s: MatchState, player: PlayerId): string[] {
  *  (Prize of Progress). Call after a GEAR's activated ability resolves. */
 function fireGearAbilityUse(s: MatchState, player: PlayerId): MatchState {
   for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
-    if (u.owner !== player) continue
+    if (controllerOf(u) !== player) continue
     const m = (getCard(u.cardId)?.text ?? '').toLowerCase().match(/when you use an activated ability of a gear,? give me \+(\d+)\s*(?::rb_might:|might) this turn/)
     if (m) {
       u.tempMight = (u.tempMight ?? 0) + parseInt(m[1], 10)
@@ -2365,7 +2484,7 @@ function makeBfApi(s: MatchState): BfApi {
       }
     },
     tempMightToUnitHere(player, bfIndex, n) {
-      const u = s.battlefields[bfIndex]?.units.find((x) => x.owner === player && getCard(x.cardId)?.type === 'unit')
+      const u = s.battlefields[bfIndex]?.units.find((x) => controllerOf(x) === player && getCard(x.cardId)?.type === 'unit')
       if (u) {
         u.tempMight = (u.tempMight ?? 0) + n
         note(player, `+${n} Might this turn to ${getCard(u.cardId)?.name}.`)
@@ -2424,7 +2543,7 @@ function makeBfApi(s: MatchState): BfApi {
       note(player, `Created a Gold token.`)
     },
     spendBuffHere(player, bfIndex) {
-      const u = s.battlefields[bfIndex]?.units.find((x) => x.owner === player && (x.buffs ?? 0) > 0)
+      const u = s.battlefields[bfIndex]?.units.find((x) => controllerOf(x) === player && (x.buffs ?? 0) > 0)
       if (!u) return false
       u.buffs = (u.buffs ?? 0) - 1
       note(player, `Spent a buff.`)
@@ -2432,7 +2551,7 @@ function makeBfApi(s: MatchState): BfApi {
       return true
     },
     hasMightyHere(player, bfIndex) {
-      return !!s.battlefields[bfIndex]?.units.some((x) => x.owner === player && mightOf(x) >= 5)
+      return !!s.battlefields[bfIndex]?.units.some((x) => controllerOf(x) === player && mightOf(x) >= 5)
     },
     score(player, n) {
       s.players[player].points += n
@@ -2490,7 +2609,7 @@ function unitCantBeReadied(u: EngineCard): boolean {
 
 /** Mageseeker Warden's auras are active only while it (owned by `owner`) is at a battlefield. */
 function mageseekerWardenAtBf(s: MatchState, owner: PlayerId): boolean {
-  return s.battlefields.some((b) => b.units.some((u) => u.owner === owner && getCard(u.cardId)?.name === 'Mageseeker Warden'))
+  return s.battlefields.some((b) => b.units.some((u) => controllerOf(u) === owner && getCard(u.cardId)?.name === 'Mageseeker Warden'))
 }
 
 /** True if an ENEMY of `player` has a Mageseeker Warden at a battlefield — locks
@@ -2502,7 +2621,7 @@ function enemyWardenAtBf(s: MatchState, player: PlayerId): boolean {
 /** Magma Wurm: "Other friendly units enter ready." — an aura while it's in play. */
 function friendlyUnitsEnterReadyAura(s: MatchState, player: PlayerId): boolean {
   return [...s.battlefields.flatMap((b) => b.units), ...s.players[player].zones.base]
-    .some((u) => u.owner === player && /other friendly units enter ready/i.test(getCard(u.cardId)?.text ?? ''))
+    .some((u) => controllerOf(u) === player && /other friendly units enter ready/i.test(getCard(u.cardId)?.text ?? ''))
 }
 
 /** Auto-pull the strongest enemy unit from *another* location to battlefield
@@ -2513,7 +2632,7 @@ function friendlyUnitsEnterReadyAura(s: MatchState, player: PlayerId): boolean {
 function pullEnemyToBf(s: MatchState, player: PlayerId, destBf: number, label: string): MatchState {
   if (destBf < 0 || destBf >= s.battlefields.length) return s
   const enemies = s.battlefields.flatMap((b, bi) =>
-    bi === destBf ? [] : b.units.filter((u) => u.owner !== player && getCard(u.cardId)?.type === 'unit'),
+    bi === destBf ? [] : b.units.filter((u) => controllerOf(u) !== player && getCard(u.cardId)?.type === 'unit'),
   )
   if (!enemies.length) return s
   const target = enemies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
@@ -2532,7 +2651,7 @@ function pullEnemyToBf(s: MatchState, player: PlayerId, destBf: number, label: s
  *  the mover controls (in their base) and stuns the moved unit. */
 function blastConeOnEnemyMove(s: MatchState, mover: PlayerId, enemyIid: string): MatchState {
   const enemy = findUnitAnywhere(s, enemyIid)
-  if (!enemy || enemy.owner === mover || enemy.stunned) return s
+  if (!enemy || controllerOf(enemy) === mover || enemy.stunned) return s
   const cone = s.players[mover].zones.base.find((c) => getCard(c.cardId)?.name === 'Blast Cone' && !c.exhausted)
   if (!cone) return s
   cone.exhausted = true
@@ -2555,7 +2674,7 @@ function allGearInPlay(s: MatchState): EngineCard[] {
   const out: EngineCard[] = []
   for (const pl of s.players) {
     for (const c of pl.zones.base) if (getCard(c.cardId)?.type === 'gear') out.push(c)
-    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit')
+    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === pl.id && getCard(u.cardId)?.type === 'unit')
     for (const u of units)
       for (const ref of u.attached ?? []) {
         const [cid, iid] = ref.split('|')
@@ -2574,7 +2693,7 @@ function killGearByIid(s: MatchState, gearIid: string): PlayerId | null {
   for (const pl of s.players) {
     const bi = pl.zones.base.findIndex((c) => c.iid === gearIid && getCard(c.cardId)?.type === 'gear')
     if (bi >= 0) { const [g] = pl.zones.base.splice(bi, 1); sendToTrash(pl, g); return pl.id }
-    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id)
+    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === pl.id)
     for (const u of units) {
       const ri = (u.attached ?? []).findIndex((ref) => ref.split('|')[1] === gearIid)
       if (ri >= 0) {
@@ -2596,7 +2715,7 @@ function killGearByIid(s: MatchState, gearIid: string): PlayerId | null {
 function tideturnerSwap(s: MatchState, player: PlayerId, tideIid: string): MatchState {
   const tideBf = battlefieldOf(s, tideIid)
   const allies = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
-    .filter((u) => u.owner === player && u.iid !== tideIid && getCard(u.cardId)?.type === 'unit' && battlefieldOf(s, u.iid) !== tideBf)
+    .filter((u) => controllerOf(u) === player && u.iid !== tideIid && getCard(u.cardId)?.type === 'unit' && battlefieldOf(s, u.iid) !== tideBf)
   if (!allies.length) return s
   const partner = allies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
   const tide = findUnitAnywhere(s, tideIid)
@@ -2645,7 +2764,7 @@ function bounceGearByIid(s: MatchState, gearIid: string): PlayerId | null {
   for (const pl of s.players) {
     const bi = pl.zones.base.findIndex((c) => c.iid === gearIid && getCard(c.cardId)?.type === 'gear')
     if (bi >= 0) { const [g] = pl.zones.base.splice(bi, 1); pl.zones.hand.push({ ...g, exhausted: false, damage: 0, attached: [] }); return pl.id }
-    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id)
+    const units = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === pl.id)
     for (const u of units) {
       const ri = (u.attached ?? []).findIndex((ref) => ref.split('|')[1] === gearIid)
       if (ri >= 0) {
@@ -2663,8 +2782,8 @@ function bounceGearByIid(s: MatchState, gearIid: string): PlayerId | null {
  *  applying "its controller draws N" if set. Returns log lines. */
 function applyKillGear(s: MatchState, player: PlayerId, spec: { scope: 'friendly' | 'enemy' | 'any'; maxEnergy: number | null }, controllerDraw = 0): { killed: boolean; lines: string[] } {
   const gears = allGearInPlay(s).filter((g) => {
-    if (spec.scope === 'friendly' && g.owner !== player) return false
-    if (spec.scope === 'enemy' && g.owner === player) return false
+    if (spec.scope === 'friendly' && controllerOf(g) !== player) return false
+    if (spec.scope === 'enemy' && controllerOf(g) === player) return false
     if (spec.maxEnergy != null && gearEnergyOf(g) > spec.maxEnergy) return false
     return true
   })
@@ -2714,7 +2833,7 @@ function applyConquerPassive(s: MatchState, player: PlayerId, bfIndex: number, e
   // over the generic parser (which would otherwise just make the token).
   if (bfBaseNameAt(s, bfIndex) === "Emperor's Dais") {
     if (canPayEnergy(s, player, 1)) {
-      const opts = bf.units.filter((u) => u.owner === player).map((u) => unitOpt(u))
+      const opts = bf.units.filter((u) => controllerOf(u) === player).map((u) => unitOpt(u))
       offerChoice(s, { player, kind: 'daisReturn', bfIndex, prompt: "Emperor's Dais — pay 1 and return a unit here to hand to play a Sand Soldier here?", options: opts })
     }
     return s
@@ -2743,7 +2862,7 @@ function controlsBFNamed(s: MatchState, player: PlayerId, name: string): boolean
 function controlsUnitNamed(s: MatchState, player: PlayerId, name: string): boolean {
   const baseNm = (n: string) => n.replace(/\s*\([^)]*\)\s*$/, '').trim()
   return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
-    (u) => u.owner === player && baseNm(getCard(u.cardId)?.name ?? '') === name,
+    (u) => controllerOf(u) === player && baseNm(getCard(u.cardId)?.name ?? '') === name,
   )
 }
 
@@ -2751,7 +2870,7 @@ function controlsUnitNamed(s: MatchState, player: PlayerId, name: string): boole
  *  been chosen this turn — Ready 2 runes / Channel 1 rune exhausted / Buff a friendly
  *  unit." Auto-resolves the next un-chosen mode (in order); no-op after all 3. */
 function fireAttachEquip(s: MatchState, player: PlayerId, target: EngineCard): MatchState {
-  if (target.owner !== player) return s
+  if (controllerOf(target) !== player) return s
   const name = (getCard(target.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
   // Generic "When you attach an Equipment to me, you may pay N Energy to draw M"
   // self-trigger (Jax - Unrelenting). Auto-paid when affordable (pure benefit).
@@ -2782,7 +2901,7 @@ function fireAttachEquip(s: MatchState, player: PlayerId, target: EngineCard): M
     return log(s, player, `Aphelios - Exalted: channeled ${n} rune (exhausted).`)
   }
   const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-    (u) => u.owner === player && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
+    (u) => controllerOf(u) === player && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
   )
   if (!friendly.length) return s
   const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
@@ -2804,7 +2923,7 @@ function enterReadyConditionMet(s: MatchState, p: PlayerState, clause: string, t
   const toN = (w: string) => NW[w] ?? (parseInt(w, 10) || 0)
   const controlsTag = (tag: string) =>
     [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
-      (u) => u.owner === p.id && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
+      (u) => controllerOf(u) === p.id && (getCard(u.cardId)?.tags ?? []).some((x) => x.toLowerCase() === tag),
     )
   let m = t.match(/if you control (?:another |an? )?([a-z][a-z' -]*?)(?:\.|,| then|$)/)
   if (m) return controlsTag(m[1].trim())
@@ -2831,7 +2950,7 @@ function zileanDouble(s: MatchState, player: PlayerId, n: number): number {
   const p = s.players[player]
   if (p.zileanDoubledThisTurn || n <= 0) return n
   const baseNm = (x: string | undefined) => (x ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
-  const atBf = s.battlefields.some((b) => b.units.some((u) => u.owner === player && baseNm(getCard(u.cardId)?.name) === 'Zilean - Time Mage'))
+  const atBf = s.battlefields.some((b) => b.units.some((u) => controllerOf(u) === player && baseNm(getCard(u.cardId)?.name) === 'Zilean - Time Mage'))
   if (!atBf) return n
   p.zileanDoubledThisTurn = true
   return n * 2
@@ -2846,7 +2965,7 @@ function playerHasLegend(s: MatchState, player: PlayerId, name: string): boolean
 /** The highest-Might enemy unit at a battlefield (for "an enemy unit here" auto-
  *  targeting). Undefined if there are none. */
 function pickStrongestEnemy(units: EngineCard[], player: PlayerId): EngineCard | undefined {
-  const enemies = units.filter((u) => u.owner !== player)
+  const enemies = units.filter((u) => controllerOf(u) !== player)
   if (!enemies.length) return undefined
   return enemies.reduce((best, u) => (mightOf(u) > mightOf(best) ? u : best))
 }
@@ -2855,7 +2974,7 @@ function pickStrongestEnemy(units: EngineCard[], player: PlayerId): EngineCard |
  *  enemy the damage would kill (remaining Might ≤ amount); else the highest-Might
  *  enemy (soften the biggest threat / set up Warwick). */
 function pickEnemyToDamage(units: EngineCard[], player: PlayerId, amount: number): EngineCard | undefined {
-  const enemies = units.filter((u) => u.owner !== player)
+  const enemies = units.filter((u) => controllerOf(u) !== player)
   if (!enemies.length) return undefined
   const killable = enemies.filter((u) => mightOf(u) <= amount)
   const pool = killable.length ? killable : enemies
@@ -2902,7 +3021,7 @@ export function repeatCostFor(s: MatchState, player: PlayerId, card: Card): Reso
   // + 1 Chaos." Grants Repeat to any of your spells while she's at the open showdown.
   if (!cost && card.type === 'spell' && s.showdown) {
     const sb = s.battlefields[s.showdown.battlefield]?.units ?? []
-    if (sb.some((u) => u.owner === player && /while (?:i'?m|i am) in a showdown, your spells have \[repeat\]/i.test(getCard(u.cardId)?.text ?? '')))
+    if (sb.some((u) => controllerOf(u) === player && /while (?:i'?m|i am) in a showdown, your spells have \[repeat\]/i.test(getCard(u.cardId)?.text ?? '')))
       cost = { energy: 2, power: { chaos: 1 } }
   }
   if (!cost) return null
@@ -2925,12 +3044,37 @@ function sendUnitToBase(s: MatchState, iid: string): boolean {
     if (idx >= 0) {
       const [u] = s.battlefields[i].units.splice(idx, 1)
       bfScriptAt(s, i)?.onMoveFrom?.(u) // Back-Alley Bar: +1 Might this turn
-      s.players[u.owner].zones.base.push({ ...u, exhausted: true })
+      s.players[controllerOf(u)].zones.base.push({ ...u, exhausted: true }) // Rule 428: recall to controller's base
+      revertAkshanStolenGears(s, u.iid) // Akshan leaving the bf returns his stolen gear (now re-homed in base, so locatable)
       recomputeControllers(s)
       return true
     }
   }
   return false
+}
+
+/** Standard move-back-to-base for one unit (the RETREAT / multi-recall action).
+ *  Mutates `s` (off its battlefield → base exhausted, recompute, recall move event,
+ *  log). Returns an error string if it can't retreat, else null. */
+function retreatOne(s: MatchState, player: PlayerId, iid: string): string | null {
+  for (let i = 0; i < s.battlefields.length; i++) {
+    const bf = s.battlefields[i]
+    const idx = bf.units.findIndex((u) => u.iid === iid && controllerOf(u) === player)
+    if (idx < 0) continue
+    // Minotaur Reckoner (global) / Determined Sentry (self): can't move to base.
+    if (globalNoMoveToBaseActive(s)) return "Units can't move to base right now (Minotaur Reckoner)."
+    if (unitCantMoveToBase(bf.units[idx])) return `${def(bf.units[idx])?.name} can't move to base.`
+    if (bfScriptAt(s, i)?.noMoveToBase) return `Units can't move from ${getCard(bf.cardId)?.name ?? 'here'} to base.`
+    if (bf.units[idx].cantMoveTurn === s.turn) return `${def(bf.units[idx])?.name} can't move this turn.`
+    const [u] = bf.units.splice(idx, 1)
+    bfScriptAt(s, i)?.onMoveFrom?.(u) // Back-Alley Bar: +1 Might this turn
+    s.players[player].zones.base.push({ ...u, exhausted: true })
+    recomputeControllers(s)
+    emit({ kind: 'move', iid: u.iid, player, cardId: u.cardId, retreat: 'base' })
+    s.log.push({ turn: s.turn, player, text: `${def(u)?.name} retreated to base.` })
+    return null
+  }
+  return 'Unit not found at any battlefield.'
 }
 
 /** Offer an optional battlefield choice. Single-slot: ignored if one is already
@@ -2954,7 +3098,7 @@ function controlledEquipOptions(s: MatchState, player: PlayerId): { iid: string;
   const out: { iid: string; label: string }[] = []
   for (const c of s.players[player].zones.base) if (isEquipment(c)) out.push({ iid: c.iid, label: getCard(c.cardId)?.name ?? c.iid })
   for (const u of [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
-    if (u.owner !== player) continue
+    if (controllerOf(u) !== player) continue
     for (const ref of u.attached) {
       const [cid, iid] = ref.split('|')
       if (getCard(cid)?.type === 'gear') out.push({ iid, label: `${getCard(cid)?.name ?? cid} (on ${getCard(u.cardId)?.name})` })
@@ -2966,7 +3110,7 @@ function controlledEquipOptions(s: MatchState, player: PlayerId): { iid: string;
 /** Units a player controls (base + battlefields). */
 function unitsControlledBy(s: MatchState, player: PlayerId): EngineCard[] {
   return [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-    (u) => u.owner === player && getCard(u.cardId)?.type === 'unit',
+    (u) => controllerOf(u) === player && getCard(u.cardId)?.type === 'unit',
   )
 }
 
@@ -2981,7 +3125,7 @@ function controlledInstance(s: MatchState, player: PlayerId, iid: string): Engin
   const p = s.players[player]
   return (
     p?.zones.base.find((c) => c.iid === iid) ??
-    s.battlefields.flatMap((b) => b.units).find((u) => u.iid === iid && u.owner === player) ??
+    s.battlefields.flatMap((b) => b.units).find((u) => u.iid === iid && controllerOf(u) === player) ??
     // The legend carries its own ":exhaust:" activated ability too (Lee Sin,
     // Yasuo, Teemo, …); let it be activated through the same path as units.
     (p?.legend?.iid === iid ? p.legend : undefined)
@@ -3198,7 +3342,7 @@ export function grantedAbilityFor(s: MatchState, player: PlayerId, iid: string):
   // Gardens of Becoming: a unit here (yours, unexhausted) gains ":exhaust: gain 1 XP."
   for (let i = 0; i < s.battlefields.length; i++) {
     if (bfBaseNameAt(s, i) !== 'Gardens of Becoming') continue
-    if (s.battlefields[i].units.some((x) => x.iid === iid && x.owner === player && !x.exhausted))
+    if (s.battlefields[i].units.some((x) => x.iid === iid && controllerOf(x) === player && !x.exhausted))
       return { kind: 'gainXP', label: 'Gain 1 XP' }
   }
   // A card's own printed ":exhaust:" ability (Lux - Crownguard, Orb of Regret).
@@ -3241,7 +3385,7 @@ function bfUnitPlayedHere(s: MatchState, player: PlayerId, bfIndex: number, iid:
     if (!pp.oncePerTurnUsed) pp.oncePerTurnUsed = {}
     if (!pp.oncePerTurnUsed[ssKey]) {
       pp.oncePerTurnUsed[ssKey] = true
-      const opts = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === player && u.iid !== iid).map((u) => unitOpt(u))
+      const opts = s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) === player && u.iid !== iid).map((u) => unitOpt(u))
       if (opts.length) offerChoice(s, { player, kind: 'moveAnyToBase', bfIndex, prompt: 'Star Spring — move another unit you control to its base?', options: opts })
     }
   }
@@ -3287,6 +3431,9 @@ function bounceUnitToHand(s: MatchState, iid: string, by: PlayerId, spellName: s
     if (fromChampion >= 0) u = s.players[fromChampion].champion!
   }
   if (!u) return s
+  // Akshan bounced to hand = leaving the board → return his stolen gear first, so
+  // the generic detach loop below doesn't ship it to the wrong player's base.
+  revertAkshanStolenGears(s, iid)
   const owner = u.owner
   const isToken = getCard(u.cardId)?.supertype === 'token' || u.token
   // Attached gear loses its host — return it to the owner's Base, unattached
@@ -3336,7 +3483,7 @@ const unitOpt = (u: EngineCard) => ({ iid: u.iid, label: getCard(u.cardId)?.name
 function grantHunt(s: MatchState, player: PlayerId, bfIndex: number): MatchState {
   let xp = 0
   for (const u of s.battlefields[bfIndex].units)
-    if (u.owner === player) xp += parseKeywords(def(u)).hunt
+    if (controllerOf(u) === player) xp += parseKeywords(def(u)).hunt
   if (xp > 0) {
     s.players[player].xp += xp
     s.players[player].xpGainedThisTurn = true
@@ -3376,7 +3523,7 @@ function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard, bfIndex?: number)
   // case — kills by assignment, not damage counters, so the comparison is intact.)
   if (bfIndex != null) {
     const soraka = s.battlefields[bfIndex]?.units.find(
-      (x) => x.owner === u.owner && x.iid !== u.iid &&
+      (x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid &&
         /if another unit you control here would die/i.test(getCard(x.cardId)?.text ?? ''),
     )
     if (soraka && mightOf(u) < mightOf(soraka)) return true
@@ -3411,8 +3558,158 @@ function trashOrBanish(s: MatchState, u: EngineCard): boolean {
  *  "… heal it, exhaust it, and recall it instead" payload). The caller has already
  *  removed `u` from its prior location. */
 function recallToBase(s: MatchState, u: EngineCard): void {
-  s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
-  emit({ kind: 'buff', iid: u.iid, player: u.owner })
+  // Rule 428: recall goes to the CONTROLLER's base, not the owner's. For a unit
+  // stolen by Possession (permanent control) this lands it in the thief's base;
+  // for normal units controllerOf === owner. (Hostile Takeover clears
+  // controlledBy before recalling, so its units go back to the owner's base.)
+  const dest = controllerOf(u)
+  s.players[dest].zones.base.push({ ...u, exhausted: true, damage: 0 })
+  // A recall (Possession, death-shield rescue, etc.) is a move-to-base — emit the
+  // retreat move event so the UI plays the recall whoosh + flourish, plus the heal
+  // buff cue for the heal-and-recall rescues.
+  emit({ kind: 'buff', iid: u.iid, player: dest })
+  emit({ kind: 'move', iid: u.iid, player: dest, cardId: u.cardId, retreat: 'base' })
+  // Recall counts as "leaving the board" for Akshan — return any gear he stole.
+  revertAkshanStolenGears(s, u.iid)
+}
+
+/** Akshan - Mischievous: "You control it until I leave the board." When the
+ *  Akshan instance `leavingIid` leaves play (death / bounce / recall / send-to-
+ *  base), return every gear it stole to that gear's ORIGINAL owner's base,
+ *  unattached. Detaches the gear from wherever it now lives and clears the
+ *  registry entry. A no-op for any unit that never stole gear. */
+function revertAkshanStolenGears(s: MatchState, leavingIid: string): void {
+  if (!s.akshanStolenGears?.length) return
+  const toRevert = s.akshanStolenGears.filter((e) => e.akshanIid === leavingIid)
+  if (!toRevert.length) return
+  s.akshanStolenGears = s.akshanStolenGears.filter((e) => e.akshanIid !== leavingIid)
+  const allHosts = () => [
+    ...s.battlefields.flatMap((b) => b.units),
+    ...s.players.flatMap((pl) => [...pl.zones.base, ...(pl.legend ? [pl.legend] : []), ...(pl.champion ? [pl.champion] : [])]),
+  ]
+  for (const entry of toRevert) {
+    const { gearIid, gearCardId, originalOwner } = entry
+    // Detach from whatever unit currently carries it (incl. the leaving Akshan).
+    for (const host of allHosts()) host.attached = host.attached.filter((r) => r.split('|')[1] !== gearIid)
+    // Remove any unattached copy sitting in a base.
+    for (const pl of s.players) pl.zones.base = pl.zones.base.filter((c) => c.iid !== gearIid)
+    // Return to the original owner's base, unattached and ready.
+    s.players[originalOwner].zones.base.push({ iid: gearIid, cardId: gearCardId, owner: originalOwner, exhausted: false, damage: 0, attached: [] })
+    emit({ kind: 'play', iid: gearIid, player: originalOwner })
+    // Mutate the log in place — this helper is void and callers hold s by ref.
+    s.log.push({ turn: s.turn, player: originalOwner, text: `${getCard(gearCardId)?.name ?? 'Gear'} returned to its owner (Akshan left the board).` })
+  }
+}
+
+// --- A6 control-steal (Possession / Hostile Takeover / Akshan) --------------
+
+/** Every enemy UNIT currently at a battlefield (controlled by an opponent) — the
+ *  option pool for Possession / Hostile Takeover. Spans ALL opponents, so steals
+ *  work in 3-4 player games. */
+function stealUnitOptions(s: MatchState, controller: PlayerId): { iid: string; label: string }[] {
+  const out: { iid: string; label: string }[] = []
+  for (const bf of s.battlefields)
+    for (const u of bf.units)
+      if (controllerOf(u) !== controller && getCard(u.cardId)?.type === 'unit')
+        out.push({ iid: u.iid, label: `${getCard(u.cardId)?.name ?? u.iid} — ${s.players[controllerOf(u)].name}` })
+  return out
+}
+
+/** Take control of one enemy unit at a battlefield.
+ *  - `permanent` (Possession): keep control forever, detach its gear back to the
+ *    gear's owner (gear control does NOT transfer — Rule 718.5.f), and recall the
+ *    unit to the thief's base (Rule 428). Owner stays immutable, so if it later
+ *    dies it goes to its real owner's trash (Rule 107.1.d).
+ *  - otherwise (Hostile Takeover): ready it, mark it to revert at end of turn,
+ *    recompute control, then open a (noncombat-if-alone) showdown before conquer. */
+function applyStealUnit(s: MatchState, controller: PlayerId, iid: string, permanent: boolean, srcName: string): MatchState {
+  const bfi = s.battlefields.findIndex((b) => b.units.some((u) => u.iid === iid))
+  if (bfi < 0) return log(s, controller, `${srcName} fizzled — that unit is no longer at a battlefield.`)
+  const u = s.battlefields[bfi].units.find((x) => x.iid === iid)!
+  const victim = controllerOf(u)
+  if (victim === controller) return log(s, controller, `${srcName} fizzled — you already control that unit.`)
+  const uname = getCard(u.cardId)?.name ?? iid
+  const priorCtrl = s.battlefields[bfi].controller
+  if (permanent) {
+    detachGearToBase(s.players[u.owner], u) // gear stays with its owner (718.5.f)
+    u.controlledBy = controller
+    s.battlefields[bfi].units = s.battlefields[bfi].units.filter((x) => x.iid !== iid)
+    recallToBase(s, u) // → controller's base
+    recomputeControllers(s)
+    return log(s, controller, `${srcName}: took control of ${uname} (was ${s.players[victim].name}'s) and recalled it to your base.`)
+  }
+  u.controlledBy = controller
+  u.stolenUntilEot = true
+  u.exhausted = false // "Ready it."
+  recomputeControllers(s)
+  s = log(s, controller, `${srcName}: took control of ${uname} (${s.players[victim].name}'s) until end of turn — readied.`)
+  return showdownOrConquerAfterEffectMove(s, bfi, iid, priorCtrl, true) // FAQ: force a showdown
+}
+
+/** Every enemy GEAR — attached to an opponent's unit OR unattached in an
+ *  opponent's base — the option pool for Akshan - Mischievous. Spans all opponents. */
+function stealGearOptions(s: MatchState, controller: PlayerId): { iid: string; label: string }[] {
+  const out: { iid: string; label: string }[] = []
+  const seen = new Set<string>()
+  const hosts = [
+    ...s.battlefields.flatMap((b) => b.units),
+    ...s.players.flatMap((pl) => [...pl.zones.base, ...(pl.legend ? [pl.legend] : []), ...(pl.champion ? [pl.champion] : [])]),
+  ]
+  for (const host of hosts) {
+    const oc = controllerOf(host)
+    if (oc === controller) continue
+    for (const ref of host.attached) {
+      const [gc, gi] = ref.split('|')
+      if (gi && !seen.has(gi) && getCard(gc)?.type === 'gear') {
+        seen.add(gi)
+        out.push({ iid: gi, label: `${getCard(gc)?.name ?? gc} (on ${getCard(host.cardId)?.name ?? host.iid}, ${s.players[oc].name})` })
+      }
+    }
+  }
+  for (const pl of s.players) {
+    if (pl.id === controller) continue
+    for (const c of pl.zones.base)
+      if (!seen.has(c.iid) && getCard(c.cardId)?.type === 'gear') {
+        seen.add(c.iid)
+        out.push({ iid: c.iid, label: `${getCard(c.cardId)?.name ?? c.cardId} (${pl.name})` })
+      }
+  }
+  return out
+}
+
+/** Akshan steals one enemy gear (attached or unattached): detach it, register it
+ *  for on-leave revert, and either attach it to Akshan (Equipment) or drop it in
+ *  Akshan-player's base (other gear). */
+function applyStealGear(s: MatchState, controller: PlayerId, gearIid: string, akshanIid: string): MatchState {
+  let gearCardId: string | null = null
+  let originalOwner: PlayerId | null = null
+  const hosts = [
+    ...s.battlefields.flatMap((b) => b.units),
+    ...s.players.flatMap((pl) => [...pl.zones.base, ...(pl.legend ? [pl.legend] : []), ...(pl.champion ? [pl.champion] : [])]),
+  ]
+  for (const host of hosts) {
+    const idx = host.attached.findIndex((r) => r.split('|')[1] === gearIid)
+    if (idx >= 0) { gearCardId = host.attached[idx].split('|')[0]; originalOwner = controllerOf(host); host.attached.splice(idx, 1); break }
+  }
+  if (!gearCardId)
+    for (const pl of s.players) {
+      const i = pl.zones.base.findIndex((c) => c.iid === gearIid)
+      if (i >= 0) { const [g] = pl.zones.base.splice(i, 1); gearCardId = g.cardId; originalOwner = g.owner; break }
+    }
+  if (!gearCardId || originalOwner == null) return log(s, controller, 'Akshan - Mischievous: that gear is no longer there.')
+  if (!s.akshanStolenGears) s.akshanStolenGears = []
+  s.akshanStolenGears.push({ gearIid, gearCardId, originalOwner, akshanIid })
+  const akshan = findUnitAnywhere(s, akshanIid)
+  const gc = getCard(gearCardId)
+  const isEquip = parseKeywords(gc).equip || /attach (?:this|it) to a unit/i.test(gc?.text ?? '')
+  if (isEquip && akshan) {
+    akshan.attached = [...akshan.attached, `${gearCardId}|${gearIid}`]
+    emit({ kind: 'equip', iid: akshan.iid, player: controller, cardId: gearCardId })
+    s = fireAttachEquip(s, controller, akshan)
+  } else {
+    s.players[controller].zones.base.push({ iid: gearIid, cardId: gearCardId, owner: controller, exhausted: false, damage: 0, attached: [] })
+  }
+  return log(s, controller, `Akshan - Mischievous: stole ${gc?.name ?? 'a gear'} from ${s.players[originalOwner].name}.`)
 }
 
 function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spellLike = false, caster?: PlayerId): EngineCard[] {
@@ -3433,7 +3730,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       let dead: EngineCard[] = []
       // mightOf already subtracts accrued damage, so a unit is defeated when its
       // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
-      if (mightOf(u) <= 0 || (elderLethal && u.owner !== caster)) {
+      if (mightOf(u) <= 0 || (elderLethal && controllerOf(u) !== caster)) {
         u.diedAtBf = i // for location-scoped death triggers (Kog'Maw)
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u, i)) {
@@ -3455,7 +3752,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
     if (u) {
       u.damage += amount
       emit({ kind: 'damage', iid: targetIid, amount, cardId: u.cardId })
-      if (mightOf(u) <= 0 || (elderLethal && u.owner !== caster)) {
+      if (mightOf(u) <= 0 || (elderLethal && controllerOf(u) !== caster)) {
         p.zones.base = p.zones.base.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u)) { recallToBase(s, u); return [] }
         if (trashOrBanish(s, u)) return []
@@ -3489,7 +3786,7 @@ function moveUnits(
   // Investigator at the destination stacks the surcharge (1 rainbow per extra unit each).
   if (iids.length > 1) {
     const invCount = s.battlefields[toBattlefield].units.filter(
-      (u) => u.owner !== player && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator',
+      (u) => controllerOf(u) !== player && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator',
     ).length
     if (invCount > 0 && !makeBfApi(s).payPowerAny(player, (iids.length - 1) * invCount))
       return fail(state, `Mageseeker Investigator: must pay ${(iids.length - 1) * invCount} rainbow Power to move ${iids.length} units there.`)
@@ -3502,7 +3799,7 @@ function moveUnits(
       for (let i = 0; i < s.battlefields.length; i++) {
         if (i === toBattlefield) continue
         const idx = s.battlefields[i].units.findIndex(
-          (u) => u.iid === iid && u.owner === player,
+          (u) => u.iid === iid && controllerOf(u) === player,
         )
         if (idx >= 0) {
           // Ganking from the keyword (possibly [Level N]-gated, e.g. Master Yi
@@ -3530,7 +3827,7 @@ function moveUnits(
   // Stealthy Pursuer: "When a friendly unit moves from my location, I may be moved
   // with it." Auto-follow — relocate friendly Pursuers from each vacated bf to dest.
   for (const src of sourceBfs) {
-    for (const pur of s.battlefields[src].units.filter((u) => u.owner === player && !moved.includes(u) && /when a friendly unit moves from my location, i may be moved with it/i.test(getCard(u.cardId)?.text ?? ''))) {
+    for (const pur of s.battlefields[src].units.filter((u) => controllerOf(u) === player && !moved.includes(u) && /when a friendly unit moves from my location, i may be moved with it/i.test(getCard(u.cardId)?.text ?? ''))) {
       s.battlefields[src].units = s.battlefields[src].units.filter((u) => u.iid !== pur.iid)
       s.battlefields[toBattlefield].units.push(pur)
       moved.push(pur)
@@ -3543,7 +3840,9 @@ function moveUnits(
   let s2 = log(s, player, `Moved ${moved.length} unit(s) to ${bfName}.`)
   // "When I move" self triggers fire on the move itself (e.g. play a Gold token).
   s2 = fireTriggers(s2, collectSelf(s2, player, 'move', moved.map((u) => u.iid)))
-  const contested = bf.units.some((u) => u.owner !== player)
+  // "When an opponent moves to a battlefield other than mine, draw 1" (Volibear - Imposing).
+  s2 = fireOpponentMove(s2, player, toBattlefield)
+  const contested = bf.units.some((u) => controllerOf(u) !== player)
   if (contested) {
     s2.phase = 'showdown'
     s2.showdown = {
@@ -3566,7 +3865,7 @@ function moveUnits(
     s2 = grantHunt(s2, player, toBattlefield)
     s2 = applyConquerPassive(s2, player, toBattlefield)
     s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'), toBattlefield, 0, prevController == null)
-    const here = s2.battlefields[toBattlefield].units.filter((u) => u.owner === player).map((u) => u.iid)
+    const here = s2.battlefields[toBattlefield].units.filter((u) => controllerOf(u) === player).map((u) => u.iid)
     s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here), toBattlefield, 0, prevController == null)
     offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
     s2 = offerTrashConquerReturn(s2, player) // Super Mega Death Rocket!
@@ -3579,17 +3878,23 @@ function moveUnits(
  *  showdown. Open one if the battlefield is now contested; otherwise, if the move
  *  flipped control to the moved unit's owner, award the conquer. No-op if a showdown
  *  is already open. `priorController` is the controller BEFORE the effect moved it. */
-function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedIid: string, priorController: PlayerId | null): MatchState {
+function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedIid: string, priorController: PlayerId | null, forceShowdown = false): MatchState {
   const bf = s.battlefields[bfIndex]
-  const movedOwner = bf.units.find((u) => u.iid === movedIid)?.owner
+  // The "mover" is whoever CONTROLS the moved unit — for a stolen unit (Hostile
+  // Takeover) that's the thief, not the original owner.
+  const movedOwner = (() => { const u = bf.units.find((x) => x.iid === movedIid); return u ? controllerOf(u) : undefined })()
   if (movedOwner == null) return s
   const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
-  if (bf.units.some((u) => u.owner !== movedOwner)) {
+  // forceShowdown (Hostile Takeover, per the Spiritforged FAQ): a (noncombat)
+  // showdown must open even when no other enemies are present — you have to have
+  // some kind of showdown before you can conquer.
+  if (forceShowdown || bf.units.some((u) => controllerOf(u) !== movedOwner)) {
     if (s.showdown) return s // already mid-showdown; don't nest
     s.phase = 'showdown'
     s.showdown = { battlefield: bfIndex, priority: movedOwner, passes: 0, priorController, movedUnit: movedIid }
     s.showdown.priority = nextShowdownPriority(s, movedOwner)
-    return log(s, movedOwner, `Showdown opened at ${bfName} — opponents may respond.`)
+    const noncombat = !bf.units.some((u) => controllerOf(u) !== movedOwner)
+    return log(s, movedOwner, `${noncombat ? 'Noncombat showdown' : 'Showdown'} opened at ${bfName} — opponents may respond.`)
   }
   // Uncontested: a conquer if the move flipped control to the moved unit's owner.
   if (bf.controller === movedOwner && priorController !== movedOwner) {
@@ -3597,7 +3902,7 @@ function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedI
     markConquered(s, movedOwner, bfIndex)
     s = grantHunt(s, movedOwner, bfIndex)
     s = applyConquerPassive(s, movedOwner, bfIndex)
-    const here = bf.units.filter((u) => u.owner === movedOwner).map((u) => u.iid)
+    const here = bf.units.filter((u) => controllerOf(u) === movedOwner).map((u) => u.iid)
     s = fireTriggers(s, collectGlobal(s, movedOwner, 'conquer'), bfIndex, 0, priorController == null)
     s = fireTriggers(s, collectSelf(s, movedOwner, 'conquer', here), bfIndex, 0, priorController == null)
     offerLeblanc(s, movedOwner, bfIndex)
@@ -3617,7 +3922,7 @@ function recomputeControllers(s: MatchState): void {
       continue
     }
     const counts = new Map<PlayerId, number>()
-    for (const u of bf.units) counts.set(u.owner, (counts.get(u.owner) ?? 0) + 1)
+    for (const u of bf.units) { const c = controllerOf(u); counts.set(c, (counts.get(c) ?? 0) + 1) }
     let best: PlayerId | null = null
     let bestN = 0
     let tied = false
@@ -3631,6 +3936,22 @@ function recomputeControllers(s: MatchState): void {
       }
     }
     bf.controller = tied ? bf.controller : best
+  }
+}
+
+/** Hidden cleanup (Core Rules 106.4.d / 322.7): a facedown card whose owner no
+ *  longer controls its battlefield is removed to its OWNER's Trash. Call after any
+ *  control change settles (turn start, end of a showdown/combat). Void — mutates s. */
+function cleanupUnsupportedHidden(s: MatchState): void {
+  for (const bf of s.battlefields) {
+    const fd = bf.facedown
+    if (fd && bf.controller !== fd.owner) {
+      const nm = getCard(fd.cardId)?.name ?? 'A Hidden card'
+      emit({ kind: 'hiddenTrashed', iid: fd.iid, cardId: fd.cardId, player: fd.owner })
+      sendToTrash(s.players[fd.owner], fd)
+      s.log.push({ turn: s.turn, player: fd.owner, text: `${nm} lost its battlefield — sent to its owner's trash.` })
+      bf.facedown = null
+    }
   }
 }
 
@@ -3651,6 +3972,7 @@ export function beginTurn(state: MatchState): MatchState {
   p.apheliosModesThisTurn = 0
   p.azirSwappedThisTurn = false
   p.energySpentOnSpellsThisTurn = 0
+  p.powerSpentThisTurn = 0 // Sivir - Mercenary's ≥2-Power-this-turn gate
   p.spellPlayedThisTurn = false
   p.nextUnitEntersReadyThisTurn = false
   p.conqueredThisTurn = []
@@ -3667,7 +3989,7 @@ export function beginTurn(state: MatchState): MatchState {
   for (const z of Object.keys(p.zones) as ZoneId[])
     p.zones[z] = p.zones[z].map((c) => (unitCantBeReadied(c) ? c : { ...c, exhausted: false }))
   for (const bf of s.battlefields)
-    bf.units = bf.units.map((u) => (u.owner === ap && !unitCantBeReadied(u) ? { ...u, exhausted: false } : u))
+    bf.units = bf.units.map((u) => (controllerOf(u) === ap && !unitCantBeReadied(u) ? { ...u, exhausted: false } : u))
   s = log(s, ap, `— Turn ${s.turn}: ${p.name} · Awaken —`)
 
   // Start-of-turn triggered abilities (card text "at the start of your turn â€¦").
@@ -3694,7 +4016,7 @@ export function beginTurn(state: MatchState): MatchState {
   for (const bf of s.battlefields) {
     const expired = bf.units.filter(
       (u) =>
-        u.owner === ap &&
+        controllerOf(u) === ap &&
         (parseKeywords(def(u)).temporary || u.temporary) &&
         (u.enteredTurn ?? 0) < s.turn,
     )
@@ -3716,15 +4038,9 @@ export function beginTurn(state: MatchState): MatchState {
   }
 
   // Hidden cleanup: a facedown card whose owner no longer controls its
-  // battlefield is revealed and sent to its owner's Trash (rule 421.4).
+  // battlefield is sent to its owner's Trash (Core Rules 106.4.d / 322.7).
   recomputeControllers(s)
-  for (const bf of s.battlefields) {
-    if (bf.facedown && bf.controller !== bf.facedown.owner) {
-      sendToTrash(s.players[bf.facedown.owner], bf.facedown)
-      s = log(s, ap, `Unsupported Hidden card revealed and trashed.`)
-      bf.facedown = null
-    }
-  }
+  cleanupUnsupportedHidden(s)
 
   // Frozen Fortress et al.: deal damage to every unit here at the start of each
   // player's turn (applies to all owners' units).
@@ -3749,7 +4065,7 @@ export function beginTurn(state: MatchState): MatchState {
     if (hasShard && !p.oncePerTurnUsed['shard-of-undoing']) {
       p.oncePerTurnUsed['shard-of-undoing'] = true
       const opponents = s.players
-        .filter((pl) => pl.id !== ap && !pl.out && [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].some((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit'))
+        .filter((pl) => pl.id !== ap && !pl.out && [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].some((u) => controllerOf(u) === pl.id && getCard(u.cardId)?.type === 'unit'))
         .map((pl) => pl.id)
       s = offerShardKill(s, opponents)
       if (s.pendingChoice) { s.phase = 'score'; return s } // paused; resumes via RESOLVE_CHOICE
@@ -3769,7 +4085,7 @@ function offerShardKill(s: MatchState, remaining: PlayerId[]): MatchState {
     const pid = queue[0]
     const rest = queue.slice(1)
     const opts = [...s.players[pid].zones.base, ...s.battlefields.flatMap((b) => b.units)]
-      .filter((u) => u.owner === pid && getCard(u.cardId)?.type === 'unit')
+      .filter((u) => controllerOf(u) === pid && getCard(u.cardId)?.type === 'unit')
       .map((u) => unitOpt(u))
     if (!opts.length) { queue = rest; continue }
     offerChoice(s, { player: pid, kind: 'shardKill', bfIndex: -1, prompt: 'Shard of Undoing — kill one of your units.', options: opts, payload: JSON.stringify({ remaining: rest }) })
@@ -3787,7 +4103,7 @@ function resumeBeginning(s: MatchState): MatchState {
   recomputeControllers(s)
   for (let i = 0; i < s.battlefields.length; i++) {
     if (bfBaseNameAt(s, i) !== 'Dusk Rose Lab' || s.battlefields[i].controller !== ap) continue
-    const opts = s.battlefields[i].units.filter((u) => u.owner === ap).map((u) => unitOpt(u))
+    const opts = s.battlefields[i].units.filter((u) => controllerOf(u) === ap).map((u) => unitOpt(u))
     if (opts.length) {
       offerChoice(s, { player: ap, kind: 'duskRoseSacrifice', bfIndex: i, prompt: 'Dusk Rose Lab — kill a unit you control here to draw 1?', options: opts })
       s.phase = 'score'
@@ -3836,7 +4152,7 @@ function finishBeginning(s: MatchState): MatchState {
     s = fireTriggers(s, collectGlobal(s, ap, 'hold'))
     const heldUnitIids = s.battlefields
       .filter((b) => b.controller === ap)
-      .flatMap((b) => b.units.filter((u) => u.owner === ap).map((u) => u.iid))
+      .flatMap((b) => b.units.filter((u) => controllerOf(u) === ap).map((u) => u.iid))
     s = fireTriggers(s, collectSelf(s, ap, 'hold', heldUnitIids))
   }
 
@@ -3861,7 +4177,7 @@ function finishBeginning(s: MatchState): MatchState {
     if (bf.controller !== ap) continue
     // The Grand Plaza: hold with enough units here â†’ win.
     const script = bfScript(bf.cardId)
-    if (script?.winOnUnitsHere && bf.units.filter((u) => u.owner === ap).length >= script.winOnUnitsHere)
+    if (script?.winOnUnitsHere && bf.units.filter((u) => controllerOf(u) === ap).length >= script.winOnUnitsHere)
       return endGame(s, ap)
     // Scripted "when you hold here" takes precedence over the generic parser.
     if (script?.onHold) {
@@ -3871,7 +4187,7 @@ function finishBeginning(s: MatchState): MatchState {
     // Amateur Recital: on hold, you may move one of YOUR units at a battlefield to
     // its base (own units only — "to its base" = the unit owner's base).
     if (bfBaseNameAt(s, s.battlefields.indexOf(bf)) === 'Amateur Recital') {
-      const opts = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner === ap).map((u) => unitOpt(u))
+      const opts = s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) === ap).map((u) => unitOpt(u))
       offerChoice(s, { player: ap, kind: 'moveAnyToBase', bfIndex: s.battlefields.indexOf(bf), prompt: 'Amateur Recital — move a unit at a battlefield to its base?', options: opts })
       continue
     }
@@ -3908,7 +4224,7 @@ function finishBeginning(s: MatchState): MatchState {
     if (passive.buffOnHold) {
       // Pick an UN-buffed friendly unit here (a buff is capped at one per unit, so
       // holding repeatedly must not stack on the same unit).
-      const target = bf.units.find((u) => u.owner === ap && (u.buffs ?? 0) < 1)
+      const target = bf.units.find((u) => controllerOf(u) === ap && (u.buffs ?? 0) < 1)
       if (target) {
         target.buffs = 1
         s = log(s, ap, `${bfName} (hold): buffed ${getCard(target.cardId)?.name} (+1).`)
@@ -4079,6 +4395,16 @@ function opponentScoreWithin(s: MatchState, player: PlayerId, n: number): boolea
   return s.players.some((pl, i) => i !== player && !pl.out && s.pointsToWin - pl.points <= n)
 }
 
+/** Tianna Crownguard: "While I'm at a battlefield, opponents can't gain points."
+ *  Blocks the battlefield-scoring point increment (conquer / hold) for `scorer`
+ *  when an OPPONENT controls a Tianna AT A BATTLEFIELD. Per the Spiritforged FAQ
+ *  this suppresses only the point ledger — conquer/hold triggers still fire (the
+ *  caller runs them separately), and card-effect "gain N points" (Renata) is NOT
+ *  blocked (that path doesn't route through awardPoints). */
+function tiannaBlocksScore(s: MatchState, scorer: PlayerId): boolean {
+  return s.battlefields.some((b) => b.units.some((u) => controllerOf(u) !== scorer && /opponents can'?t gain points/i.test(getCard(u.cardId)?.text ?? '')))
+}
+
 function awardPoints(
   s: MatchState,
   player: PlayerId,
@@ -4087,6 +4413,8 @@ function awardPoints(
   kind: 'hold' | 'conquer',
 ): MatchState {
   const p = s.players[player]
+  if (tiannaBlocksScore(s, player))
+    return log(s, player, `${p.name} can't gain points — an opponent's Tianna Crownguard is at a battlefield.`)
   if (
     kind === 'conquer' &&
     p.points + amount >= s.pointsToWin &&
@@ -4168,7 +4496,7 @@ const STATES: StateDef[] = [
   // bonuses — matches the Deathknell `mightyAtDeath` snapshot).
   { name: 'mighty', isActive: (s, u) => mightOf(u, null, s.players[u.owner]?.xp ?? 0) >= 5 },
   // The only friendly unit at its battlefield (units in base are never "alone").
-  { name: 'alone', isActive: (s, u) => { const bi = bfIndexOfUnit(s, u.iid); return bi >= 0 && s.battlefields[bi].units.filter((x) => x.owner === u.owner).length === 1 } },
+  { name: 'alone', isActive: (s, u) => { const bi = bfIndexOfUnit(s, u.iid); return bi >= 0 && s.battlefields[bi].units.filter((x) => controllerOf(x) === controllerOf(u)).length === 1 } },
   // Carries a +1 Might buff counter.
   { name: 'buffed', isActive: (_s, u) => (u.buffs ?? 0) > 0 },
   // At the battlefield of the currently-open showdown.
@@ -4284,7 +4612,7 @@ export function combatMight(ci: EngineCard, role: 'attacker' | 'defender'): numb
 export function combatMightAt(s: MatchState, bfIndex: number, u: EngineCard, role: 'attacker' | 'defender'): number {
   const bf = s.battlefields[bfIndex]
   if (!bf) return 0
-  const alone = bf.units.filter((x) => x.owner === u.owner).length === 1
+  const alone = bf.units.filter((x) => controllerOf(x) === controllerOf(u)).length === 1
   const bonusOf = bfCombatBonus(s, bfIndex, role === 'attacker' && alone, role === 'defender' && alone)
   return Math.max(0, mightOf(u, role, s.players[u.owner]?.xp ?? 0) + bonusOf(u, role) + auraMightBonus(s, u))
 }
@@ -4414,13 +4742,20 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   // Replace the flat +1 with +1 per enemy unit at its battlefield.
   if (role === 'attacker' && /\[assault\] equal to the number of enemy units here/.test(text)) {
     const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
-    const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => x.owner !== u.owner).length : 0
+    const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => controllerOf(x) !== controllerOf(u)).length : 0
     b += enemies - parseKeywords(d).assault
   }
   // Wily Newtfish: "If you've gained XP this turn, I have +1 Might and [Ganking]."
   if (/if you('ve| have)? gained xp this turn,?[^.]*\+(\d+)/.test(text) && owner.xpGainedThisTurn) {
     const wm = text.match(/if you('ve| have)? gained xp this turn,?[^.]*\+(\d+)/)
     if (wm) b += parseInt(wm[2], 10)
+  }
+  // Sivir - Mercenary: "If you've spent at least :rb_rune_rainbow::rb_rune_rainbow:
+  // this turn, I have +2 Might and [Ganking]." N rainbow pips = total Power spent.
+  const spentPowM = text.match(/if you'?ve spent at least ((?::rb_rune_rainbow:)+) this turn,?[^.]*\+(\d+)\s*(?::rb_might:|might)/)
+  if (spentPowM) {
+    const need = (spentPowM[1].match(/:rb_rune_rainbow:/g) ?? []).length
+    if ((s.players[controllerOf(u)]?.powerSpentThisTurn ?? 0) >= need) b += parseInt(spentPowM[2], 10)
   }
   // Self: "While you have N+ runes, I have +X Might." (Master Yi - Meditative)
   const runeM = text.match(/while you have (\d+)\+? (?:or more )?runes?, i have \+(\d+)\s*(?::rb_might:|might)/)
@@ -4434,18 +4769,18 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     const what = feM[2]
     const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
     const here = bi >= 0 ? s.battlefields[bi].units : []
-    const friendly = [...owner.zones.base, ...s.battlefields.flatMap((bf) => bf.units)].filter((x) => x.owner === u.owner)
+    const friendly = [...owner.zones.base, ...s.battlefields.flatMap((bf) => bf.units)].filter((x) => controllerOf(x) === controllerOf(u))
     let count = 0
     if (/buffed friendly unit/.test(what)) {
       const pool = /at my battlefield|here/.test(what) ? here : friendly
-      count = pool.filter((x) => x.owner === u.owner && x.iid !== u.iid && (x.buffs ?? 0) > 0).length
+      count = pool.filter((x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid && (x.buffs ?? 0) > 0).length
     } else if (/gear/.test(what)) {
       count = owner.zones.base.filter((x) => def(x)?.type === 'gear').length + friendly.reduce((n, x) => n + (x.attached?.length ?? 0), 0)
     } else if (/temporary/.test(what)) {
       const pool = /here/.test(what) ? here : friendly
-      count = pool.filter((x) => x.owner === u.owner && (parseKeywords(def(x)).temporary || x.token)).length
+      count = pool.filter((x) => controllerOf(x) === controllerOf(u) && (parseKeywords(def(x)).temporary || x.token)).length
     } else if (/enemy unit/.test(what)) {
-      count = (/here/.test(what) ? here : s.battlefields.flatMap((bf) => bf.units)).filter((x) => x.owner !== u.owner).length
+      count = (/here/.test(what) ? here : s.battlefields.flatMap((bf) => bf.units)).filter((x) => controllerOf(x) !== controllerOf(u)).length
     }
     b += per * count
   }
@@ -4467,13 +4802,13 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     // current Might. Applied as a combat-Might aura so showdownSteps sees it.
     if (/double my might this combat/.test(text)) {
       const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
-      const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => x.owner !== u.owner).length : 0
+      const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => controllerOf(x) !== controllerOf(u)).length : 0
       if (enemies === 1) b += mightOf(u, role, owner.xp ?? 0)
     }
     // Controller's gear: Mask of Foresight — "When a friendly unit attacks or
     // defends alone, give it +N Might this turn." Modeled as a lone-combatant aura.
     // Scans ALL controlled gear (base AND attached), so it works once equipped.
-    for (const g of controlledPermanents(s, u.owner)) {
+    for (const g of controlledPermanents(s, controllerOf(u))) {
       const gm = (getCard(g.cardId)?.text ?? '').toLowerCase().match(/when a friendly unit attacks or defends alone,? give it \+(\d+)\s*(?::rb_might:|might)/)
       if (gm) b += parseInt(gm[1], 10)
     }
@@ -4492,7 +4827,7 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
   const anotherM = text.match(/while you have another unit here,? i have \+(\d+)\s*(?::rb_might:|might)/)
   if (anotherM) {
     const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
-    const others = bi >= 0 ? s.battlefields[bi].units.filter((x) => x.owner === u.owner && x.iid !== u.iid && getCard(x.cardId)?.type === 'unit').length : 0
+    const others = bi >= 0 ? s.battlefields[bi].units.filter((x) => controllerOf(x) === controllerOf(u) && x.iid !== u.iid && getCard(x.cardId)?.type === 'unit').length : 0
     if (others > 0) b += parseInt(anotherM[1], 10)
   }
   // Legend-granted global buffs.
@@ -4520,7 +4855,7 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
 function unitGrantedKeyword(s: MatchState, u: EngineCard, keyword: string): boolean {
   const tags = (getCard(u.cardId)?.tags ?? []).map((t) => t.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   if (!tags.length) return false
-  for (const perm of controlledPermanents(s, u.owner)) {
+  for (const perm of controlledPermanents(s, controllerOf(u))) {
     const txt = (getCard(perm.cardId)?.text ?? '').toLowerCase()
     if (!txt.includes('have')) continue
     for (const tag of tags)
@@ -4535,9 +4870,11 @@ function unitGrantedKeyword(s: MatchState, u: EngineCard, keyword: string): bool
  *  (Taric - Protector). Like unitGrantedKeyword but bf-local rather than owner-wide. */
 function unitGrantedKeywordHere(here: EngineCard[], u: EngineCard, keyword: string): boolean {
   for (const src of here) {
-    if (src.iid === u.iid || src.owner !== u.owner) continue
+    if (src.iid === u.iid || controllerOf(src) !== controllerOf(u)) continue
     const t = (def(src)?.text ?? '').toLowerCase()
-    if (new RegExp(`(?:other )?friendly units here have [^.]*\\[${keyword}\\]`).test(t)) return true
+    // "Other friendly units here have […]" (Captain Farron) and "your other units
+    // here have […]" (Allay, Eager Admirer) are both positional same-bf grants.
+    if (new RegExp(`(?:(?:other )?friendly|your other) units here have [^.]*\\[${keyword}\\]`).test(t)) return true
   }
   return false
 }
@@ -4552,6 +4889,11 @@ function unitHasGanking(s: MatchState, u: EngineCard): boolean {
   if (/if you've discarded a card this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.discardedThisTurn ?? false
   // Wily Newtfish: "If you've gained XP this turn, I have +1 Might and [Ganking]."
   if (/if you('ve| have)? gained xp this turn,?[^.]*\[ganking\]/.test(t)) return s.players[u.owner]?.xpGainedThisTurn ?? false
+  // Sivir - Mercenary: "If you've spent at least N Power this turn, … and [Ganking]."
+  if (/if you'?ve spent at least (?::rb_rune_rainbow:)+ this turn,?[^.]*\[ganking\]/.test(t)) {
+    const need = ((t.match(/if you'?ve spent at least ((?::rb_rune_rainbow:)+) this turn/) ?? [])[1]?.match(/:rb_rune_rainbow:/g) ?? []).length || 2
+    return (s.players[controllerOf(u)]?.powerSpentThisTurn ?? 0) >= need
+  }
   // Attached gear granting [Ganking] (Boots of Swiftness) → the equipped unit.
   if (u.attached?.some((ref) => parseKeywords(getCard(ref.split('|')[0])).ganking)) return true
   return keywordsAt(def(u), s.players[u.owner]?.xp ?? 0).ganking || unitGrantedKeyword(s, u, 'ganking') // Breakneck Mech
@@ -4566,7 +4908,7 @@ function auraMightHere(here: EngineCard[], u: EngineCard): number {
   for (const src of here) {
     if (src.iid === u.iid) continue
     const t = (def(src)?.text ?? '').toLowerCase()
-    if (src.owner === u.owner) {
+    if (controllerOf(src) === controllerOf(u)) {
       // OTHER friendly units' positive auras.
       const m = t.match(/other buffed friendly units at my battlefield have \+(\d+)\s*(?::rb_might:|might)/)
       if (m && (u.buffs ?? 0) > 0) b += parseInt(m[1], 10)
@@ -4663,14 +5005,18 @@ export function deflectSurcharge(
     const u = find(iid)
     // Deflect may be granted by a [Level N] clause (Master Yi - Tempered), so
     // resolve keywords against the unit owner's XP.
-    if (u && u.owner !== caster) {
+    if (u && controllerOf(u) !== caster) {
       let d = keywordsAt(def(u), state.players[u.owner]?.xp ?? 0).deflect + (unitGrantedKeyword(state, u, 'deflect') ? 1 : 0) // Breakneck Mech
       d += u.attached.reduce((a, ref) => a + parseKeywords(getCard(ref.split('|')[0])).deflect, 0) // attached gear [Deflect] (Hexdrinker)
       d += u.grantDeflect ?? 0 // [Deflect] granted this turn (Kato the Arm)
       // Fiora - Victorious: conditional [Deflect] while [Mighty].
       if (/while (?:i'm|i am) \[?mighty\]?,?[^.]*\[deflect/.test((def(u)?.text ?? '').toLowerCase()) && stateActive(state, u, 'mighty')) d += 1
       // Spirit's Refuge: "Friendly buffed units have [Deflect] if they didn't already."
-      if (d === 0 && stateActive(state, u, 'buffed') && controlledPermanents(state, u.owner).some((perm) => /friendly buffed units have \[deflect\]/i.test(getCard(perm.cardId)?.text ?? ''))) d += 1
+      if (d === 0 && stateActive(state, u, 'buffed') && controlledPermanents(state, controllerOf(u)).some((perm) => /friendly buffed units have \[deflect\]/i.test(getCard(perm.cardId)?.text ?? ''))) d += 1
+      // Allay, Eager Admirer: "your other units here have [Deflect]" — a co-located
+      // friendly grant. Find u's battlefield and check its other units.
+      const bf = state.battlefields.find((b) => b.units.some((x) => x.iid === u.iid))
+      if (bf && unitGrantedKeywordHere(bf.units, u, 'deflect')) d += 1
       total += d
     }
   }
@@ -4724,7 +5070,7 @@ function pickDefenseAssigner(
   if (defOwners.length === 1) return defOwners[0]
   const controller = s.battlefields[bfIndex].controller
   if (controller != null && defOwners.includes(controller)) return controller
-  const count = (owner: PlayerId) => defenders.filter((u) => u.owner === owner).length
+  const count = (owner: PlayerId) => defenders.filter((u) => controllerOf(u) === owner).length
   return [...defOwners].sort((a, b) => count(b) - count(a) || a - b)[0]
 }
 
@@ -4732,10 +5078,10 @@ function pickDefenseAssigner(
 function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; steps: DamageAssignStep[] } {
   const bf = s.battlefields[bfIndex]
   const mover = s.showdown?.movedUnit
-  const moverOwner = bf.units.find((u) => u.iid === mover)?.owner ?? s.activePlayer
+  const moverOwner = (() => { const u = bf.units.find((x) => x.iid === mover); return u ? controllerOf(u) : s.activePlayer })()
   const xpOf = (u: EngineCard) => s.players[u.owner]?.xp ?? 0
-  const attackers = bf.units.filter((u) => u.owner === moverOwner)
-  const defenders = bf.units.filter((u) => u.owner !== moverOwner)
+  const attackers = bf.units.filter((u) => controllerOf(u) === moverOwner)
+  const defenders = bf.units.filter((u) => controllerOf(u) !== moverOwner)
   const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
   const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
   const dealt = (u: EngineCard, role: CombatRole) =>
@@ -4747,7 +5093,7 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   // the combined counter-damage on the side's behalf. When two opponents defend
   // the same battlefield, the assigner is the defending controller (else the
   // owner fielding the most units) — so a defender, never the attacker, chooses.
-  const defOwners = [...new Set(defenders.map((u) => u.owner))]
+  const defOwners = [...new Set(defenders.map((u) => controllerOf(u)))]
   const atkDealer = pickDefenseAssigner(s, bfIndex, defenders, defOwners, moverOwner)
   const isTank = (u: EngineCard) => hasTank(s, u)
   const steps = [
@@ -4770,9 +5116,9 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
 function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
   const bf = s.battlefields[bfIndex]
   const mover = s.showdown?.movedUnit
-  const moverOwner = bf.units.find((u) => u.iid === mover)?.owner ?? s.activePlayer
-  const attackers = bf.units.filter((u) => u.owner === moverOwner)
-  const defenders = bf.units.filter((u) => u.owner !== moverOwner)
+  const moverOwner = (() => { const u = bf.units.find((x) => x.iid === mover); return u ? controllerOf(u) : s.activePlayer })()
+  const attackers = bf.units.filter((u) => controllerOf(u) === moverOwner)
+  const defenders = bf.units.filter((u) => controllerOf(u) !== moverOwner)
   // Ahri - Nine-Tailed Fox (legend): "When an enemy unit attacks a battlefield you
   // control, give it −1 Might this turn (min 1)." Applies to each attacker when the
   // pre-combat controller (a defender) has Ahri in play.
@@ -4799,7 +5145,7 @@ function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
   for (const u of defenders) collectCombat(u, 'defend')
   // "When you defend at a battlefield, …" global triggers for the defending player's
   // OTHER permanents (Loyal Pup → move me there). Skip units already collected above.
-  const defenderPlayer = defenders[0]?.owner
+  const defenderPlayer = defenders[0] ? controllerOf(defenders[0]) : undefined
   if (defenderPlayer != null) {
     const defIids = new Set(defenders.map((u) => u.iid))
     for (const u of controlledPermanents(s, defenderPlayer)) {
@@ -4817,13 +5163,13 @@ function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
  *  step for the attacker to place by hand (no lethal-first). null when none remain. */
 function nextSplitTrigger(s: MatchState, bfIndex: number): { sourceIid: string; srcName: string; step: DamageAssignStep } | null {
   const bf = s.battlefields[bfIndex]
-  const moverOwner = bf.units.find((u) => u.iid === s.showdown?.movedUnit)?.owner ?? s.activePlayer
+  const moverOwner = (() => { const u = bf.units.find((x) => x.iid === s.showdown?.movedUnit); return u ? controllerOf(u) : s.activePlayer })()
   const done = new Set(s.showdown?.splitDone ?? [])
-  for (const a of bf.units.filter((u) => u.owner === moverOwner)) {
+  for (const a of bf.units.filter((u) => controllerOf(u) === moverOwner)) {
     if (done.has(a.iid)) continue
     const m = (getCard(a.cardId)?.text ?? '').match(/deal (\d+) damage split among any number of enemy units here/i)
     if (!m) continue
-    const enemies = bf.units.filter((u) => u.owner !== moverOwner && getCard(u.cardId)?.type === 'unit')
+    const enemies = bf.units.filter((u) => controllerOf(u) !== moverOwner && getCard(u.cardId)?.type === 'unit')
     const hp: Record<string, number> = {}
     for (const e of enemies) hp[e.iid] = Math.max(0, mightOf(e) - (e.damage ?? 0))
     if (enemies.every((e) => hp[e.iid] <= 0)) continue // no living target to place on
@@ -4864,7 +5210,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
 
   const mover = s.showdown?.movedUnit
-  const moverOwner = bf.units.find((u) => u.iid === mover)?.owner ?? s.activePlayer
+  const moverOwner = (() => { const u = bf.units.find((x) => x.iid === mover); return u ? controllerOf(u) : s.activePlayer })()
   // Use the controller captured when the showdown OPENED — a reaction may have
   // bounced/killed the defender mid-showdown, flipping control to the mover before
   // this resolves; reading it now would wrongly read "mover already held it" and
@@ -4872,8 +5218,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const prevController = s.showdown?.priorController !== undefined ? s.showdown.priorController : s.battlefields[bfIndex].controller
 
   const xpOf = (u: EngineCard) => s.players[u.owner]?.xp ?? 0
-  const attackers = bf.units.filter((u) => u.owner === moverOwner)
-  const defenders = bf.units.filter((u) => u.owner !== moverOwner)
+  const attackers = bf.units.filter((u) => controllerOf(u) === moverOwner)
+  const defenders = bf.units.filter((u) => controllerOf(u) !== moverOwner)
   const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
   const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
   const dealt = (u: EngineCard, role: CombatRole) =>
@@ -4893,13 +5239,13 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   // Scripted "when you defend here" (Ravenbloom Conservatory).
   const defendScript = bfScript(bf.cardId)
   if (defendScript?.onDefend)
-    for (const owner of new Set(defenders.map((u) => u.owner)))
+    for (const owner of new Set(defenders.map((u) => controllerOf(u))))
       defendScript.onDefend(makeBfApi(s), owner, bfIndex)
   // Reaver's Row: a defender here may move a friendly unit here to base.
   if (bfBaseNameAt(s, bfIndex) === "Reaver's Row") {
     const owner = bf.controller
     if (owner != null) {
-      const opts = bf.units.filter((u) => u.owner === owner).map((u) => unitOpt(u))
+      const opts = bf.units.filter((u) => controllerOf(u) === owner).map((u) => unitOpt(u))
       offerChoice(s, { player: owner, kind: 'moveHereToBase', bfIndex, prompt: "Reaver's Row — move a friendly unit here to base?", options: opts })
     }
   }
@@ -4913,8 +5259,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const defeated: EngineCard[] = []
   for (const u of bf.units) {
     const dead =
-      (u.owner !== moverOwner && defendersDefeated.has(u.iid)) ||
-      (u.owner === moverOwner && attackersDefeated.has(u.iid))
+      (controllerOf(u) !== moverOwner && defendersDefeated.has(u.iid)) ||
+      (controllerOf(u) === moverOwner && attackersDefeated.has(u.iid))
     if (dead && tryRecallInsteadOfDeath(s, u, bfIndex)) {
       // Zhonya's / shield / Soraka / Sett: heal, exhaust, recall to base.
       recallToBase(s, u)
@@ -4949,10 +5295,10 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
 
   // No conquer: if defenders still hold units here, the attacker's surviving
   // units are Recalled to base (damage already cleared).
-  const defendersRemain = bf.units.some((u) => u.owner !== moverOwner)
-  const moverRemain = bf.units.filter((u) => u.owner === moverOwner)
+  const defendersRemain = bf.units.some((u) => controllerOf(u) !== moverOwner)
+  const moverRemain = bf.units.filter((u) => controllerOf(u) === moverOwner)
   if (defendersRemain && moverRemain.length > 0) {
-    bf.units = bf.units.filter((u) => u.owner !== moverOwner)
+    bf.units = bf.units.filter((u) => controllerOf(u) !== moverOwner)
     for (const u of moverRemain)
       s.players[moverOwner].zones.base.push({ ...u, exhausted: true, damage: 0 })
     recomputeControllers(s)
@@ -4965,8 +5311,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   // "When I win a combat" / "When you win a combat" — the mover cleared the
   // defenders and still holds units. Self triggers (Draven - Vanquisher, Nidalee)
   // and global ones (Kha'Zix - Voidreaver "gain 1 XP", Draven - Glorious "draw 1").
-  const moverHere = s.battlefields[bfIndex].units.filter((u) => u.owner === moverOwner).map((u) => u.iid)
-  const enemyHere = s.battlefields[bfIndex].units.some((u) => u.owner !== moverOwner)
+  const moverHere = s.battlefields[bfIndex].units.filter((u) => controllerOf(u) === moverOwner).map((u) => u.iid)
+  const enemyHere = s.battlefields[bfIndex].units.some((u) => controllerOf(u) !== moverOwner)
   if (moverHere.length > 0 && !enemyHere) {
     s = fireTriggers(s, collectSelf(s, moverOwner, 'winCombat', moverHere))
     s = fireTriggers(s, collectGlobal(s, moverOwner, 'winCombat'))
@@ -4989,6 +5335,9 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
     s = offerTrashConquerReturn(s, moverOwner) // Super Mega Death Rocket!
   }
+  // A showdown that flips control trashes any now-unsupported Hidden card (the
+  // loser's facedown card at a battlefield they no longer control). Rule 322.7.
+  cleanupUnsupportedHidden(s)
   return s
 }
 
@@ -5022,7 +5371,7 @@ function resolveSpellEffects(
   // "ready up to two" clause, so resolve the per-Equipment count + ready bespoke.
   if (e.namedToken && /for each equipment you control/i.test(card.text ?? '')) {
     const tokName = e.namedToken.name
-    const equip = allGearInPlay(s).filter((g) => g.owner === controller && parseKeywords(getCard(g.cardId)).equip).length
+    const equip = allGearInPlay(s).filter((g) => controllerOf(g) === controller && parseKeywords(getCard(g.cardId)).equip).length
     const before = p.zones.base.length
     const made = spawnNamedToken(p, tokName, equip, s.turn, true) // enter exhausted
     const newIids = p.zones.base.slice(before).map((x) => x.iid)
@@ -5066,9 +5415,9 @@ function resolveSpellEffects(
   // detaches an Equipment. Auto-picks the strongest equipped friendly + strongest enemy.
   if (e.strikeDown) {
     const dealer = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-      .filter((u) => u.owner === controller && getCard(u.cardId)?.type === 'unit' && u.attached.length > 0)
+      .filter((u) => controllerOf(u) === controller && getCard(u.cardId)?.type === 'unit' && u.attached.length > 0)
       .sort((a, b) => mightOf(b) - mightOf(a))[0]
-    const enemy = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== controller).sort((a, b) => mightOf(b) - mightOf(a))[0]
+    const enemy = s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== controller).sort((a, b) => mightOf(b) - mightOf(a))[0]
     if (dealer && enemy) {
       const amt = mightOf(dealer)
       s = log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} deals ${amt} to ${getCard(enemy.cardId)?.name}.`)
@@ -5094,9 +5443,9 @@ function resolveSpellEffects(
   if (card.name === 'Void Assault') {
     const isUnit = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
     const allUnits = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-    const chosen = (own: boolean) => (targets ?? []).map((t) => findUnitAnywhere(s, t)).find((u) => !!u && isUnit(u) && (own ? u.owner === controller : u.owner !== controller))
-    const friendly = chosen(true) ?? allUnits.filter((u) => u.owner === controller && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
-    const enemy = chosen(false) ?? s.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== controller && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
+    const chosen = (own: boolean) => (targets ?? []).map((t) => findUnitAnywhere(s, t)).find((u) => !!u && isUnit(u) && (own ? controllerOf(u) === controller : controllerOf(u) !== controller))
+    const friendly = chosen(true) ?? allUnits.filter((u) => controllerOf(u) === controller && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
+    const enemy = chosen(false) ?? s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== controller && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
     if (!friendly || !enemy) return log(s, controller, `${card.name} fizzled — need a friendly and an enemy unit.`)
     const enemyBf = battlefieldOf(s, enemy.iid)
     let dest = s.battlefields.findIndex((b) => b.controller != null && b.controller !== controller)
@@ -5117,11 +5466,36 @@ function resolveSpellEffects(
     return s
   }
 
+  // Possession ("Take control of it and recall it") and Hostile Takeover ("Take
+  // control of an enemy unit … Ready it … recall it at end of turn") — steal an
+  // enemy unit at a battlefield. The choice is surfaced as a picker (across ALL
+  // opponents); a UI-provided target is honoured, a single option auto-resolves.
+  if (card.name === 'Possession' || card.name === 'Hostile Takeover') {
+    const permanent = card.name === 'Possession'
+    const opts = stealUnitOptions(s, controller)
+    if (opts.length === 0) return log(s, controller, `${card.name} fizzled — no enemy unit at a battlefield.`)
+    const pre = (targets ?? []).find((t) => opts.some((o) => o.iid === t))
+    if (pre) return applyStealUnit(s, controller, pre, permanent, card.name)
+    if (opts.length === 1) return applyStealUnit(s, controller, opts[0].iid, permanent, card.name)
+    offerChoice(s, {
+      player: controller,
+      kind: 'stealUnit',
+      bfIndex: -1,
+      prompt: permanent
+        ? 'Possession — take control of an enemy unit and recall it to your base.'
+        : 'Hostile Takeover — take control of an enemy unit until end of turn, then it fights for you.',
+      options: opts,
+      payload: JSON.stringify({ permanent }),
+      srcName: card.name,
+    })
+    return log(s, controller, `${card.name}: choose an enemy unit to take control of.`)
+  }
+
   // Rocket Barrage: "Choose one — Deal 4 to a unit in a base. Kill a gear." Auto-picks
   // (no manual modal): kill an enemy gear if one exists, else deal 4 to the strongest
   // enemy unit sitting in a base.
   if (card.name === 'Rocket Barrage') {
-    const enemyGear = allGearInPlay(s).find((g) => g.owner !== controller)
+    const enemyGear = allGearInPlay(s).find((g) => controllerOf(g) !== controller)
     if (enemyGear) {
       const nm = getCard(enemyGear.cardId)?.name ?? 'a gear'
       killGearByIid(s, enemyGear.iid)
@@ -5150,12 +5524,12 @@ function resolveSpellEffects(
   if (e.dealMight && e.dealMight.dealer !== 'self' && card.name !== "Dragon's Rage") {
     const dm = e.dealMight
     const isUnitCard = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
-    const friendlies = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === controller && isUnitCard(u))
-    const enemiesAll = s.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== controller && isUnitCard(u))
+    const friendlies = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === controller && isUnitCard(u))
+    const enemiesAll = s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== controller && isUnitCard(u))
     const statOf = (u: EngineCard) => dm.useStat === 'assault'
       ? parseKeywords(getCard(u.cardId)).assault + (u.grantAssault ?? 0)
       : mightOf(u, null, s.players[u.owner]?.xp ?? 0)
-    const chosen = (own: boolean) => (targets ?? []).map((t) => findUnitAnywhere(s, t)).find((u) => !!u && (own ? u.owner === controller : u.owner !== controller))
+    const chosen = (own: boolean) => (targets ?? []).map((t) => findUnitAnywhere(s, t)).find((u) => !!u && (own ? controllerOf(u) === controller : controllerOf(u) !== controller))
     const dealer = chosen(true) ?? friendlies.sort((a, b) => statOf(b) - statOf(a))[0]
     if (!dealer) return log(s, controller, `${card.name} fizzled — no friendly unit.`)
     const amt = statOf(dealer)
@@ -5168,7 +5542,7 @@ function resolveSpellEffects(
       return fireDeaths(s, dead)
     }
     if (dm.target === 'allEnemiesAtBf' || dm.target === 'splitAllEnemies') {
-      const bf = s.battlefields.map((b, i) => ({ i, foes: b.units.filter((u) => u.owner !== controller && isUnitCard(u)) })).filter((x) => x.foes.length).sort((a, b) => b.foes.length - a.foes.length)[0]
+      const bf = s.battlefields.map((b, i) => ({ i, foes: b.units.filter((u) => controllerOf(u) !== controller && isUnitCard(u)) })).filter((x) => x.foes.length).sort((a, b) => b.foes.length - a.foes.length)[0]
       if (!bf) return log(s, controller, `${card.name} fizzled — no enemies.`)
       const dead: EngineCard[] = []
       if (dm.target === 'allEnemiesAtBf') {
@@ -5209,7 +5583,7 @@ function resolveSpellEffects(
     const dead: EngineCard[] = []
     for (const pl of s.players) {
       const own = [...pl.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-        (u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit',
+        (u) => controllerOf(u) === pl.id && getCard(u.cardId)?.type === 'unit',
       )
       if (!own.length) continue
       const victim = own.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
@@ -5225,7 +5599,7 @@ function resolveSpellEffects(
     const tgts = (targets ?? []).filter((t) => {
       if (!isValidTarget(s, t)) return false
       const tu = findUnitAnywhere(s, t) // can't choose an enemy unit that's targeting-immune
-      return !(tu && tu.owner !== controller && untargetableByEnemy(s, tu))
+      return !(tu && controllerOf(tu) !== controller && untargetableByEnemy(s, tu))
     })
     if (tgts.length === 0 && !hasUntargetedPart(e))
       s = log(s, controller, `${card.name} fizzled — no valid target.`)
@@ -5238,7 +5612,7 @@ function resolveSpellEffects(
         // battlefield with a spell, you draw 1.
         const dtBf = battlefieldOf(s, t)
         const dtu = findUnitAnywhere(s, t)
-        if (dtu && dtu.owner === controller && dtBf >= 0 && bfBaseNameAt(s, dtBf) === 'The Dreaming Tree') {
+        if (dtu && controllerOf(dtu) === controller && dtBf >= 0 && bfBaseNameAt(s, dtBf) === 'The Dreaming Tree') {
           const cp = s.players[controller]
           const dtKey = `dreaming-tree-bf${dtBf}`
           if (!cp.oncePerTurnUsed) cp.oncePerTurnUsed = {}
@@ -5285,7 +5659,7 @@ function resolveSpellEffects(
             s = fireDeaths(s, killTarget(s, t))
           } else {
             u.stunned = true
-            if (u.owner !== controller) { stunnedEnemy = true; stunnedEnemyBf = battlefieldOf(s, t) }
+            if (controllerOf(u) !== controller) { stunnedEnemy = true; stunnedEnemyBf = battlefieldOf(s, t) }
             emit({ kind: 'stun', iid: t, player: controller })
             s = log(s, controller, `${card.name} stunned ${getCard(u.cardId)?.name}.`)
           }
@@ -5328,7 +5702,7 @@ function resolveSpellEffects(
           // Isolate: "Then, if there's an enemy unit alone at that battlefield, draw 1."
           if (card.name === 'Isolate' && srcBf >= 0) {
             const left = s.battlefields[srcBf].units
-            if (left.length === 1 && left[0].owner !== controller) {
+            if (left.length === 1 && controllerOf(left[0]) !== controller) {
               drawN(p, 1)
               s = log(s, controller, 'Isolate: an enemy is alone there — drew 1.')
             }
@@ -5344,7 +5718,7 @@ function resolveSpellEffects(
         // Temptation: "Move an enemy unit to a location where there's a unit with the
         // same controller." Restrict to bfs holding another unit owned by the moved unit.
         if (card.name === 'Temptation' && mu)
-          destBfs = destBfs.filter(({ b }) => b.units.some((u) => u.owner === mu.owner && u.iid !== mu.iid))
+          destBfs = destBfs.filter(({ b }) => b.units.some((u) => controllerOf(u) === controllerOf(mu) && u.iid !== mu.iid))
         const dests = destBfs.map(({ i }) => ({ iid: `bf:${i}`, label: bfBaseNameAt(s, i) || `Battlefield ${i + 1}` }))
         if (mu && dests.length) {
           offerChoice(s, { player: controller, kind: 'moveToBf', bfIndex: here, prompt: `Move ${getCard(mu.cardId)?.name ?? 'the unit'} to which battlefield?`, options: dests, payload: t, srcName: card.name })
@@ -5388,8 +5762,8 @@ function autoSpellTargets(s: MatchState, player: PlayerId, card: Card, bfIndex: 
   const all = s.battlefields.flatMap((b) => b.units)
   const want = e.targetScope === 'friendly' ? 'friendly' : 'enemy'
   const pool = want === 'friendly'
-    ? [...s.players[player].zones.base, ...all].filter((u) => u.owner === player && def(u)?.type === 'unit')
-    : (here.some((u) => u.owner !== player) ? here : all).filter((u) => u.owner !== player && def(u)?.type === 'unit')
+    ? [...s.players[player].zones.base, ...all].filter((u) => controllerOf(u) === player && def(u)?.type === 'unit')
+    : (here.some((u) => controllerOf(u) !== player) ? here : all).filter((u) => controllerOf(u) !== player && def(u)?.type === 'unit')
   const ranked = [...pool].sort((a, b) => mightOf(b) - mightOf(a))
   return ranked.slice(0, Math.max(1, e.targetCount || 1)).map((u) => u.iid)
 }
@@ -5496,6 +5870,57 @@ function applyTempMight(s: MatchState, iid: string, delta: number, floor = 0): E
 }
 
 /** Resolve (or counter) the top item of the Chain. */
+/** Resolve a card played FROM HIDDEN at its hidden battlefield `bfi`: a unit/gear
+ *  enters there (units/gear stay on the board), a spell resolves with targets
+ *  restricted to that battlefield (Rule 737.1.d) and is then trashed. Shared by the
+ *  immediate (in-showdown) reveal and the chain-resolution reveal. Returns the
+ *  threaded state. */
+function resolveRevealedCard(s: MatchState, player: PlayerId, ci: EngineCard, card: Card, bfi: number): MatchState {
+  emit({ kind: 'play', iid: ci.iid, player, cardId: ci.cardId })
+  if (card.type === 'unit') {
+    s.battlefields[bfi].units.push({ ...ci, exhausted: !controlsBreacherAura(s, player), enteredTurn: s.turn }) // Rek'Sai - Breacher
+    recomputeControllers(s)
+    s = log(s, player, `Revealed ${card.name} — entered play.`)
+    for (const line of applyParsed(s, s.players[player], onPlayEffect(card), bfi, ci.iid)) s = log(s, player, line)
+    s = firePlayTriggers(s, player, ci.iid, card, 0, true) // played from [Hidden]
+    // Evelynn - Entrancing: reveal-only enemy pull. Tideturner: reveal-time swap.
+    if (card.name === 'Evelynn - Entrancing') s = pullEnemyToBf(s, player, bfi, 'Evelynn - Entrancing')
+    if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Tideturner') s = tideturnerSwap(s, player, ci.iid)
+  } else if (card.type === 'gear') {
+    // Edge of Night: "play from face down → attach it to a unit you control here."
+    const fromFD = /when you play this from face ?down,[^.]*attach it to a unit you control/i.test(card.text ?? '')
+    const host = fromFD ? s.battlefields[bfi].units.find((u) => controllerOf(u) === player) : undefined
+    if (host) {
+      host.attached = [...host.attached, `${card.id}|${ci.iid}`]
+      emit({ kind: 'buff', iid: host.iid, player, cardId: card.id })
+      s = log(s, player, `Revealed ${card.name} — attached to ${getCard(host.cardId)?.name} (here).`)
+      s = fireAttachEquip(s, player, host)
+    } else {
+      s.players[player].zones.base.push({ ...ci, exhausted: false })
+      s = log(s, player, `Revealed ${card.name} — gear entered play.`)
+    }
+    s = firePlayTriggers(s, player, ci.iid, card, 0, true) // played from [Hidden]
+  } else {
+    s = log(s, player, `Revealed ${card.name} — resolving.`)
+    // Rule 737.1.d: a spell played from Hidden may only choose targets at the
+    // battlefield it was hidden on (autoSpellTargets would fall back to all bfs).
+    const se = spellEffect(card)
+    let revealTargets: string[] = []
+    if (hasTargetedPart(se)) {
+      const wantFriendly = se.targetScope === 'friendly'
+      revealTargets = s.battlefields[bfi].units
+        .filter((u) => def(u)?.type === 'unit' && (wantFriendly ? controllerOf(u) === player : controllerOf(u) !== player))
+        .sort((a, b) => mightOf(b) - mightOf(a))
+        .slice(0, Math.max(1, se.targetCount || 1))
+        .map((u) => u.iid)
+    }
+    s = resolveSpellEffects(s, player, card, revealTargets)
+    s = firePlayTriggers(s, player, ci.iid, card, 0, true) // played from [Hidden]
+    sendToTrash(s.players[player], ci)
+  }
+  return s
+}
+
 function resolveTopOfChain(state: MatchState): MatchState {
   let s = state
   const item = s.chain[s.chain.length - 1]
@@ -5530,6 +5955,13 @@ function resolveTopOfChain(state: MatchState): MatchState {
       s = log(s, item.controller, `Counter fizzled — its target left the chain.`)
     }
     sendToTrash(p, item.instance)
+    return s
+  }
+  // A reveal-from-Hidden item enters/resolves at its hidden battlefield (units &
+  // gear stay on the board; spells trash themselves inside the helper).
+  if (item.reveal) {
+    const rc = getCard(item.cardId)
+    if (rc) s = resolveRevealedCard(s, item.controller, item.instance, rc, item.reveal.bfIndex)
     return s
   }
   const card = getCard(item.cardId)
@@ -5866,7 +6298,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (pr !== action.player) return fail(state, 'Not your priority for Ambush.')
         if (action.toBattlefield == null) return fail(state, 'Ambush requires a target battlefield.')
         const bf = state.battlefields[action.toBattlefield]
-        if (!bf || !bf.units.some((u) => u.owner === action.player))
+        if (!bf || !bf.units.some((u) => controllerOf(u) === action.player))
           return fail(state, 'Ambush must target a battlefield where you have units.')
         if (bfScriptAt(state, action.toBattlefield)?.noPlayHere)
           return fail(state, `Units can't be played at ${getCard(bf.cardId)?.name ?? 'that battlefield'}.`)
@@ -5938,7 +6370,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const atakhanM = action.type === 'PLAY_UNIT' && /you may kill a friendly unit as an additional cost to play me\.?\s*if you do, i cost/i.test(card.text ?? '')
       let atakhanVictimIid: string | null = null
       if (atakhanM && action.type === 'PLAY_UNIT' && action.payAdditionalCost) {
-        const cands = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === action.player && getCard(u.cardId)?.type === 'unit')
+        const cands = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === action.player && getCard(u.cardId)?.type === 'unit')
         if (!cands.length) return fail(state, `Can't play ${card.name}: no friendly unit to kill for its additional cost.`)
         const victim = cands.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
         atakhanVictimIid = victim.iid
@@ -5993,7 +6425,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Leona - Zealot (an opponent is within N points of winning).
         const monchReady = /if an opponent controls a stunned unit,[^.]*?enter(?:s)? ready/i.test(card.text ?? '')
           && [...s.battlefields.flatMap((b) => b.units), ...s.players.flatMap((pl) => pl.zones.base)]
-            .some((u) => u.owner !== action.player && u.stunned)
+            .some((u) => controllerOf(u) !== action.player && u.stunned)
         const leonaReady = !!scoreReadyM
           && s.players.some((pl, i) => i !== action.player && s.pointsToWin - pl.points <= parseInt(scoreReadyM[1], 10))
         // General conditional enter-ready guard (Direwing, Breakneck Mech, Vayne,
@@ -6018,7 +6450,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const tribes = ['bird', 'cat', 'dog', 'poro']
           const wantsTribe = tribes.some((t) => new RegExp(`kill[^.]*\\b${t}\\b`).test(ctext))
           const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((x) =>
-            x.owner === action.player && getCard(x.cardId)?.type === 'unit' &&
+            controllerOf(x) === action.player && getCard(x.cardId)?.type === 'unit' &&
             (wantsTribe ? (getCard(x.cardId)?.tags ?? []).some((tag) => tribes.includes(tag.toLowerCase())) : true),
           )
           if (!candidates.length) return fail(state, `Can't play ${card.name}: no valid unit to kill for its additional cost.`)
@@ -6036,7 +6468,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // while I'm here." When the player controls her AT a battlefield, any friendly unit
         // may be played to an EMPTY (open) battlefield, even without its own play-to-bf text.
         const mfOpenBfAura = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].some(
-          (u) => u.owner === action.player && battlefieldOf(s, u.iid) >= 0 && /friendly units may be played to open battlefields/i.test(getCard(u.cardId)?.text ?? ''),
+          (u) => controllerOf(u) === action.player && battlefieldOf(s, u.iid) >= 0 && /friendly units may be played to open battlefields/i.test(getCard(u.cardId)?.text ?? ''),
         )
         const canPlayToBf = (!kw.ambush && /play (?:me|this) (?:only )?to (?:a|an|any|its)?\s*(?:open |occupied enemy )?battlefield/i.test(card.text ?? ''))
           || (mfOpenBfAura && action.toBattlefield != null && (s.battlefields[action.toBattlefield]?.units.length ?? 0) === 0)
@@ -6046,7 +6478,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const wantsConqueredBf = canPlayToBf && /conquered this turn/i.test(card.text ?? '')
         if (wantsOpenBf && action.toBattlefield != null && (s.battlefields[action.toBattlefield]?.units.length ?? 0) > 0)
           return fail(state, `${card.name} can only be played to an open battlefield.`)
-        if (wantsEnemyOccupiedBf && action.toBattlefield != null && !s.battlefields[action.toBattlefield]?.units.some((u) => u.owner !== action.player))
+        if (wantsEnemyOccupiedBf && action.toBattlefield != null && !s.battlefields[action.toBattlefield]?.units.some((u) => controllerOf(u) !== action.player))
           return fail(state, `${card.name} must be played to a battlefield with enemy units.`)
         if (wantsConqueredBf && (action.toBattlefield == null || !(s.players[action.player].conqueredThisTurn ?? []).includes(action.toBattlefield)))
           return fail(state, `${card.name} can only be played to a battlefield you conquered this turn.`)
@@ -6091,7 +6523,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // (the parser shouldn't mis-handle "each player must kill one of their units").
         const isSafetyInspector = /you may spend \d+ xp as an additional cost to play me/i.test(ctext) && /each player must kill one of their units/i.test(ctext)
         if (zaunPunk) {
-          const friendlyGear = allGearInPlay(s1).filter((g) => g.owner === action.player)
+          const friendlyGear = allGearInPlay(s1).filter((g) => controllerOf(g) === action.player)
           if (!friendlyGear.length) return fail(state, `Can't play ${card.name}: no friendly gear to kill for its additional cost.`)
           const costPick = friendlyGear.reduce((lo, g) => (gearEnergyOf(g) <= gearEnergyOf(lo) ? g : lo))
           const costName = getCard(costPick.cardId)?.name ?? 'a gear'
@@ -6129,7 +6561,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           for (const pl of s1.players) {
             if (pl.out) continue
             if (pl.id === action.player && paidXp) continue
-            const units = [...pl.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pl.id && getCard(u.cardId)?.type === 'unit')
+            const units = [...pl.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === pl.id && getCard(u.cardId)?.type === 'unit')
             if (!units.length) continue
             const victim = units.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
             s1 = log(s1, action.player, `${card.name}: ${pl.name} killed ${getCard(victim.cardId)?.name ?? 'a unit'}.`)
@@ -6197,7 +6629,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const statOf = (u: EngineCard) => e.dealMight!.useStat === 'assault'
             ? parseKeywords(getCard(u.cardId)).assault + (u.grantAssault ?? 0)
             : mightOf(u, null, s1.players[u.owner]?.xp ?? 0)
-          const foe = s1.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => statOf(b) - statOf(a))[0]
+          const foe = s1.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => statOf(b) - statOf(a))[0]
           if (self && foe) {
             const selfAmt = statOf(self)
             const foeAmt = statOf(foe)
@@ -6219,8 +6651,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const isUnit = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
           // Beast Below: "return another friendly unit and an enemy unit to their owners' hands."
           if (/return another friendly unit and an enemy unit to their owners'? hands/.test(txt)) {
-            const friendly = [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === action.player && u.iid !== ci.iid && isUnit(u)).sort((a, b) => mightOf(a) - mightOf(b))[0]
-            const enemy = s1.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== action.player && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
+            const friendly = [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === action.player && u.iid !== ci.iid && isUnit(u)).sort((a, b) => mightOf(a) - mightOf(b))[0]
+            const enemy = s1.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== action.player && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
             if (friendly) s1 = bounceUnitToHand(s1, friendly.iid, action.player, card.name, 0)
             if (enemy) s1 = bounceUnitToHand(s1, enemy.iid, action.player, card.name, 0)
           }
@@ -6242,7 +6674,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const gearReadyM = txt.match(/if you control (two or more|\d+ or more|\d+\+) gear, ready me/)
           if (gearReadyM) {
             const need = /two/.test(gearReadyM[1]) ? 2 : parseInt(gearReadyM[1], 10) || 2
-            if (allGearInPlay(s1).filter((g) => g.owner === action.player).length >= need) {
+            if (allGearInPlay(s1).filter((g) => controllerOf(g) === action.player).length >= need) {
               const self = findUnitAnywhere(s1, ci.iid)
               if (self) { self.exhausted = false; emit({ kind: 'buff', iid: self.iid, player: action.player }) }
             }
@@ -6255,7 +6687,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           if (/spend any number of buffs/.test(txt) && /channel 1 rune exhausted/.test(txt)) {
             let spent = 0
             for (const u of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)])
-              if (u.owner === action.player && (u.buffs ?? 0) > 0) { spent += u.buffs ?? 0; u.buffs = 0 }
+              if (controllerOf(u) === action.player && (u.buffs ?? 0) > 0) { spent += u.buffs ?? 0; u.buffs = 0 }
             if (spent > 0) {
               channelN(p, spent, true)
               for (const l of fireSpendBuffInline(s1, action.player)) s1 = log(s1, action.player, l)
@@ -6280,7 +6712,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // exhausted friendly Mech (not itself).
         if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bubble Bot' && !legionGated) {
           const mech = [...s1.players[action.player].zones.base, ...s1.battlefields.flatMap((b) => b.units)].find(
-            (x) => x.owner === action.player && x.iid !== ci.iid && x.exhausted && (getCard(x.cardId)?.tags ?? []).includes('Mech'),
+            (x) => controllerOf(x) === action.player && x.iid !== ci.iid && x.exhausted && (getCard(x.cardId)?.tags ?? []).includes('Mech'),
           )
           if (mech) {
             mech.exhausted = false
@@ -6315,38 +6747,27 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
         // Akshan - Mischievous: "if you paid the additional cost, move an enemy gear to
         // your base. You control it until I leave the board. If it's an Equipment, attach
-        // it to me." Auto-pick an enemy gear (an attached Equipment first, else an
-        // unattached enemy gear). The control-reverts-when-Akshan-leaves nuance is
-        // simplified: the steal transfers control outright. Runs before the Weaponmaster
-        // check so a stolen non-Equipment gear is still a Weaponmaster target.
+        // it to me." Surface a picker across ALL opponents (attached + unattached gear);
+        // a single option auto-resolves. The steal is registered in akshanStolenGears so
+        // it reverts to the original owner when Akshan leaves the board. Runs before the
+        // Weaponmaster check so a stolen non-Equipment gear is still a Weaponmaster target.
         if (action.payAdditionalCost && card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Akshan - Mischievous') {
-          let stolenCardId: string | null = null
-          let stolenIid: string | null = null
-          for (const u of [...s1.battlefields.flatMap((b) => b.units), ...s1.players.flatMap((pl) => pl.zones.base)]) {
-            if (u.owner === action.player || !u.attached?.length) continue
-            const ref = u.attached[0]
-            u.attached = u.attached.slice(1)
-            ;[stolenCardId, stolenIid] = ref.split('|') as [string, string]
-            break
-          }
-          if (!stolenCardId)
-            for (const pl of s1.players) {
-              if (pl.id === action.player) continue
-              const gi = pl.zones.base.findIndex((g) => getCard(g.cardId)?.type === 'gear')
-              if (gi >= 0) { const [g] = pl.zones.base.splice(gi, 1); stolenCardId = g.cardId; stolenIid = g.iid; break }
-            }
-          if (stolenCardId && stolenIid) {
-            const akshan = findUnitAnywhere(s1, ci.iid)
-            const gc = getCard(stolenCardId)
-            const isEquip = parseKeywords(gc).equip || /attach (?:this|it) to a unit/i.test(gc?.text ?? '')
-            if (isEquip && akshan) {
-              akshan.attached = [...akshan.attached, `${stolenCardId}|${stolenIid}`]
-              emit({ kind: 'equip', iid: akshan.iid, player: action.player, cardId: stolenCardId })
-              s1 = fireAttachEquip(s1, action.player, akshan)
-            } else {
-              s1.players[action.player].zones.base.push({ iid: stolenIid, cardId: stolenCardId, owner: action.player, exhausted: false, damage: 0, attached: [] })
-            }
-            s1 = log(s1, action.player, `Akshan - Mischievous: stole ${gc?.name ?? 'a gear'} from an opponent.`)
+          const opts = stealGearOptions(s1, action.player)
+          if (opts.length === 0) {
+            s1 = log(s1, action.player, 'Akshan - Mischievous: no enemy gear to steal.')
+          } else if (opts.length === 1) {
+            s1 = applyStealGear(s1, action.player, opts[0].iid, ci.iid)
+          } else {
+            offerChoice(s1, {
+              player: action.player,
+              kind: 'stealGear',
+              bfIndex: -1,
+              prompt: 'Akshan - Mischievous — move an enemy gear to your base (attach it to Akshan if it is Equipment).',
+              options: opts,
+              payload: ci.iid,
+              srcName: 'Akshan - Mischievous',
+            })
+            s1 = log(s1, action.player, 'Akshan - Mischievous: choose an enemy gear to steal.')
           }
         }
         // Weaponmaster (rule 747): when this unit enters, you MAY choose an Equipment
@@ -6395,7 +6816,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         if (card.name === 'Elder Dragon') {
           const strongestEnemy = (units: EngineCard[]) => {
-            const en = units.filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit')
+            const en = units.filter((u) => controllerOf(u) !== action.player && getCard(u.cardId)?.type === 'unit')
             return en.length ? en.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : null
           }
           const edDead: EngineCard[] = []
@@ -6425,7 +6846,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // the strongest enemy to its base; Part 2 (blastConeOnEnemyMove) then exhausts
           // the freshly-played cone to [Stun] that unit.
           if (card.name === 'Blast Cone') {
-            const enemy = st.battlefields.flatMap((b) => b.units).filter((u) => u.owner !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => mightOf(b) - mightOf(a))[0]
+            const enemy = st.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => mightOf(b) - mightOf(a))[0]
             if (enemy) {
               const nm = getCard(enemy.cardId)?.name
               if (sendUnitToBase(st, enemy.iid)) {
@@ -6444,7 +6865,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const attachOnPlay = state.sandbox || parseKeywords(card).quickDraw || controlsQuickDrawAura(s, action.player)
         if (action.targetIid && attachOnPlay) {
           for (const u of p.zones.base.concat(s.battlefields.flatMap((b) => b.units)))
-            if (u.iid === action.targetIid && u.owner === action.player && getCard(u.cardId)?.type === 'unit') {
+            if (u.iid === action.targetIid && controllerOf(u) === action.player && getCard(u.cardId)?.type === 'unit') {
               u.attached = [...u.attached, `${card.id}|${ci.iid}`]
               emit({ kind: 'buff', iid: u.iid, player: action.player, cardId: card.id })
               emit({ kind: 'equip', iid: u.iid, player: action.player, cardId: card.id })
@@ -6459,7 +6880,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // control on play. Auto-pick the strongest friendly unit.
         if (parseKeywords(card).quickDraw || controlsQuickDrawAura(s, action.player)) {
           const host = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-            .filter((u) => u.owner === action.player && getCard(u.cardId)?.type === 'unit')
+            .filter((u) => controllerOf(u) === action.player && getCard(u.cardId)?.type === 'unit')
             .sort((a, b) => mightOf(b) - mightOf(a))[0]
           if (host) {
             host.attached = [...host.attached, `${card.id}|${ci.iid}`]
@@ -6546,14 +6967,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       emit({ kind: 'stun', iid: target.iid, player: action.player })
       let sStun = log(s, action.player, `Stunned ${getCard(target.cardId)?.name}.`)
       // "When you stun an enemy unit" (Eclipse Herald, Leona - Radiant Dawn).
-      if (target.owner !== action.player) sStun = fireStun(sStun, action.player, battlefieldOf(sStun, target.iid))
+      if (controllerOf(target) !== action.player) sStun = fireStun(sStun, action.player, battlefieldOf(sStun, target.iid))
       return ok(sStun)
     }
 
     case 'DETACH': {
       if (!state.sandbox) { const guard = requireActiveAction(state, action.player); if (guard) return fail(state, guard) }
       const s = clone(state)
-      const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u?.owner === action.player ? u : undefined })()
+      const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u && controllerOf(u) === action.player ? u : undefined })()
       if (!unit) return fail(state, 'No such unit.')
       const idx = unit.attached.findIndex((a) => a.split('|')[1] === action.gearIid)
       if (idx < 0) return fail(state, 'That gear is not attached.')
@@ -6586,7 +7007,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         gIdx = s.players[action.player].zones.base.findIndex((g) => g.iid === action.gearIid && getCard(g.cardId)?.type === 'gear')
         if (gIdx < 0) return fail(state, 'That gear is not on your Base.')
       }
-      const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u?.owner === action.player ? u : undefined })()
+      const unit = state.sandbox ? findUnitAnywhere(s, action.unitIid) : (() => { const u = findUnitAnywhere(s, action.unitIid); return u && controllerOf(u) === action.player ? u : undefined })()
       if (!unit || getCard(unit.cardId)?.type !== 'unit')
         return fail(state, 'Choose a unit to equip.')
       // Pay the [Equip] cost (real play only). When the UI supplies a `payment`
@@ -6640,7 +7061,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       }
       if (!action.gearIid) return ok(popAdvance(log(s, action.player, 'Weaponmaster: declined.')))
       const unit = findUnitAnywhere(s, action.unitIid)
-      if (!unit || unit.owner !== action.player || getCard(unit.cardId)?.type !== 'unit') return fail(state, 'No such unit.')
+      if (!unit || controllerOf(unit) !== action.player || getCard(unit.cardId)?.type !== 'unit') return fail(state, 'No such unit.')
       const gid = action.gearIid
       // Locate the chosen Equipment: unattached on base, or attached to another friendly unit.
       let gearCardId: string | null = null
@@ -6649,7 +7070,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (bi >= 0) gearCardId = s.players[action.player].zones.base[bi].cardId
       else {
         for (const u of [...s.players[action.player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
-          if (u.owner !== action.player || u.iid === unit.iid) continue
+          if (controllerOf(u) !== action.player || u.iid === unit.iid) continue
           const ri = (u.attached ?? []).findIndex((ref) => ref.split('|')[1] === gid)
           if (ri >= 0) { hostUnit = u; gearCardId = u.attached[ri].split('|')[0]; break }
         }
@@ -6750,7 +7171,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
       }
       s.battlefields[bfi].facedown = { ...card, facedown: true, hiddenTurn: s.turn }
-      return ok(log(s, action.player, `Hid a card facedown at ${getCard(s.battlefields[bfi].cardId)?.name ?? 'a battlefield'}${legendName === 'Teemo - Swift Scout' ? ' (Teemo: paid 1 Energy)' : ''}.`))
+      let sh = log(s, action.player, `Hid a card facedown at ${getCard(s.battlefields[bfi].cardId)?.name ?? 'a battlefield'}${legendName === 'Teemo - Swift Scout' ? ' (Teemo: paid 1 Energy)' : ''}.`)
+      // "When you hide a card, …" (Katarina - Reckless: ready me).
+      sh = fireTriggers(sh, collectGlobal(sh, action.player, 'hide'))
+      return ok(sh)
     }
 
     case 'REVEAL': {
@@ -6760,78 +7184,61 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const fd = s.battlefields[bfi].facedown!
       if ((fd.hiddenTurn ?? -1) >= s.turn) return fail(state, "You can't reveal a card the turn you hid it.")
       // Noxus Saboteur: "Your opponents' [Hidden] cards can't be revealed here."
-      if (s.battlefields[bfi].units.some((u) => u.owner !== action.player && /your opponents'? \[hidden\] cards can'?t be revealed here/i.test(getCard(u.cardId)?.text ?? '')))
+      if (s.battlefields[bfi].units.some((u) => controllerOf(u) !== action.player && /your opponents'? \[hidden\] cards can'?t be revealed here/i.test(getCard(u.cardId)?.text ?? '')))
         return fail(state, 'An opponent\'s Noxus Saboteur prevents revealing Hidden cards here.')
       const card = getCard(fd.cardId)
       if (!card) return fail(state, 'Unknown card.')
       s.battlefields[bfi].facedown = null
       const ci: EngineCard = { ...fd, facedown: false, hiddenTurn: undefined }
-      emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: ci.cardId })
-      // Reveal = play for 0, at the battlefield where it was hidden.
-      if (card.type === 'unit') {
-        s.battlefields[bfi].units.push({ ...ci, exhausted: !controlsBreacherAura(s, action.player), enteredTurn: s.turn }) // Rek'Sai - Breacher: from-Hidden is non-hand
-        recomputeControllers(s)
-        s = log(s, action.player, `Revealed ${card.name} — entered play.`)
-        for (const line of applyParsed(s, s.players[action.player], onPlayEffect(card), bfi, ci.iid)) s = log(s, action.player, line)
-        s = firePlayTriggers(s, action.player, ci.iid, card, 0, true) // played from [Hidden]
-        // Evelynn - Entrancing: "When you play me from face down on your turn, you may
-        // move an enemy unit at a different location to my battlefield." (Reveal-only.)
-        if (card.name === 'Evelynn - Entrancing') s = pullEnemyToBf(s, action.player, bfi, 'Evelynn - Entrancing')
-        // Tideturner: the on-play swap also fires when revealed from Hidden (its
-        // "original location" is the battlefield it was hidden at).
-        if (card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Tideturner') s = tideturnerSwap(s, action.player, ci.iid)
-      } else if (card.type === 'gear') {
-        // Edge of Night: "When you play this from face down, attach it to a unit
-        // you control (here)." Auto-attach to a friendly unit at this battlefield.
-        const fromFD = /when you play this from face ?down,[^.]*attach it to a unit you control/i.test(card.text ?? '')
-        const host = fromFD ? s.battlefields[bfi].units.find((u) => u.owner === action.player) : undefined
-        if (host) {
-          host.attached = [...host.attached, `${card.id}|${ci.iid}`]
-          emit({ kind: 'buff', iid: host.iid, player: action.player, cardId: card.id })
-          s = log(s, action.player, `Revealed ${card.name} — attached to ${getCard(host.cardId)?.name} (here).`)
-          s = fireAttachEquip(s, action.player, host)
-        } else {
-          s.players[action.player].zones.base.push({ ...ci, exhausted: false })
-          s = log(s, action.player, `Revealed ${card.name} — gear entered play.`)
-        }
-        s = firePlayTriggers(s, action.player, ci.iid, card, 0, true) // played from [Hidden]
-      } else {
-        s = log(s, action.player, `Revealed ${card.name} — resolving.`)
-        s = resolveSpellEffects(s, action.player, card, [])
-        s = firePlayTriggers(s, action.player, ci.iid, card, 0, true) // played from [Hidden]
-        sendToTrash(s.players[action.player], ci)
+      // Reveal is Reaction speed and OPENS A CHAIN (Rule 737.1.c.3): the revealed
+      // card sits on the Chain so opponents may respond / Counter before it resolves.
+      // Exception — mirroring spell handling, a reveal DURING a showdown resolves
+      // immediately (the showdown is the active closed state).
+      if (state.showdown) {
+        return ok(resolveRevealedCard(s, action.player, ci, card, bfi))
       }
-      return ok(s)
+      // If a chain is already open, you may only reveal when you hold priority
+      // (a reaction stacked onto the chain); otherwise it would jump the queue.
+      // (fail returns the original untouched state, so the facedown card stays.)
+      if (state.chain.length > 0 && state.priority !== action.player)
+        return fail(state, 'Wait for priority to reveal that Hidden card.')
+      s.chain.push({
+        id: makeChainId(),
+        kind: 'spell',
+        controller: action.player,
+        cardId: card.id,
+        instance: ci,
+        payment: { exhaust: [], recycle: [] },
+        targets: [],
+        reveal: { bfIndex: bfi },
+      })
+      s.passes = 0
+      s.priority = nextPlayer(s, action.player)
+      return ok(log(s, action.player, `Revealed ${card.name} from Hidden — it's on the Chain (opponents may respond).`))
     }
 
     case 'RETREAT': {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
       const s = clone(state)
-      for (let i = 0; i < s.battlefields.length; i++) {
-        const bf = s.battlefields[i]
-        const idx = bf.units.findIndex(
-          (u) => u.iid === action.iid && u.owner === action.player,
-        )
-        if (idx >= 0) {
-          // Minotaur Reckoner (global) / Determined Sentry (self): can't move to base.
-          if (globalNoMoveToBaseActive(s))
-            return fail(state, "Units can't move to base right now (Minotaur Reckoner).")
-          if (unitCantMoveToBase(bf.units[idx]))
-            return fail(state, `${def(bf.units[idx])?.name} can't move to base.`)
-          if (bfScriptAt(s, i)?.noMoveToBase)
-            return fail(state, `Units can't move from ${getCard(bf.cardId)?.name ?? 'here'} to base.`)
-          if (bf.units[idx].cantMoveTurn === s.turn)
-            return fail(state, `${def(bf.units[idx])?.name} can't move this turn.`)
-          const [u] = bf.units.splice(idx, 1)
-          bfScriptAt(s, i)?.onMoveFrom?.(u) // Back-Alley Bar: +1 Might this turn
-          s.players[action.player].zones.base.push({ ...u, exhausted: true })
-          recomputeControllers(s)
-          emit({ kind: 'move', iid: u.iid, player: action.player, cardId: u.cardId, retreat: 'base' })
-          return ok(log(s, action.player, `${def(u)?.name} retreated to base.`))
-        }
+      const err = retreatOne(s, action.player, action.iid)
+      if (err) return fail(state, err)
+      return ok(s)
+    }
+
+    case 'RETREAT_UNITS': {
+      const guard = requireActiveAction(state, action.player)
+      if (guard) return fail(state, guard)
+      const s = clone(state)
+      let moved = 0
+      let firstErr: string | null = null
+      for (const iid of action.iids) {
+        const err = retreatOne(s, action.player, iid)
+        if (err) firstErr = firstErr ?? err
+        else moved++
       }
-      return fail(state, 'Unit not found at any battlefield.')
+      if (moved === 0) return fail(state, firstErr ?? 'No units could retreat.')
+      return ok(s)
     }
 
     case 'VISION_DECIDE': {
@@ -6859,7 +7266,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return fail(state, 'That unit can\'t be readied by this effect (ready another unit).')
       const s = clone(state)
       const u = findUnitAnywhere(s, action.iid)
-      if (!u || u.owner !== action.player || !u.exhausted || unitCantBeReadied(u) || enemyWardenAtBf(s, action.player))
+      if (!u || controllerOf(u) !== action.player || !u.exhausted || unitCantBeReadied(u) || enemyWardenAtBf(s, action.player))
         return fail(state, 'Choose one of your exhausted units.')
       u.exhausted = false
       emit({ kind: 'buff', iid: u.iid, player: action.player })
@@ -6918,7 +7325,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const pid = pc.player
         let victimIid = action.iid
         if (victimIid === null) {
-          const own = [...s.players[pid].zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => u.owner === pid && getCard(u.cardId)?.type === 'unit')
+          const own = [...s.players[pid].zones.base, ...s.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === pid && getCard(u.cardId)?.type === 'unit')
           victimIid = own.length ? own.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo)).iid : null
         }
         if (victimIid) {
@@ -6951,7 +7358,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             // They deal damage equal to their Mights to each other." Auto-picks the
             // strongest other enemy at the destination; both take the other's Might.
             if (pc.srcName === "Dragon's Rage") {
-              const others = s.battlefields[dest].units.filter((u) => u.owner === card.owner && u.iid !== card.iid && getCard(u.cardId)?.type === 'unit')
+              const others = s.battlefields[dest].units.filter((u) => controllerOf(u) === controllerOf(card) && u.iid !== card.iid && getCard(u.cardId)?.type === 'unit')
               if (others.length) {
                 const other = others.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
                 const m1 = mightOf(card)
@@ -6969,6 +7376,34 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         } else {
           s = log(s, action.player, 'Move — declined.')
         }
+        return ok(s)
+      }
+
+      // Possession / Hostile Takeover: take control of the chosen enemy unit. The
+      // steal is mandatory, so a decline auto-picks the strongest enemy option.
+      if (pc.kind === 'stealUnit') {
+        let permanent = false
+        try { permanent = !!JSON.parse(pc.payload ?? '{}').permanent } catch { permanent = false }
+        const srcName = pc.srcName ?? (permanent ? 'Possession' : 'Hostile Takeover')
+        let pick = action.iid
+        if (pick === null || !pc.options.some((o) => o.iid === pick)) {
+          // Auto-pick the strongest valid enemy unit (mandatory effect).
+          pick = pc.options
+            .map((o) => findUnitAnywhere(s, o.iid))
+            .filter((u): u is EngineCard => !!u)
+            .sort((a, b) => mightOf(b) - mightOf(a))[0]?.iid ?? pc.options[0]?.iid ?? null
+        }
+        if (pick) s = applyStealUnit(s, action.player, pick, permanent, srcName)
+        return ok(s)
+      }
+
+      // Akshan - Mischievous: move the chosen enemy gear to your base. Mandatory, so
+      // a decline auto-picks the first option.
+      if (pc.kind === 'stealGear') {
+        const akshanIid = pc.payload ?? ''
+        let pick = action.iid
+        if (pick === null || !pc.options.some((o) => o.iid === pick)) pick = pc.options[0]?.iid ?? null
+        if (pick) s = applyStealGear(s, action.player, pick, akshanIid)
         return ok(s)
       }
 
@@ -7123,14 +7558,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // Jax - Grandmaster's 2nd ability); detach it from its current host first.
           const equipIid = pc.payload
           const target = findUnitAnywhere(s, action.iid)
-          if (!equipIid || !target || target.owner !== action.player) return fail(state, 'Invalid attach target.')
+          if (!equipIid || !target || controllerOf(target) !== action.player) return fail(state, 'Invalid attach target.')
           let gearCardId: string | undefined
           const gi = s.players[action.player].zones.base.findIndex((c) => c.iid === equipIid)
           if (gi >= 0) {
             gearCardId = s.players[action.player].zones.base.splice(gi, 1)[0].cardId
           } else {
             for (const host of [...s.players[action.player].zones.base, ...s.battlefields.flatMap((b) => b.units)]) {
-              if (host.owner !== action.player) continue
+              if (controllerOf(host) !== action.player) continue
               const ai = host.attached.findIndex((r) => r.split('|')[1] === equipIid)
               if (ai >= 0) { gearCardId = host.attached.splice(ai, 1)[0].split('|')[0]; break }
             }
@@ -7285,7 +7720,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (!targetIid) return fail(state, 'Azir - Ascendant: choose a friendly unit to swap with.')
         const azir = controlledInstance(s1, action.player, u.iid)
         const tgt = findUnitAnywhere(s1, targetIid)
-        if (!azir || !tgt || tgt.owner !== action.player || tgt.iid === azir.iid) return fail(state, 'Azir - Ascendant: invalid swap target.')
+        if (!azir || !tgt || controllerOf(tgt) !== action.player || tgt.iid === azir.iid) return fail(state, 'Azir - Ascendant: invalid swap target.')
         const azirBf = battlefieldOf(s1, azir.iid)
         const tgtBf = battlefieldOf(s1, tgt.iid)
         // Remove both from their current zones.
@@ -7322,9 +7757,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const amt = bi >= 0 ? combatMightAt(s1, bi, u, 'attacker') : mightOf(u)
         const explicit = action.targets?.[0]
         let tgt = explicit ? findUnitAnywhere(s1, explicit) : undefined
-        if (tgt && tgt.owner !== action.player && untargetableByEnemy(s1, tgt)) tgt = undefined
+        if (tgt && controllerOf(tgt) !== action.player && untargetableByEnemy(s1, tgt)) tgt = undefined
         if (!tgt) {
-          const foes = s1.battlefields.flatMap((b) => b.units).filter((x) => x.owner !== action.player && getCard(x.cardId)?.type === 'unit')
+          const foes = s1.battlefields.flatMap((b) => b.units).filter((x) => controllerOf(x) !== action.player && getCard(x.cardId)?.type === 'unit')
           tgt = foes.sort((a, b) => mightOf(b) - mightOf(a))[0]
         }
         if (tgt && amt > 0) {
@@ -7338,7 +7773,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const championTarget = /champion zone/i.test(ab.effectText) && s1.players.some((pl) => pl.champion?.iid === t)
           if (!isValidTarget(s1, t) && !championTarget) continue
           const immuneTo = findUnitAnywhere(s1, t) // enemy can't choose a targeting-immune unit
-          if (immuneTo && immuneTo.owner !== action.player && untargetableByEnemy(s1, immuneTo)) continue
+          if (immuneTo && controllerOf(immuneTo) !== action.player && untargetableByEnemy(s1, immuneTo)) continue
           // The List: "Give a unit with the named tag −N Might." Only a unit carrying
           // the player's named tag is affected.
           if (/with the named tag/i.test(ab.effectText)) {
@@ -7378,18 +7813,18 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (ab.effect.stun) {
         // Vex - Mocking: relocate to the stunned enemy's battlefield. Pick a stunned
         // enemy among the chosen targets and pass its bf into the stun trigger.
-        const st = (action.targets ?? []).map((t) => findUnitAnywhere(s1, t)).find((tu) => !!tu && tu.owner !== action.player && tu.stunned)
+        const st = (action.targets ?? []).map((t) => findUnitAnywhere(s1, t)).find((tu) => !!tu && controllerOf(tu) !== action.player && tu.stunned)
         s1 = fireStun(s1, action.player, st ? battlefieldOf(s1, st.iid) : undefined) // "when you stun" payoffs
       }
       // Untargeted resource parts (Garbage Grabber: "Draw 1"; channel variants).
       if (ab.effect.draw) drawN(p, ab.effect.draw)
       if (ab.effect.channel) channelN(p, ab.effect.channel)
       if (ab.effect.channelExhausted) channelN(p, ab.effect.channelExhausted, true)
-      if (ab.effect.readyAllUnits && !enemyWardenAtBf(s1, action.player)) for (const unit of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)]) { if (unit.owner === action.player && !unitCantBeReadied(unit)) unit.exhausted = false }
+      if (ab.effect.readyAllUnits && !enemyWardenAtBf(s1, action.player)) for (const unit of [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)]) { if (controllerOf(unit) === action.player && !unitCantBeReadied(unit)) unit.exhausted = false }
       if (ab.effect.readySelf && !unitCantBeReadied(u) && !enemyWardenAtBf(s1, action.player)) u.exhausted = false
       if (ab.effect.readyRunes) { let n = ab.effect.readyRunes; for (const r of p.zones.runePool) { if (n <= 0) break; if (r.exhausted) { r.exhausted = false; n-- } } }
-      if (ab.effect.grantAssaultHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (unit.owner === action.player && unit.iid !== u.iid) unit.grantAssault = (unit.grantAssault ?? 0) + ab.effect.grantAssaultHere }
-      if (ab.effect.grantShieldHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (unit.owner === action.player && unit.iid !== u.iid) unit.grantShield = (unit.grantShield ?? 0) + ab.effect.grantShieldHere }
+      if (ab.effect.grantAssaultHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (controllerOf(unit) === action.player && unit.iid !== u.iid) unit.grantAssault = (unit.grantAssault ?? 0) + ab.effect.grantAssaultHere }
+      if (ab.effect.grantShieldHere) { const bi = battlefieldOf(s1, u.iid); if (bi >= 0) for (const unit of s1.battlefields[bi].units) if (controllerOf(unit) === action.player && unit.iid !== u.iid) unit.grantShield = (unit.grantShield ?? 0) + ab.effect.grantShieldHere }
       // "[Add] <resource>" — rune-ramp gear (Seals, Energy Conduit) add Power/Energy
       // directly to the pool.
       if (ab.effect.addEnergy || Object.keys(ab.effect.addPower).length) {
@@ -7559,7 +7994,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         case 'readyAll': {
           for (const unit of [...s.players[action.player].zones.base, ...s.battlefields.flatMap((b) => b.units)])
-            if (unit.owner === action.player) unit.exhausted = false
+            if (controllerOf(unit) === action.player) unit.exhausted = false
           break
         }
         case 'spawn': {
@@ -7622,6 +8057,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             p.apheliosModesThisTurn = 0
             p.azirSwappedThisTurn = false
             p.energySpentOnSpellsThisTurn = 0
+            p.powerSpentThisTurn = 0
             p.spellPlayedThisTurn = false
             p.nextUnitEntersReadyThisTurn = false
             p.conqueredThisTurn = []
@@ -7833,7 +8269,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const ender = state.activePlayer
       const perms = [
         ...s.players[ender].zones.base,
-        ...s.battlefields.flatMap((b) => b.units.filter((u) => u.owner === ender)),
+        ...s.battlefields.flatMap((b) => b.units.filter((u) => controllerOf(u) === ender)),
         ...(s.players[ender].legend ? [s.players[ender].legend!] : []),
       ]
       for (const perm of perms) {
@@ -7846,6 +8282,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (hasUntargetedPart(eot))
           for (const line of applyParsed(s, s.players[ender], eot, undefined, perm.iid)) s = log(s, ender, `${def.name}: ${line}`)
       }
+      // Hostile Takeover: "until end of turn" stolen units revert now — clear the
+      // control override and recall them to their OWNER's base (once controlledBy is
+      // cleared, controller == owner, so this is the owner's base per Rule 428). A
+      // stolen unit that died this turn is gone from these zones, so it's skipped.
+      const reverting: EngineCard[] = []
+      for (const bf of s.battlefields) reverting.push(...bf.units.filter((u) => u.stolenUntilEot))
+      for (const pl of s.players) reverting.push(...pl.zones.base.filter((u) => u.stolenUntilEot))
+      for (const u of reverting) {
+        for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === u.iid); if (i >= 0) bf.units.splice(i, 1) }
+        for (const pl of s.players) pl.zones.base = pl.zones.base.filter((x) => x.iid !== u.iid)
+        u.controlledBy = undefined
+        u.stolenUntilEot = undefined
+        s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
+        s.log.push({ turn: s.turn, player: u.owner, text: `Hostile Takeover expired — ${getCard(u.cardId)?.name ?? 'a unit'} recalled to its owner.` })
+      }
+      if (reverting.length) recomputeControllers(s)
       // Empty the ending player's resource pool.
       s.players[state.activePlayer].pool = { energy: 0, power: {} }
       s.activePlayer = nextPlayer(s, state.activePlayer)
@@ -7893,7 +8345,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         ...s.players[action.player].zones.base,
         ...s.battlefields.flatMap((b) => b.units),
       ]) {
-        if (u.iid === action.iid && u.owner === action.player) {
+        if (u.iid === action.iid && controllerOf(u) === action.player) {
           if ((u.buffs ?? 0) >= 1) return fail(state, 'A unit can have at most 1 Buff.')
           u.buffs = 1
           emit({ kind: 'buff', iid: u.iid, player: action.player })
@@ -7928,7 +8380,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
       }
       for (const bf of s.battlefields) {
-        const idx = bf.units.findIndex((u) => u.iid === action.iid && u.owner === action.player)
+        const idx = bf.units.findIndex((u) => u.iid === action.iid && controllerOf(u) === action.player)
         if (idx >= 0) {
           const [c] = bf.units.splice(idx, 1)
           sendToTrash(p, c)
@@ -8078,10 +8530,10 @@ export function getLegalTargets(state: MatchState, card: Card, player?: PlayerId
   const e = spellEffect(card)
   let units = e.battlefieldOnly ? state.battlefields.flatMap((b) => b.units) : unitsInPlay(state)
   if (player != null) {
-    if (e.targetScope === 'enemy') units = units.filter((u) => u.owner !== player)
-    else if (e.targetScope === 'friendly') units = units.filter((u) => u.owner === player)
+    if (e.targetScope === 'enemy') units = units.filter((u) => controllerOf(u) !== player)
+    else if (e.targetScope === 'friendly') units = units.filter((u) => controllerOf(u) === player)
     // Enemy units that can't be chosen by enemy spells (Unstoppable [Level 16]).
-    units = units.filter((u) => u.owner === player || !untargetableByEnemy(state, u))
+    units = units.filter((u) => controllerOf(u) === player || !untargetableByEnemy(state, u))
   }
   // "kill a unit with N Might or less" (Soul Harvest) — only offer small units.
   if (e.kill > 0 && e.killMightMax != null) units = units.filter((u) => mightOf(u) <= e.killMightMax!)
@@ -8137,7 +8589,7 @@ export function canPlay(state: MatchState, player: PlayerId, iid: string): PlayC
     // battlefield where you already have units.
     const pr = chainOpen ? state.priority : state.showdown!.priority
     if (pr !== player) return { valid: false, reason: 'Not your priority for Ambush.' }
-    if (!state.battlefields.some((bf) => bf.units.some((u) => u.owner === player)))
+    if (!state.battlefields.some((bf) => bf.units.some((u) => controllerOf(u) === player)))
       return { valid: false, reason: 'Ambush needs a battlefield where you have units.' }
   } else {
     const guard = requireActiveAction(state, player)

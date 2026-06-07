@@ -73,6 +73,16 @@ export default function AudioSettings() {
                 {s.drawAnimation ? 'On' : 'Off'}
               </button>
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold">Recall animation</span>
+              <button
+                onClick={() => audio.setSettings({ recallAnimation: !s.recallAnimation })}
+                title="The blue pulse → spin → fly → land flourish when units move back to base or are bounced. Turn off for instant moves."
+                className={`rounded px-2 py-1 text-xs font-semibold ${s.recallAnimation ? 'bg-emerald-500/25 text-emerald-200' : 'bg-white/10 text-white/50'}`}
+              >
+                {s.recallAnimation ? 'On' : 'Off'}
+              </button>
+            </div>
             <p className="text-[10px] text-white/35">Saved on this device. Battle music stays low by default.</p>
           </div>
         </>
