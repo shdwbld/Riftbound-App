@@ -2007,24 +2007,38 @@ function fireTokenPlay(s: MatchState, player: PlayerId, count: number): MatchSta
  *  card just played so it doesn't react to its own entry, and skips triggers
  *  whose "when you play a <type>" filter the played card doesn't match. */
 function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, playedCard?: Card, playedCost?: number, fromHidden = false): MatchState {
-  let fired = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
-  // Triggers that pay by exhausting their own source ("…exhaust me to…") are
-  // cost-gated and handled explicitly (Chemtech Cask), not auto-resolved here —
-  // otherwise they'd fire for free on every spell.
-  fired = fired.filter((f) => !/exhaust me\b|exhaust this\b/i.test(f.ability.text))
+  let all = collectGlobal(s, player, 'play').filter((f) => f.sourceIid !== exceptIid)
   // "When you play a card on an opponent's turn" (Viktor - Innovator) — only fires
   // while it's NOT the controller's turn.
-  fired = fired.filter((f) => !/on an opponent'?s turn/i.test(f.ability.text) || s.activePlayer !== player)
+  all = all.filter((f) => !/on an opponent'?s turn/i.test(f.ability.text) || s.activePlayer !== player)
   // "When you play a card from [Hidden]" (Ember Monk) — only on a reveal-play.
-  fired = fired.filter((f) => /\bfrom \[?hidden\]?/i.test(f.ability.text) ? fromHidden : true)
+  all = all.filter((f) => /\bfrom \[?hidden\]?/i.test(f.ability.text) ? fromHidden : true)
   if (playedCard) {
     // For a "play a [Mighty] unit" filter, test the live state of the played
     // instance (effective Might, incl. buffs/gear), not its base stat.
     const inst = isUnit(playedCard) ? findUnitAnywhere(s, exceptIid) : undefined
     const mighty = inst ? stateActive(s, inst, 'mighty') : undefined
-    fired = fired.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost, mighty))
+    all = all.filter((f) => playTriggerMatches(f.ability.text, playedCard, playedCost, mighty))
   }
-  return fireTriggers(s, fired)
+  // Triggers that pay by exhausting their own source ("…exhaust me…") aren't
+  // auto-resolved by fireTriggers (they'd fire for free). Fire the rest normally,
+  // then handle the pure-upside "exhaust me to channel N (exhausted)" play payoff
+  // explicitly — Volibear - Relentless Storm: "When you play a [Mighty] unit, you
+  // may exhaust me to channel 1 rune exhausted." (Mirrors fireBecomesState.)
+  const exhaustMe = (t: string) => /exhaust me\b|exhaust this\b/i.test(t)
+  s = fireTriggers(s, all.filter((f) => !exhaustMe(f.ability.text)))
+  for (const f of all.filter((f) => exhaustMe(f.ability.text))) {
+    const chM = f.ability.text.match(/exhaust me to channel (\d+|a|an|one) rune/i)
+    if (!chM) continue // other "exhaust me" play payoffs stay manual (not auto-resolved)
+    const src = findUnitAnywhere(s, f.sourceIid ?? '') ?? (s.players[player].legend?.iid === f.sourceIid ? s.players[player].legend! : undefined)
+    if (src && !src.exhausted) {
+      src.exhausted = true
+      const exhausted = /exhausted/i.test(f.ability.text)
+      const n = channelN(s.players[player], /\d/.test(chM[1]) ? parseInt(chM[1], 10) : 1, exhausted)
+      s = log(s, player, `${getCard(f.sourceCardId ?? '')?.name ?? 'A unit'}: exhausted to channel ${n}${exhausted ? ' (exhausted)' : ''} — played a [Mighty] unit.`)
+    }
+  }
+  return s
 }
 
 /** Fire OPPONENTS' "when an opponent plays a unit while I'm at a battlefield"

@@ -4953,6 +4953,33 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIids: [tok!.iid] })
   })
 
+  it('Volibear - Relentless Storm: playing a [Mighty] unit (5+ Might) exhausts the legend to channel 1 exhausted', () => {
+    const s = baseState()
+    s.players[0].legend = mk('ogn-249-298', 0) // "When you play a [Mighty] unit, you may exhaust me to channel 1 rune exhausted."
+    s.players[0].zones.runeDeck.push(mk(furyRune.id, 0)) // a rune available to channel
+    const big = injectCard('voli-mighty-t', 'A big unit.', { type: 'unit', energy: 0, power: {}, might: 6 }) // 5+ ⇒ [Mighty]
+    const u = mk(big, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].legend!.exhausted).toBe(true) // exhausted to pay the aura
+    expect(r.state.players[0].zones.runePool.length).toBe(1) // channeled 1
+    expect(r.state.players[0].zones.runePool[0].exhausted).toBe(true) // entered exhausted
+  })
+
+  it('Volibear - Relentless Storm: a non-[Mighty] unit (<5 Might) does not trigger it', () => {
+    const s = baseState()
+    s.players[0].legend = mk('ogn-249-298', 0)
+    s.players[0].zones.runeDeck.push(mk(furyRune.id, 0))
+    const small = injectCard('voli-small-t', 'A small unit.', { type: 'unit', energy: 0, power: {}, might: 3 })
+    const u = mk(small, 0)
+    s.players[0].zones.hand.push(u)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].legend!.exhausted).toBe(false) // not Mighty → no trigger
+    expect(r.state.players[0].zones.runePool.length).toBe(0)
+  })
+
   it('Jax - Grandmaster At Arms: 1,exhaust → attach a detached Equipment to a unit (2-step)', () => {
     const s = baseState()
     s.players[0].legend = mk('sfd-193-221', 0)
