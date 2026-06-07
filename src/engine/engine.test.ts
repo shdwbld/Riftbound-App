@@ -3153,6 +3153,33 @@ describe('Batch F — Spiritforged attach', () => {
     expect(r2.state.players[0].zones.hand.some((x) => x.iid === handGear.iid)).toBe(true) // hand gear untouched
   })
 
+  it('Akshan - Mischievous: paying the additional cost steals an enemy attached gear onto Akshan', () => {
+    const akshan = injectCard('akshan-t', 'When you play me, if you paid the additional cost, move an enemy gear to your base. If it is an Equipment, attach it to me.', { name: 'Akshan - Mischievous', type: 'unit', energy: 0, power: {}, might: 4 })
+    const gear = injectCard('akshan-gear', 'Attach this to a unit. +2 Might.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(furyUnit.id, 1, { attached: [`${gear}|eg1`] })
+    s.battlefields[0].units.push(enemy)
+    const a = mk(akshan, 0)
+    s.players[0].zones.hand.push(a)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: a.iid, payment: { exhaust: [], recycle: [] }, payAdditionalCost: true })
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.find((x) => x.iid === enemy.iid)?.attached.length).toBe(0) // enemy lost the gear
+    expect(r.state.players[0].zones.base.find((x) => x.iid === a.iid)?.attached.some((ref) => ref.startsWith(`${gear}|`))).toBe(true) // attached to Akshan
+  })
+
+  it('Akshan - Mischievous: without the additional cost, steals nothing', () => {
+    const akshan = injectCard('akshan-t2', 'When you play me, if you paid the additional cost, move an enemy gear to your base. If it is an Equipment, attach it to me.', { name: 'Akshan - Mischievous', type: 'unit', energy: 0, power: {}, might: 4 })
+    const gear = injectCard('akshan-gear2', 'Attach this to a unit.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const enemy = mk(furyUnit.id, 1, { attached: [`${gear}|eg2`] })
+    s.battlefields[0].units.push(enemy)
+    const a = mk(akshan, 0)
+    s.players[0].zones.hand.push(a)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: a.iid, payment: { exhaust: [], recycle: [] } }) // no opt-in
+    expect(r.error).toBeUndefined()
+    expect(r.state.battlefields[0].units.find((x) => x.iid === enemy.iid)?.attached.length).toBe(1) // still has its gear
+  })
+
   it('Quick-Draw gear may be played at Reaction speed; ordinary gear may not', () => {
     const qd = injectCard('f-qd', '[Quick-Draw] +1 Might', { type: 'gear' })
     const normal = injectCard('f-normal-gear', '+1 Might', { type: 'gear' })

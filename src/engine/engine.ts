@@ -6215,6 +6215,42 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         if (e.manual && !e.draw && !e.channel && !e.recruits && !e.goldTokens && !e.namedToken && !legionGated)
           s1 = log(s1, action.player, `${card.name}: resolve its ability manually.`)
+        // Akshan - Mischievous: "if you paid the additional cost, move an enemy gear to
+        // your base. You control it until I leave the board. If it's an Equipment, attach
+        // it to me." Auto-pick an enemy gear (an attached Equipment first, else an
+        // unattached enemy gear). The control-reverts-when-Akshan-leaves nuance is
+        // simplified: the steal transfers control outright. Runs before the Weaponmaster
+        // check so a stolen non-Equipment gear is still a Weaponmaster target.
+        if (action.payAdditionalCost && card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Akshan - Mischievous') {
+          let stolenCardId: string | null = null
+          let stolenIid: string | null = null
+          for (const u of [...s1.battlefields.flatMap((b) => b.units), ...s1.players.flatMap((pl) => pl.zones.base)]) {
+            if (u.owner === action.player || !u.attached?.length) continue
+            const ref = u.attached[0]
+            u.attached = u.attached.slice(1)
+            ;[stolenCardId, stolenIid] = ref.split('|') as [string, string]
+            break
+          }
+          if (!stolenCardId)
+            for (const pl of s1.players) {
+              if (pl.id === action.player) continue
+              const gi = pl.zones.base.findIndex((g) => getCard(g.cardId)?.type === 'gear')
+              if (gi >= 0) { const [g] = pl.zones.base.splice(gi, 1); stolenCardId = g.cardId; stolenIid = g.iid; break }
+            }
+          if (stolenCardId && stolenIid) {
+            const akshan = findUnitAnywhere(s1, ci.iid)
+            const gc = getCard(stolenCardId)
+            const isEquip = parseKeywords(gc).equip || /attach (?:this|it) to a unit/i.test(gc?.text ?? '')
+            if (isEquip && akshan) {
+              akshan.attached = [...akshan.attached, `${stolenCardId}|${stolenIid}`]
+              emit({ kind: 'equip', iid: akshan.iid, player: action.player, cardId: stolenCardId })
+              s1 = fireAttachEquip(s1, action.player, akshan)
+            } else {
+              s1.players[action.player].zones.base.push({ iid: stolenIid, cardId: stolenCardId, owner: action.player, exhausted: false, damage: 0, attached: [] })
+            }
+            s1 = log(s1, action.player, `Akshan - Mischievous: stole ${gc?.name ?? 'a gear'} from an opponent.`)
+          }
+        }
         // Weaponmaster (rule 747): when this unit enters, you MAY choose an Equipment
         // you control IN PLAY (unattached on your base, or attached to another friendly
         // unit — stealing it) and pay its [Equip] cost reduced by 1 Power to attach it
