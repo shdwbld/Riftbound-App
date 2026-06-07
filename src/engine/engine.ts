@@ -308,6 +308,24 @@ export function weaponmasterCost(
   return { energy: ec.energy, power, anyPower }
 }
 
+/** After playing named token unit(s), if the first one with printed OR granted
+ *  [Weaponmaster] controls in-play Equipment to attach, open a Weaponmaster decision
+ *  for it (rule 747 — Azir - Emperor of the Sands grants this to Sand Soldiers).
+ *  Mutates `s` in place; one pending decision at a time. */
+function offerTokenWeaponmaster(s: MatchState, player: PlayerId, newIids: string[]): MatchState {
+  if (s.weaponmaster) return s
+  for (const iid of newIids) {
+    const u = findUnitAnywhere(s, iid)
+    if (!u) continue
+    const wm = parseKeywords(getCard(u.cardId)).weaponmaster || unitGrantedKeyword(s, u, 'weaponmaster')
+    if (wm && weaponmasterChoices(s, player, iid).length > 0) {
+      s.weaponmaster = { player, unitIid: iid }
+      return s
+    }
+  }
+  return s
+}
+
 // --- effect helpers --------------------------------------------------------
 
 function drawN(p: PlayerState, n: number): number {
@@ -715,11 +733,14 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       const hereBf = e.namedToken.here ? bfIndexOfUnit(s, sourceIid) : -1
       const dest = hereBf >= 0 ? s.battlefields[hereBf].units : undefined
       const exh = e.namedToken.exhausted && !tokensEnterReady(s, p.id)
+      const pile = dest ?? p.zones.base
+      const before = pile.length
       const made = spawnNamedToken(p, e.namedToken.name, zileanDouble(s, p.id, e.namedToken.count), s.turn, exh, e.namedToken.temporary, dest)
       if (made) {
         if (hereBf >= 0) recomputeControllers(s)
         const label = getCard(TOKEN_BY_NAME[e.namedToken.name.toLowerCase()])?.name?.split(/\s*\(/)[0] ?? e.namedToken.name
         lines.push(`Created ${made} ${label} token(s)${e.namedToken.temporary ? ' (Temporary)' : ''}${hereBf >= 0 ? ' here' : ''}.`)
+        offerTokenWeaponmaster(s, p.id, pile.slice(before).map((x) => x.iid))
       }
     }
   }
@@ -4472,7 +4493,8 @@ function unitGrantedKeyword(s: MatchState, u: EngineCard, keyword: string): bool
     const txt = (getCard(perm.cardId)?.text ?? '').toLowerCase()
     if (!txt.includes('have')) continue
     for (const tag of tags)
-      if (new RegExp(`your ${tag}s? (?:each )?have [^.]*\\[${keyword}\\]`).test(txt)) return true
+      // "Your Sand Soldiers have [Weaponmaster]" / "Sand Soldiers you play have […]" (Azir).
+      if (new RegExp(`(?:your ${tag}s?|${tag}s you play) (?:each )?have [^.]*\\[${keyword}\\]`).test(txt)) return true
   }
   return false
 }
@@ -4928,12 +4950,15 @@ function resolveSpellEffects(
   if (e.namedToken && /for each equipment you control/i.test(card.text ?? '')) {
     const tokName = e.namedToken.name
     const equip = allGearInPlay(s).filter((g) => g.owner === controller && parseKeywords(getCard(g.cardId)).equip).length
+    const before = p.zones.base.length
     const made = spawnNamedToken(p, tokName, equip, s.turn, true) // enter exhausted
+    const newIids = p.zones.base.slice(before).map((x) => x.iid)
     let readied = 0
     if (made > 0 && /ready up to two/i.test(card.text ?? '')) {
       const fresh = p.zones.base.filter((u) => (getCard(u.cardId)?.name ?? '').toLowerCase().includes(tokName.toLowerCase())).slice(-made)
       for (const tok of fresh.slice(-2)) if (tok.exhausted) { tok.exhausted = false; readied++ }
     }
+    offerTokenWeaponmaster(s, controller, newIids)
     return log(s, controller, `${card.name}: played ${made} ${tokName} token(s)${readied ? `, readied ${readied}` : ''} (Equipment: ${equip}).`)
   }
 
@@ -7326,8 +7351,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const nt = ab.effect.namedToken
         const bfHere = nt.here ? battlefieldOf(s1, u.iid) : -1
         const dest = bfHere >= 0 ? s1.battlefields[bfHere].units : p.zones.base
+        const before = dest.length
         spawnNamedToken(p, nt.name, nt.count, s1.turn, nt.exhausted, nt.temporary, dest)
         s1 = fireTokenPlay(s1, action.player, nt.count)
+        s1 = offerTokenWeaponmaster(s1, action.player, dest.slice(before).map((x) => x.iid))
       }
       // Pyke - Bloodharbor Ripper: "… Play a Gold gear token exhausted." (the
       // second sentence isn't captured in effectText, so read the source text).

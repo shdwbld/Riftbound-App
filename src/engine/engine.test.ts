@@ -4936,6 +4936,23 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     expect(r.state.players[0].legend!.exhausted).toBe(true)
   })
 
+  it('Azir aura: a Sand Soldier his ability plays is offered Weaponmaster (his aura grants it)', () => {
+    if (!TOKEN_BY_NAME['sand soldier']) return // dataset guard
+    const s = baseState()
+    s.players[0].legend = mk('sfd-197-221', 0)
+    s.players[0].playedEquipmentThisTurn = true
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0))
+    // An unattached Equipment on base is a legal Weaponmaster target.
+    const gear = injectCard('azir-wm-gear', 'Attach this to a unit.', { type: 'gear', energy: 0, power: {} })
+    s.players[0].zones.base.push(mk(gear, 0))
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: s.players[0].legend.iid })
+    expect(r.error).toBeFalsy()
+    const tok = r.state.players[0].zones.base.find((u) => u.cardId === TOKEN_BY_NAME['sand soldier'])
+    expect(tok).toBeTruthy()
+    // The aura ("Your Sand Soldiers have [Weaponmaster]") fires the prompt for the token.
+    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIid: tok!.iid })
+  })
+
   it('Jax - Grandmaster At Arms: 1,exhaust → attach a detached Equipment to a unit (2-step)', () => {
     const s = baseState()
     s.players[0].legend = mk('sfd-193-221', 0)
