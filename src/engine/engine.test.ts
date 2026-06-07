@@ -1781,7 +1781,7 @@ describe('tokens (Recruit)', () => {
     expect(r.error).toBeUndefined()
     // Optional + a choice: the unit enters WITHOUT the gear; a pending decision opens.
     expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.length).toBe(0)
-    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIid: u.iid })
+    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIids: [u.iid] })
     // Resolve: steal the gear off the other unit onto the Weaponmaster unit.
     const r2 = reduce(r.state, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: g.iid })
     expect(r2.error).toBeUndefined()
@@ -3145,7 +3145,7 @@ describe('Batch F — Spiritforged attach', () => {
     const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeUndefined()
     expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.length).toBe(0) // not auto-attached
-    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIid: u.iid })
+    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIids: [u.iid] })
     const r2 = reduce(r.state, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: baseGear.iid })
     expect(r2.error).toBeUndefined()
     expect(r2.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.some((a) => a.startsWith(`${gear}|`))).toBe(true)
@@ -4950,7 +4950,7 @@ describe('Legend own activated abilities (Energy + Exhaust)', () => {
     const tok = r.state.players[0].zones.base.find((u) => u.cardId === TOKEN_BY_NAME['sand soldier'])
     expect(tok).toBeTruthy()
     // The aura ("Your Sand Soldiers have [Weaponmaster]") fires the prompt for the token.
-    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIid: tok!.iid })
+    expect(r.state.weaponmaster).toMatchObject({ player: 0, unitIids: [tok!.iid] })
   })
 
   it('Jax - Grandmaster At Arms: 1,exhaust → attach a detached Equipment to a unit (2-step)', () => {

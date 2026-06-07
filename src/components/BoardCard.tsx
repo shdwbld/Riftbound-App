@@ -227,13 +227,16 @@ export default function BoardCard({
                 </span>
               )}
               {/* Token instance number — distinguishes identical tokens (Sand Soldiers,
-                  Recruits, …). Derived from the unique iid suffix so it is stable. */}
+                  Recruits, …). Uses the stable per-owner ordinal (tokenNo); falls back to
+                  the iid-derived number for tokens made before that field existed. */}
               {(def as { supertype?: string }).supertype === 'token' && (() => {
-                const m = String((ci as { iid?: string }).iid ?? '').match(/#([0-9a-z]+)$/i)
-                if (!m) return null
+                const no = (ci as { tokenNo?: number }).tokenNo
+                const m = no == null ? String((ci as { iid?: string }).iid ?? '').match(/#([0-9a-z]+)$/i) : null
+                const n = no != null ? no : m ? parseInt(m[1], 36) : null
+                if (n == null) return null
                 return (
-                  <span className="rounded-br bg-black/75 px-0.5 font-bold text-amber-200" title={`Token #${parseInt(m[1], 36)}`}>
-                    #{parseInt(m[1], 36)}
+                  <span className="rounded-br bg-black/75 px-0.5 font-bold text-amber-200" title={`Token #${n}`}>
+                    #{n}
                   </span>
                 )
               })()}

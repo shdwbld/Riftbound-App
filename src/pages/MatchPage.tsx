@@ -31,6 +31,7 @@ import BaronEntranceVfx from '../components/BaronEntranceVfx'
 import TurnRecapBanner, { type TurnRecapData } from '../components/TurnRecapBanner'
 import HotkeyHelp from '../components/HotkeyHelp'
 import MatchEndScreen from '../components/MatchEndScreen'
+import { unitLabel } from '../lib/cardLabel'
 
 /** Accumulate this-turn events into a buffer; when the turn flips, build a
  *  recap from the just-ended turn's buffer and reset to the new turn. Shared by
@@ -689,16 +690,19 @@ export default function MatchPage() {
           <ChoiceModal
             title="↻ Ready a unit"
             subtitle={`Choose an exhausted unit to ready (${match.readyChoice!.count} to ready).`}
-            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            options={units.map((u) => ({ label: unitLabel(u), value: u.iid }))}
             onPick={(iid) => act({ type: 'READY_UNIT', player: controlling, iid: String(iid) })}
           />
         ) : null
       })()}
       {match.weaponmaster && match.weaponmaster.player === controlling && !wmPay && (() => {
-        const wm = match.weaponmaster!
-        const choices = weaponmasterChoices(match, controlling, wm.unitIid)
+        const unitIid = match.weaponmaster!.unitIids[0]
+        const queued = match.weaponmaster!.unitIids.length
+        const choices = weaponmasterChoices(match, controlling, unitIid)
+        const allUnits = [...match.players[controlling].zones.base, ...match.battlefields.flatMap((b) => b.units)]
+        const unitName = unitLabel(allUnits.find((u) => u.iid === unitIid)) || 'this unit'
+        const hostLabel = (iid?: string) => unitLabel(allUnits.find((u) => u.iid === iid))
         const bareN = (s?: string) => (s ?? '').replace(/\s*\([^)]*\)\s*$/, '')
-        const unitName = bareN(getCard([...match.players[controlling].zones.base, ...match.battlefields.flatMap((b) => b.units)].find((u) => u.iid === wm.unitIid)?.cardId ?? '')?.name)
         const costLbl = (cardId: string) => {
           const d = weaponmasterCost(getCard(cardId))
           if (!d) return 'free'
@@ -710,20 +714,20 @@ export default function MatchPage() {
         }
         return (
           <ChoiceModal
-            title="⚔ Weaponmaster"
+            title={`⚔ Weaponmaster${queued > 1 ? ` (${queued} pending)` : ''}`}
             subtitle={`Attach an Equipment you control to ${unitName} (Equip cost − 1 Power), or skip.`}
-            options={choices.map((ch) => ({ label: `${bareN(getCard(ch.cardId)?.name)}${ch.hostIid ? ` — steal from ${bareN(ch.hostName)}` : ' — base'} · ${costLbl(ch.cardId)}`, value: ch.gearIid }))}
+            options={choices.map((ch) => ({ label: `${bareN(getCard(ch.cardId)?.name)}${ch.hostIid ? ` — steal from ${hostLabel(ch.hostIid)}` : ' — base'} · ${costLbl(ch.cardId)}`, value: ch.gearIid }))}
             onPick={(gid) => {
               const ch = choices.find((c) => c.gearIid === String(gid))
               if (!ch) return
               const d = weaponmasterCost(getCard(ch.cardId))
               const free = !d || (d.energy === 0 && d.anyPower === 0 && Object.keys(d.power).length === 0)
-              if (free) return act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid: wm.unitIid, gearIid: ch.gearIid })
+              if (free) return act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid, gearIid: ch.gearIid })
               if (manualPay && d!.anyPower === 0)
-                setWmPay({ unitIid: wm.unitIid, gearIid: ch.gearIid, card: getCard(ch.cardId)!, cost: { energy: d!.energy, power: d!.power } })
-              else act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid: wm.unitIid, gearIid: ch.gearIid })
+                setWmPay({ unitIid, gearIid: ch.gearIid, card: getCard(ch.cardId)!, cost: { energy: d!.energy, power: d!.power } })
+              else act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid, gearIid: ch.gearIid })
             }}
-            onCancel={() => act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid: wm.unitIid, gearIid: null })}
+            onCancel={() => act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid, gearIid: null })}
           />
         )
       })()}
@@ -763,7 +767,7 @@ export default function MatchPage() {
           <ChoiceModal
             title="🔗 Equip"
             subtitle={`Attach ${gearName} to which unit?`}
-            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            options={units.map((u) => ({ label: unitLabel(u), value: u.iid }))}
             onPick={(uid) => {
               const a = attachPick
               setAttachPick(null)
@@ -812,7 +816,7 @@ export default function MatchPage() {
           <ChoiceModal
             title="↔ Move Equipment"
             subtitle={`Move ${gearName} to which unit?`}
-            options={units.map((u) => ({ label: getCard(u.cardId)?.name ?? u.iid, value: u.iid }))}
+            options={units.map((u) => ({ label: unitLabel(u), value: u.iid }))}
             onPick={(uid) => {
               const m = movePick
               setMovePick(null)

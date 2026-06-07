@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import { getCard } from '../data/cards'
 import type { MatchState, DamageAssignStep } from '../engine/types'
 import { autoAllocate, validateAllocation } from '../engine/engine'
+import { unitLabel } from '../lib/cardLabel'
 import BoardCard from './BoardCard'
 
 // Manual combat-damage assignment (Riftbound: the dealing player assigns, Tank
@@ -68,7 +68,6 @@ export default function DamageAssignModal({
         <div className="flex min-h-0 flex-1 flex-wrap gap-4 overflow-y-auto rounded-xl border border-white/10 bg-black/20 p-4">
           {step.targets.map((iid) => {
             const u = unitOf(iid)
-            const def = getCard(u?.cardId ?? '')
             const placed = alloc[iid] ?? 0
             const hp = step.hp[iid]
             const lethal = placed >= hp
@@ -86,7 +85,7 @@ export default function DamageAssignModal({
                     </span>
                   )}
                 </div>
-                <div className="text-center text-[11px] text-white/70">{def?.name ?? iid}</div>
+                <div className="text-center text-[11px] text-white/70">{unitLabel(u) || iid}</div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => bump(iid, -1)}

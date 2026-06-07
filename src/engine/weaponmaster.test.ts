@@ -57,7 +57,7 @@ describe('WEAPONMASTER_RESOLVE', () => {
     s.players[0].zones.base.push(u)
     const g = mk(gearId, 0)
     s.players[0].zones.base.push(g)
-    s.weaponmaster = { player: 0, unitIid: u.iid }
+    s.weaponmaster = { player: 0, unitIids: [u.iid] }
     const r = reduce(s, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: g.iid })
     expect(r.error).toBeUndefined()
     expect(r.state.weaponmaster).toBeNull()
@@ -70,7 +70,7 @@ describe('WEAPONMASTER_RESOLVE', () => {
     const u = mk(furyUnit.id, 0)
     s.players[0].zones.base.push(u)
     s.players[0].zones.base.push(mk(injectGear('wm-skip-gear', 'gear'), 0))
-    s.weaponmaster = { player: 0, unitIid: u.iid }
+    s.weaponmaster = { player: 0, unitIids: [u.iid] }
     const r = reduce(s, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: null })
     expect(r.error).toBeUndefined()
     expect(r.state.weaponmaster).toBeNull()
@@ -92,7 +92,7 @@ describe('WEAPONMASTER_RESOLVE', () => {
     s.players[0].zones.base.push(g)
     s.players[0].pool = { energy: 10, power: {} }
     for (let i = 0; i < 6; i++) s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // cover any rainbow
-    s.weaponmaster = { player: 0, unitIid: u.iid }
+    s.weaponmaster = { player: 0, unitIids: [u.iid] }
     const r = reduce(s, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: g.iid })
     expect(r.error).toBeUndefined()
     expect(r.state.players[0].zones.base.find((x) => x.iid === u.iid)?.attached.some((a) => a.startsWith(`${gear.id}|`))).toBe(true)
@@ -106,5 +106,37 @@ describe('WEAPONMASTER_RESOLVE', () => {
     // no s.weaponmaster set
     const r = reduce(s, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u.iid, gearIid: null })
     expect(r.error).toBeTruthy()
+  })
+
+  it('drains a multi-unit queue one decision at a time (Arise! chain)', () => {
+    const s = baseState()
+    const u1 = mk(furyUnit.id, 0)
+    const u2 = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(u1, u2)
+    s.players[0].zones.base.push(mk(injectGear('q-g1', 'gear'), 0), mk(injectGear('q-g2', 'gear'), 0))
+    s.weaponmaster = { player: 0, unitIids: [u1.iid, u2.iid] }
+    const r1 = reduce(s, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u1.iid, gearIid: null })
+    expect(r1.error).toBeUndefined()
+    expect(r1.state.weaponmaster).toMatchObject({ player: 0, unitIids: [u2.iid] }) // advanced to the next
+    const r2 = reduce(r1.state, { type: 'WEAPONMASTER_RESOLVE', player: 0, unitIid: u2.iid, gearIid: null })
+    expect(r2.state.weaponmaster).toBeNull() // queue drained
+  })
+})
+
+describe('token instance numbering (#N — monotonic, never reused)', () => {
+  const SAND = 'tok-sand-soldier'
+  const spawn = (st: MatchState) => reduce(st, { type: 'OVERRIDE', player: 0, op: 'spawn', cardId: SAND, toZone: 'base' }).state
+  it('numbers 1,2,3,… per cardId and never reuses a dead token’s number', () => {
+    let s = baseState()
+    s.sandbox = true
+    s = spawn(s); s = spawn(s); s = spawn(s); s = spawn(s) // #1 #2 #3 #4
+    const sand = (st: MatchState) => st.players[0].zones.base.filter((c) => c.cardId === SAND)
+    expect(sand(s).map((c) => c.tokenNo)).toEqual([1, 2, 3, 4])
+    // Kill #2, then spawn again — the new one is #5, never #2.
+    const two = sand(s).find((c) => c.tokenNo === 2)!
+    s = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: two.iid }).state
+    s = spawn(s)
+    const newest = sand(s).reduce((hi, c) => ((c.tokenNo ?? 0) > (hi.tokenNo ?? 0) ? c : hi))
+    expect(newest.tokenNo).toBe(5)
   })
 })

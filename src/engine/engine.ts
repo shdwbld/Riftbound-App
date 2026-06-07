@@ -308,22 +308,34 @@ export function weaponmasterCost(
   return { energy: ec.energy, power, anyPower }
 }
 
-/** After playing named token unit(s), if the first one with printed OR granted
- *  [Weaponmaster] controls in-play Equipment to attach, open a Weaponmaster decision
- *  for it (rule 747 — Azir - Emperor of the Sands grants this to Sand Soldiers).
- *  Mutates `s` in place; one pending decision at a time. */
-function offerTokenWeaponmaster(s: MatchState, player: PlayerId, newIids: string[]): MatchState {
-  if (s.weaponmaster) return s
-  for (const iid of newIids) {
-    const u = findUnitAnywhere(s, iid)
-    if (!u) continue
-    const wm = parseKeywords(getCard(u.cardId)).weaponmaster || unitGrantedKeyword(s, u, 'weaponmaster')
-    if (wm && weaponmasterChoices(s, player, iid).length > 0) {
-      s.weaponmaster = { player, unitIid: iid }
-      return s
-    }
+/** Advance the Weaponmaster queue: drop leading entries that no longer exist or have
+ *  no legal Equipment to attach (so the prompt only ever shows a resolvable choice),
+ *  clearing the pending entirely once none remain. Mutates `s`. */
+function advanceWeaponmaster(s: MatchState): MatchState {
+  if (!s.weaponmaster) return s
+  const player = s.weaponmaster.player
+  let ids = s.weaponmaster.unitIids
+  while (ids.length) {
+    const u = findUnitAnywhere(s, ids[0])
+    if (u && weaponmasterChoices(s, player, ids[0]).length > 0) break
+    ids = ids.slice(1)
   }
+  s.weaponmaster = ids.length ? { player, unitIids: ids } : null
   return s
+}
+
+/** Queue Weaponmaster decisions for freshly-played token unit(s) that have printed or
+ *  granted [Weaponmaster] (Azir grants it to Sand Soldiers). Resolved one at a time —
+ *  Arise! can spawn several. Mutates `s` in place. */
+function offerTokenWeaponmaster(s: MatchState, player: PlayerId, newIids: string[]): MatchState {
+  const candidates = newIids.filter((iid) => {
+    const u = findUnitAnywhere(s, iid)
+    return !!u && (parseKeywords(getCard(u.cardId)).weaponmaster || unitGrantedKeyword(s, u, 'weaponmaster'))
+  })
+  if (!candidates.length) return s
+  const existing = s.weaponmaster && s.weaponmaster.player === player ? s.weaponmaster.unitIids : []
+  s.weaponmaster = { player, unitIids: [...existing, ...candidates] }
+  return advanceWeaponmaster(s)
 }
 
 // --- effect helpers --------------------------------------------------------
@@ -410,6 +422,7 @@ function spawnRecruits(p: PlayerState, n: number, turn: number, ready = false, d
       damage: 0,
       attached: [],
       enteredTurn: turn,
+      tokenNo: nextTokenNo(p, id),
     })
   return n
 }
@@ -427,7 +440,18 @@ function spawnGold(p: PlayerState, n: number, turn: number, ready = false): numb
       damage: 0,
       attached: [],
       enteredTurn: turn,
+      tokenNo: nextTokenNo(p, GOLD_TOKEN_ID),
     })
+  return n
+}
+
+/** Next display ordinal for a token of `cardId` controlled by `p` — monotonic and
+ *  NEVER reused (PlayerState.tokenSeq is a high-water map keyed by cardId, so a
+ *  dead token's number is never handed out again). */
+function nextTokenNo(p: PlayerState, cardId: string): number {
+  if (!p.tokenSeq) p.tokenSeq = {}
+  const n = (p.tokenSeq[cardId] ?? 0) + 1
+  p.tokenSeq[cardId] = n
   return n
 }
 
@@ -455,6 +479,7 @@ function spawnNamedToken(
       damage: 0,
       attached: [],
       enteredTurn: turn,
+      tokenNo: nextTokenNo(p, id),
       ...(temporary ? { temporary: true } : {}),
     })
   return n
@@ -6283,7 +6308,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // for the UI (resolved by WEAPONMASTER_RESOLVE) instead of auto-attaching for
         // free. May be granted owner-wide (Azir - Emperor of the Sands → Sand Soldiers).
         if ((kw.weaponmaster || unitGrantedKeyword(s1, ci, 'weaponmaster')) && weaponmasterChoices(s1, action.player, ci.iid).length > 0)
-          s1 = { ...s1, weaponmaster: { player: action.player, unitIid: ci.iid } }
+          s1 = { ...s1, weaponmaster: { player: action.player, unitIids: [ci.iid] } }
         s1 = firePlayTriggers(s1, action.player, ci.iid, card, effTotal)
         // Elder Dragon: "When you play me, choose up to one enemy unit at each location.
         // Deal 1 to them." Auto-picks the strongest enemy at each battlefield + each
@@ -6557,11 +6582,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // or stolen off another friendly unit) to the unit, paying its [Equip] cost
       // reduced by 1 Power. All mutations are on the clone; a failed payment returns
       // the untouched original state (the prompt stays open).
-      if (!state.weaponmaster || state.weaponmaster.player !== action.player || state.weaponmaster.unitIid !== action.unitIid)
+      if (!state.weaponmaster || state.weaponmaster.player !== action.player || state.weaponmaster.unitIids[0] !== action.unitIid)
         return fail(state, 'No Weaponmaster decision pending.')
       const s = clone(state)
-      s.weaponmaster = null
-      if (!action.gearIid) return ok(log(s, action.player, 'Weaponmaster: declined.'))
+      // Pop this unit off the queue (whether we attach or decline) and surface the next.
+      const popAdvance = (st: MatchState): MatchState => {
+        if (st.weaponmaster) st.weaponmaster = { player: st.weaponmaster.player, unitIids: st.weaponmaster.unitIids.slice(1) }
+        return advanceWeaponmaster(st)
+      }
+      if (!action.gearIid) return ok(popAdvance(log(s, action.player, 'Weaponmaster: declined.')))
       const unit = findUnitAnywhere(s, action.unitIid)
       if (!unit || unit.owner !== action.player || getCard(unit.cardId)?.type !== 'unit') return fail(state, 'No such unit.')
       const gid = action.gearIid
@@ -6596,7 +6625,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       emit({ kind: 'equip', iid: unit.iid, player: action.player, cardId: gearCardId })
       let sW = log(s, action.player, `Weaponmaster: attached ${getCard(gearCardId)?.name} to ${getCard(unit.cardId)?.name}.`)
       sW = fireAttachEquip(sW, action.player, unit)
-      return ok(sW)
+      return ok(popAdvance(sW))
     }
 
     case 'USE_GOLD': {
@@ -7487,7 +7516,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         }
         case 'spawn': {
           if (!action.cardId) break
-          const card: EngineCard = { iid: `${action.player}:ov:${action.cardId}#${(tokenCounter++).toString(36)}`, cardId: action.cardId, owner: action.player, exhausted: false, damage: 0, attached: [] }
+          const isTok = getCard(action.cardId)?.supertype === 'token'
+          const card: EngineCard = { iid: `${action.player}:ov:${action.cardId}#${(tokenCounter++).toString(36)}`, cardId: action.cardId, owner: action.player, exhausted: false, damage: 0, attached: [], ...(isTok ? { tokenNo: nextTokenNo(s.players[action.player], action.cardId) } : {}) }
           if (action.toBattlefield != null && s.battlefields[action.toBattlefield]) s.battlefields[action.toBattlefield].units.push(card)
           else if (action.toZone === 'banished') s.players[action.player].banished.push(card)
           else if (action.toZone === 'legend') s.players[action.player].legend = card

@@ -103,6 +103,11 @@ export interface EngineCard {
   /** A manual sandbox status marker (1–4 = colored dot) the players add as a
    *  visual reminder; 0/undefined = none. Cosmetic only — no engine behavior. */
   marker?: number
+  /** For token instances: a stable per-owner, per-cardId ordinal (#1, #2, …)
+   *  assigned at creation, monotonic and NEVER reused (if #2 dies, the next new
+   *  one is #5, not #2). Lets identical-named tokens (Sand Soldiers) be told apart
+   *  in pickers / targeting / damage assignment. Sourced from PlayerState.tokenSeq. */
+  tokenNo?: number
 }
 
 export type ZoneId =
@@ -125,6 +130,10 @@ export interface PlayerState {
   /** Token cards this player can generate (e.g. Recruit) — a separate pile
    *  that is never drawn from. Tokens are created onto the board by effects. */
   tokenPile: string[]
+  /** Monotonic high-water counter per token cardId for the display ordinal
+   *  (EngineCard.tokenNo). Only ever increases, so a number is never reused even
+   *  after that token dies. Keyed by cardId. */
+  tokenSeq?: Record<string, number>
   /** Main-deck cards this player has played this turn (drives LEGION). */
   cardsPlayedThisTurn?: number
   /** Whether this player has played an Equipment this turn (gates Azir -
@@ -323,11 +332,12 @@ export interface MatchState {
   /** A pending "ready a unit" choice: the player picks which exhausted unit(s)
    *  to ready, one at a time, until `count` reaches 0. */
   readyChoice?: { player: PlayerId; count: number; excludeIid?: string }
-  /** A pending [Weaponmaster] decision (rule 747): the player just played a unit
-   *  with Weaponmaster and may attach an Equipment they control IN PLAY (unattached
-   *  in base, or stolen off another friendly unit) to it, paying that gear's [Equip]
-   *  cost reduced by 1 Power. `unitIid` is the Weaponmaster unit. Optional — declinable. */
-  weaponmaster?: { player: PlayerId; unitIid: string } | null
+  /** Pending [Weaponmaster] decisions (rule 747): one or more just-played units with
+   *  Weaponmaster, each of which may attach an Equipment the player controls IN PLAY
+   *  (unattached, or stolen off another friendly unit) for that gear's [Equip] cost
+   *  reduced by 1 Power. `unitIids[0]` is the one currently being decided; the queue
+   *  drains one at a time (Arise! can spawn several). Optional — each is declinable. */
+  weaponmaster?: { player: PlayerId; unitIids: string[] } | null
   /** A pending optional battlefield choice (Reaver's Row, Amateur Recital,
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {
