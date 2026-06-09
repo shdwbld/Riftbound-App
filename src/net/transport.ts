@@ -34,6 +34,9 @@ export type NetMessage =
   /** An ephemeral "ping" marker (Alt+click). x/y are viewport fractions [0,1].
    *  Broadcast peer-to-peer (not host-authoritative) — purely cosmetic. */
   | { kind: 'ping'; x: number; y: number; name?: string }
+  /** A 2v2 team-chat line. Broadcast peer-to-peer; receivers render it only when
+   *  the sender is on their team (display-filtered by seat → team). */
+  | { kind: 'chat'; seat: number; name: string; text: string; id: string }
   | { kind: 'leave' }
 
 export interface Transport {

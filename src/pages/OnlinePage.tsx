@@ -15,7 +15,7 @@ import {
   type GameEvent,
 } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost, sameTeam } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { checkInvariants } from '../engine/invariants'
@@ -134,6 +134,27 @@ export default function OnlinePage() {
     const id = ++pingId.current
     setPings((ps) => [...ps, { id, x, y, name }])
     setTimeout(() => setPings((ps) => ps.filter((p) => p.id !== id)), 2000)
+  }
+
+  // 2v2 team chat — peer-to-peer lines shown only to teammates (display-filtered by team).
+  const [chatLog, setChatLog] = useState<{ id: string; seat: number; name: string; text: string }[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const chatSeq = useRef(0)
+  const receiveChat = (m: { seat: number; name: string; text: string; id: string }) => {
+    const ms = matchRef.current
+    if (!ms || !sameTeam(ms, seatRef.current, m.seat)) return // only show a teammate's lines
+    setChatLog((l) => [...l.slice(-49), { id: m.id, seat: m.seat, name: m.name, text: m.text }])
+  }
+  const sendChat = () => {
+    const text = chatInput.trim()
+    if (!text) return
+    const ms = matchRef.current
+    const seat = seatRef.current
+    const name = (ms?.players[seat]?.name ?? 'Me').replace(/\s*\([^)]*\)\s*$/, '')
+    const id = `${seat}:${++chatSeq.current}:${Date.now()}`
+    transportRef.current?.send({ kind: 'chat', seat, name, text, id })
+    setChatLog((l) => [...l.slice(-49), { id, seat, name, text }]) // echo our own line locally
+    setChatInput('')
   }
 
   const transportRef = useRef<Transport | null>(null)
@@ -344,6 +365,11 @@ export default function OnlinePage() {
       // Pings are cosmetic and peer-to-peer — render them regardless of role.
       if (msg.kind === 'ping') {
         addPing(msg.x, msg.y, msg.name)
+        return
+      }
+      // Team chat is peer-to-peer too; receiveChat shows it only to the sender's team.
+      if (msg.kind === 'chat') {
+        receiveChat(msg)
         return
       }
       if (roleRef.current === 'host') {
@@ -916,6 +942,37 @@ export default function OnlinePage() {
           <button onClick={leave} className="rounded bg-rose-500/30 px-3 py-1 text-xs font-semibold text-rose-100 hover:bg-rose-500/50">
             End match
           </button>
+        </div>
+      )}
+      {/* 2v2 team chat — basic teammate-only message box (fixed, bottom-left). */}
+      {match.teamMode && (
+        <div className="fixed bottom-3 left-3 z-40 w-64 rounded-xl border border-white/15 bg-slate-900/85 p-2 text-xs shadow-lg backdrop-blur">
+          <div className="mb-1 font-semibold text-sky-300">💬 Team chat</div>
+          <div className="mb-2 max-h-32 space-y-1 overflow-y-auto">
+            {chatLog.length === 0 ? (
+              <div className="text-white/30">No messages yet.</div>
+            ) : (
+              chatLog.slice(-8).map((m) => (
+                <div key={m.id} className="leading-snug">
+                  <span className={`font-semibold ${m.seat === seat ? 'text-emerald-300' : 'text-sky-300'}`}>{m.name}:</span>{' '}
+                  <span className="text-white/80">{m.text}</span>
+                </div>
+              ))
+            )}
+          </div>
+          <form onSubmit={(e) => { e.preventDefault(); sendChat() }} className="flex gap-1">
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()} // don't trigger match hotkeys while typing
+              placeholder="Message your teammate…"
+              maxLength={200}
+              className="min-w-0 flex-1 rounded bg-white/10 px-2 py-1 text-white placeholder-white/30 outline-none focus:bg-white/15"
+            />
+            <button type="submit" className="rounded bg-sky-500/40 px-2 py-1 font-semibold text-sky-100 hover:bg-sky-500/60">
+              Send
+            </button>
+          </form>
         </div>
       )}
       <MatchBoard
