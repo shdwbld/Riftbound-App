@@ -12,6 +12,7 @@ import {
   type ZoneId,
   type GameEvent,
   type DamageAssignStep,
+  type DeferredOp,
   ok,
   fail,
 } from './types'
@@ -1612,10 +1613,15 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // damage to enemy units, you may deal that much to an enemy unit." (auto: strongest.)
     if (ability.event === 'conquer' && srcName === 'Vayne - Hunter' && sourceIid) {
       // "When I conquer, you may pay :rb_energy_1: to return me to my owner's hand."
-      // Auto-pay 1 if affordable (per the auto-resolve preference).
-      if (makeBfApi(s).payEnergy(player, 1)) {
-        s = bounceUnitToHand(s, sourceIid, player, 'Vayne - Hunter', 0)
-        s = log(s, player, `${label}: Vayne - Hunter paid 1 to return to hand.`)
+      // Surfaced as a Pay/Decline modal AFTER conquer resolves (P0) instead of
+      // auto-paying — the player chooses whether to bounce Vayne back.
+      if (canAffordEnergy(p, 1)) {
+        s = queueOptionalPay(s, player, {
+          prompt: 'Vayne - Hunter conquered — pay ⚡1 to return her to your hand?',
+          srcName: 'Vayne - Hunter',
+          cost: { energy: 1 },
+          op: { type: 'returnSelfToHand', sourceIid },
+        })
       }
       handled = true
     }
@@ -2173,6 +2179,72 @@ function payEnergyAuto(pl: PlayerState, n: number): boolean {
   need -= fromPool
   for (let i = 0; i < need; i++) ready[i].exhausted = true
   return true
+}
+
+/** True if `pl` could pay N Energy (pool + ready runes) WITHOUT paying it. */
+function canAffordEnergy(pl: PlayerState, n: number): boolean {
+  return (pl.pool?.energy ?? 0) + pl.zones.runePool.filter((r) => !r.exhausted).length >= n
+}
+
+// --- P0 choice-restoration: queued optional-pay / target decisions -----------
+// Triggers that used to auto-resolve a "you may pay" / auto-pick a target instead
+// QUEUE a decision here and keep going; reduce() surfaces them one at a time after
+// the action finishes (surfaceNextDecision), so we never pause mid-trigger-loop.
+
+/** Queue an OPTIONAL cost the player may pay (surfaced as a Pay/Decline modal). */
+function queueOptionalPay(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; cost: { energy?: number; powerAny?: number }; op: DeferredOp }): MatchState {
+  ;(s.pendingDecisions ??= []).push({ player, kind: 'optionalPay', prompt: d.prompt, srcName: d.srcName, cost: d.cost, op: d.op })
+  return s
+}
+
+/** Queue a "you may" TARGET pick the player board-selects (surfaced after the
+ *  action). A decline applies nothing. No-op when there are no candidates. */
+function queueSelectTarget(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; options: { iid: string; label: string }[]; op: DeferredOp }): MatchState {
+  if (d.options.length === 0) return s
+  ;(s.pendingDecisions ??= []).push({ player, kind: 'selectTarget', prompt: d.prompt, srcName: d.srcName, options: d.options, op: d.op })
+  return s
+}
+
+/** Move the head of the decision queue into `pendingChoice` so the UI surfaces it.
+ *  No-op if a choice is already active. Drops selectTarget candidates that have left
+ *  play; skips a whole decision if none remain. Called from reduce() post-action. */
+function surfaceNextDecision(s: MatchState): MatchState {
+  if (s.pendingChoice || !s.pendingDecisions?.length) return s
+  let head = s.pendingDecisions[0]
+  while (head) {
+    if (head.kind === 'selectTarget') {
+      const live = (head.options ?? []).filter((o) => findUnitAnywhere(s, o.iid))
+      if (!live.length) { s.pendingDecisions.shift(); head = s.pendingDecisions[0]; continue }
+      head = { ...head, options: live }
+    }
+    break
+  }
+  s.pendingDecisions = s.pendingDecisions.slice(1)
+  if (!s.pendingDecisions.length) s.pendingDecisions = undefined
+  if (!head) return s
+  s.pendingChoice = {
+    player: head.player,
+    kind: head.kind,
+    bfIndex: -1,
+    prompt: head.prompt,
+    srcName: head.srcName,
+    options: head.options ?? [{ iid: 'pay', label: 'Pay' }],
+    payload: JSON.stringify({ cost: head.cost, op: head.op }),
+  }
+  return s
+}
+
+/** Apply a DeferredOp once accepted. `chosenIid` is the board-pick (selectTarget). */
+function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosenIid: string | null): MatchState {
+  switch (op.type) {
+    case 'returnSelfToHand':
+      return bounceUnitToHand(s, op.sourceIid, player, '', 0)
+    case 'channelExhausted':
+      channelN(s.players[player], op.n, true)
+      return s
+    case 'bounceTargetToHand':
+      return chosenIid ? bounceUnitToHand(s, chosenIid, player, '', 0) : s
+  }
 }
 
 /** Fire OPPONENTS' "when an opponent plays a unit while I'm at a battlefield"
@@ -6394,6 +6466,8 @@ export function reduce(state: MatchState, action: Action): EngineResult {
   const result = reduceInner(state, action)
   // State transition pass (becomes-[Mighty] etc.) runs after every successful action.
   if (!result.error) result.state = refreshStates(result.state)
+  // Surface any queued optional-pay / target decision (P0) one at a time.
+  if (!result.error) result.state = surfaceNextDecision(result.state)
   // Only attach events on a successful application (no error).
   if (!result.error && pendingEvents.length) result.events = pendingEvents
   return result
@@ -6994,11 +7068,17 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
             if (enemy) s1 = bounceUnitToHand(s1, enemy.iid, action.player, card.name, 0)
           }
           // Windsinger: "you may return another unit at a battlefield with N Might or less to its owner's hand."
+          // "you may" → let the player board-pick the unit (or decline) after play (P0).
           const winM = txt.match(/return another unit at a battlefield with (\d+)\s*(?::rb_might:|might) or less/)
           if (winM) {
             const cap = parseInt(winM[1], 10)
-            const tgt = s1.battlefields.flatMap((b) => b.units).filter((u) => u.iid !== ci.iid && isUnit(u) && mightOf(u) <= cap).sort((a, b) => mightOf(b) - mightOf(a))[0]
-            if (tgt) s1 = bounceUnitToHand(s1, tgt.iid, action.player, card.name, 0)
+            const cands = s1.battlefields.flatMap((b) => b.units).filter((u) => u.iid !== ci.iid && isUnit(u) && mightOf(u) <= cap)
+            if (cands.length) s1 = queueSelectTarget(s1, action.player, {
+              prompt: `Windsinger — return a unit (${cap} Might or less) to its owner's hand?`,
+              srcName: 'Windsinger',
+              options: cands.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+              op: { type: 'bounceTargetToHand' },
+            })
           }
           // Angler Beast: "return all units with N Might or less to their owners' hands." (both sides)
           const allM = txt.match(/return all units with (\d+)\s*(?::rb_might:|might) or less/)
@@ -7737,6 +7817,33 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s)
       }
 
+      // P0 optional-pay (Vayne, Ripper's Bay, …): accept ('pay') or decline (null).
+      // Pay the cost; if affordable, apply the deferred op. Surfaced as a custom modal.
+      if (pc.kind === 'optionalPay') {
+        let parsed: { cost?: { energy?: number; powerAny?: number }; op: DeferredOp }
+        try { parsed = JSON.parse(pc.payload ?? '{}') } catch { return ok(s) }
+        if (action.iid === null) return ok(log(s, action.player, `${pc.srcName}: declined.`))
+        const cost = parsed.cost ?? {}
+        const pl = s.players[action.player]
+        // Energy is purely checkable; power we PAY first (payPowerAny is atomic — it
+        // pays only if affordable), so a failure costs nothing before we touch energy.
+        if (cost.energy && !canAffordEnergy(pl, cost.energy)) return ok(log(s, action.player, `${pc.srcName}: couldn't pay the cost.`))
+        if (cost.powerAny && !makeBfApi(s).payPowerAny(action.player, cost.powerAny)) return ok(log(s, action.player, `${pc.srcName}: couldn't pay the cost.`))
+        if (cost.energy) payEnergyAuto(pl, cost.energy)
+        s = applyDeferredOp(s, action.player, parsed.op, null)
+        return ok(log(s, action.player, `${pc.srcName}: paid${cost.energy ? ` ⚡${cost.energy}` : ''}${cost.powerAny ? ` ♺${cost.powerAny}` : ''}.`))
+      }
+
+      // P0 select-target (Windsinger, …): apply the op to the board-picked unit, or
+      // decline (these are "you may" effects, so a decline applies nothing).
+      if (pc.kind === 'selectTarget') {
+        let parsed: { op: DeferredOp }
+        try { parsed = JSON.parse(pc.payload ?? '{}') } catch { return ok(s) }
+        if (action.iid === null) return ok(log(s, action.player, `${pc.srcName}: declined.`))
+        s = applyDeferredOp(s, action.player, parsed.op, action.iid)
+        return ok(s)
+      }
+
       // Akshan - Mischievous: move the chosen enemy gear to your base. Mandatory, so
       // a decline auto-picks the first option.
       if (pc.kind === 'stealGear') {
@@ -8174,7 +8281,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const bi = battlefieldOf(s1, u.iid)
         const amt = bi >= 0 ? combatMightAt(s1, bi, u, 'attacker') : mightOf(u)
         const explicit = action.targets?.[0]
+        // Honor the player's chosen target only if it's a valid enemy at a battlefield
+        // (the card says "a unit at a battlefield"); else fall back to strongest enemy.
         let tgt = explicit ? findUnitAnywhere(s1, explicit) : undefined
+        if (tgt && (controllerOf(tgt) === action.player || battlefieldOf(s1, tgt.iid) < 0)) tgt = undefined
         if (tgt && controllerOf(tgt) !== action.player && untargetableByEnemy(s1, tgt)) tgt = undefined
         if (!tgt) {
           const foes = s1.battlefields.flatMap((b) => b.units).filter((x) => controllerOf(x) !== action.player && getCard(x.cardId)?.type === 'unit')

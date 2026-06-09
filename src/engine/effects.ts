@@ -925,6 +925,19 @@ function parse(text: string): ParsedEffect {
   // Counter Strike: choose any one unit to shield from the next damage.
   if (eff.preventNextDamage) { eff.targetScope = 'any'; eff.targetCount = 1 }
 
+  // dealMight combat-trick spells (Challenge, Clash of Giants, Gentlemen's Duel,
+  // Last Breath, …): the spell handler consumes a friendly DEALER + enemy FOE from
+  // the targets array (sorted by ownership via chosen(own)), so let the player pick
+  // both rather than auto-picking the strongest friendly + strongest enemy. Only
+  // when there's no other targeted part (don't disturb Dragon's Rage's move pick)
+  // and the dealer isn't 'self' (those resolve via combat/on-play, not the spell
+  // path). 'any' scope so a single confirm can land a friendly and an enemy.
+  if (!hasTargetedPart(eff) && eff.dealMight && eff.dealMight.dealer !== 'self'
+    && (eff.dealMight.target === 'singleEnemy' || eff.dealMight.target === 'mutual')) {
+    eff.targetScope = 'any'
+    eff.targetCount = 2
+  }
+
   // [Level N][>] activated gate (Wuju Apprentice — "[Level 6][>] … draw 1"): a
   // resource effect (draw/channel/recruit/token) that lives ONLY inside the gated
   // clause must be conditioned on the controller having N+ XP. We compare against
@@ -1000,6 +1013,9 @@ export function needsTarget(card: Card): boolean {
   if (card.type !== 'spell') return false
   if (isCopySpell(card)) return true
   const e = spellEffect(card)
+  // dealMight combat tricks need a dealer + foe pick (see parser block above).
+  if (e.targetCount > 0 && e.dealMight && e.dealMight.dealer !== 'self'
+    && (e.dealMight.target === 'singleEnemy' || e.dealMight.target === 'mutual')) return true
   return hasTargetedPart(e) && e.targetCount > 0
 }
 

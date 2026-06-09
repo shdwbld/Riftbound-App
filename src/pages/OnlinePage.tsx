@@ -26,6 +26,7 @@ import PromptModal from '../components/PromptModal'
 import BugReportModal from '../components/BugReportModal'
 import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
+import { optionalPayLabel } from '../lib/optionalPay'
 import RevealHandModal from '../components/RevealHandModal'
 import TagNameModal from '../components/TagNameModal'
 import VisionPrompt from '../components/VisionPrompt'
@@ -626,10 +627,10 @@ export default function OnlinePage() {
   // Board-highlight pending picks (Cull the Weak · Tideturner): the local seat clicks
   // a glowing unit → RESOLVE_CHOICE. tideSwap is optional (Cancel declines).
   const boardPick =
-    match.pendingChoice && (match.pendingChoice.kind === 'cullKill' || match.pendingChoice.kind === 'tideSwap') && match.pendingChoice.player === seat
+    match.pendingChoice && (match.pendingChoice.kind === 'cullKill' || match.pendingChoice.kind === 'tideSwap' || match.pendingChoice.kind === 'selectTarget') && match.pendingChoice.player === seat
       ? match.pendingChoice
       : null
-  const boardPickOptional = boardPick?.kind === 'tideSwap'
+  const boardPickOptional = boardPick?.kind === 'tideSwap' || boardPick?.kind === 'selectTarget'
 
   const counterWith = (targetChainId: string) => {
     const me = match.players[seat]
@@ -1162,7 +1163,18 @@ export default function OnlinePage() {
           onPick={(iid) => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && (
+      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind === 'optionalPay' && (
+        <PromptModal
+          title={`✦ ${match.pendingChoice.srcName ?? 'Optional Cost'}`}
+          message={match.pendingChoice.prompt}
+          options={[
+            { label: optionalPayLabel(match.pendingChoice.payload), onClick: () => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: 'pay' }), variant: 'primary' },
+            { label: 'Decline', onClick: () => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null }) },
+          ]}
+          onCancel={() => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null })}
+        />
+      )}
+      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'selectTarget' && (
         <ChoiceModal
           title={
             match.pendingChoice.kind === 'revealOpponent' ? '🃏 Reveal a Hand'

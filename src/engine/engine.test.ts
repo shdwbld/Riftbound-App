@@ -6948,7 +6948,7 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.players[1].zones.hand.some((c) => c.iid === enemy.iid)).toBe(true) // enemy returned
   })
 
-  it('Windsinger: on play, returns a unit ≤3 Might at a battlefield to hand', () => {
+  it('Windsinger: on play, surfaces a pick to return a unit ≤3 Might at a battlefield to hand (P0)', () => {
     const wid = injectCard('b-windsinger', "When you play me, you may return another unit at a battlefield with 3 :rb_might: or less to its owner's hand.", { type: 'unit', energy: 0, might: 2 })
     const s = baseState()
     const w = mk(wid, 0)
@@ -6956,10 +6956,16 @@ describe('Phase B — card wiring (conditional Might)', () => {
     const small = mk(injectCard('b-wind-small', 'x', { type: 'unit', might: 2 }), 1)
     const big = mk(injectCard('b-wind-big', 'x', { type: 'unit', might: 8 }), 1)
     s.battlefields[0] = { cardId: battlefield.id, units: [small, big], controller: 1 }
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: w.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: w.iid, payment: emptyPayment() })
     expect(r.error).toBeFalsy()
-    expect(r.state.players[1].zones.hand.some((c) => c.iid === small.iid)).toBe(true) // ≤3 returned
-    expect(r.state.battlefields[0].units.some((u) => u.iid === big.iid)).toBe(true) // >3 stays
+    // P0: the "you may return" is now a player target-pick, not auto-strongest.
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    expect(r.state.pendingChoice?.options.some((o) => o.iid === small.iid)).toBe(true) // ≤3 offered
+    expect(r.state.pendingChoice?.options.some((o) => o.iid === big.iid)).toBe(false) // >3 not offered
+    // The player picks the small unit → it's returned; the big one stays.
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: small.iid })
+    expect(r.state.players[1].zones.hand.some((c) => c.iid === small.iid)).toBe(true)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === big.iid)).toBe(true)
   })
 
   it('Angler Beast: on play, returns all units ≤2 Might (both sides) to hand', () => {
@@ -7056,14 +7062,20 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.battlefields[0].units.find((u) => u.iid === dr.iid)?.tempMight).toBe(2)
   })
 
-  it('Vayne - Hunter: pays 1 to return to hand when she conquers', () => {
+  it('Vayne - Hunter: may pay 1 to return to hand when she conquers (P0 optional-pay)', () => {
     const s = baseState()
     const v = mk('ogn-035-298', 0)
     s.players[0].zones.base.push(v)
     s.players[0].pool = { energy: 1, power: {} } // afford the optional 1
-    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [v.iid], toBattlefield: 0 }) // conquers open bf0
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [v.iid], toBattlefield: 0 }) // conquers open bf0
     expect(r.error).toBeFalsy()
-    expect(r.state.players[0].zones.hand.some((c) => c.iid === v.iid)).toBe(true) // returned to hand
+    // P0: surfaced as an optional Pay/Decline choice, not auto-paid.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === v.iid)).toBe(false) // not yet
+    // Accept the pay → she returns and the energy is spent.
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === v.iid)).toBe(true)
+    expect(r.state.players[0].pool?.energy ?? 0).toBe(0)
   })
 
   it('Lucian - Purifier: your Equipment each give the attacking unit +1 Might', () => {

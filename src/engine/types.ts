@@ -325,6 +325,33 @@ export interface LogEntry {
   text: string
 }
 
+/** A deferred effect surfaced to the player as an optional-pay or target choice
+ *  (P0 choice-restoration). Serializable (carried in pendingChoice.payload), so it
+ *  must stay plain data — the resolver in engine.ts interprets `type`. */
+export type DeferredOp =
+  /** Return the source unit to its owner's hand (Vayne - Hunter conquer). */
+  | { type: 'returnSelfToHand'; sourceIid: string }
+  /** Channel N runes exhausted (Ripper's Bay). */
+  | { type: 'channelExhausted'; n: number }
+  /** Bounce the board-picked unit (selectTarget) to its owner's hand (Windsinger). */
+  | { type: 'bounceTargetToHand' }
+
+/** A queued player decision (optional cost to pay, or a target to pick) recorded
+ *  during synchronous effect resolution and surfaced one at a time AFTER the action
+ *  completes (via surfaceNextDecision in reduce). Avoids pausing mid-trigger-loop. */
+export interface PendingDecision {
+  player: PlayerId
+  kind: 'optionalPay' | 'selectTarget'
+  prompt: string
+  srcName: string
+  /** optionalPay: the cost paid if the player accepts. */
+  cost?: { energy?: number; powerAny?: number }
+  /** selectTarget: the board-pick candidate units. */
+  options?: { iid: string; label: string }[]
+  /** The effect applied once accepted (optionalPay) or a unit is picked (selectTarget). */
+  op: DeferredOp
+}
+
 /** An item on the Chain (a played spell, or a Counter). Resolves LIFO. */
 export interface ChainItem {
   id: string
@@ -416,6 +443,10 @@ export interface MatchState {
       | 'tideSwap'
       // Scuttle Crab: read-only peek at a chosen opponent's revealed hand.
       | 'revealView'
+      // P0 generic deferral (choice-restoration): an optional cost the player may
+      // pay (custom Pay/Decline modal), or a target the player board-picks. The
+      // deferred effect is carried as a serialized DeferredOp in `payload`.
+      | 'optionalPay' | 'selectTarget'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]
@@ -425,6 +456,9 @@ export interface MatchState {
      *  generic choice (e.g. Dragon's Rage's post-move collision via a moveToBf). */
     srcName?: string
   }
+  /** Queued optional-pay / target decisions surfaced one at a time after the
+   *  current action resolves (P0 choice-restoration). See PendingDecision. */
+  pendingDecisions?: PendingDecision[]
   /** Pre-game setup state (turn-order roll, first-player choice, champion +
    *  battlefield selection). Present only while phase === 'setup'. */
   setup?: SetupState

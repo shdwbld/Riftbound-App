@@ -10,6 +10,7 @@ import { createMatch } from '../engine/setup'
 import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
+import { optionalPayLabel } from '../lib/optionalPay'
 import { checkInvariants } from '../engine/invariants'
 import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
@@ -126,7 +127,7 @@ export default function MatchPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [inspect, setInspect] = useState<Card | null>(null)
   const [showHelp, setShowHelp] = useState(false)
-  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear' | 'activateUnit'; count: number; picked: string[]; repeat?: boolean; targetScope?: 'enemy' | 'friendly' | 'any' } | null>(null)
+  const [targeting, setTargeting] = useState<{ iid: string; cardId: string; payment: Payment; player: PlayerId; kind: 'spell' | 'gear' | 'activateUnit'; count: number; picked: string[]; repeat?: boolean; targetScope?: 'enemy' | 'friendly' | 'any'; battlefieldOnly?: boolean } | null>(null)
   const [lastEvents, setLastEvents] = useState<GameEvent[] | undefined>(undefined)
   // Ephemeral Alt+click pings (hotseat shares one screen, so just render locally).
   const [pings, setPings] = useState<PingData[]>([])
@@ -317,13 +318,14 @@ export default function MatchPage() {
           : match.activePlayer
 
   // Board-highlight pending picks (Cull the Weak: kill own unit · Tideturner: swap
-  // partner): the local player clicks a glowing unit → RESOLVE_CHOICE. tideSwap is
-  // optional (the Cancel button declines); cullKill is mandatory (no Cancel).
+  // partner · selectTarget: P0 "you may" target pick): the local player clicks a
+  // glowing unit → RESOLVE_CHOICE. tideSwap/selectTarget are optional (Cancel
+  // declines); cullKill is mandatory (no Cancel).
   const boardPick =
-    match.pendingChoice && (match.pendingChoice.kind === 'cullKill' || match.pendingChoice.kind === 'tideSwap') && match.pendingChoice.player === controlling
+    match.pendingChoice && (match.pendingChoice.kind === 'cullKill' || match.pendingChoice.kind === 'tideSwap' || match.pendingChoice.kind === 'selectTarget') && match.pendingChoice.player === controlling
       ? match.pendingChoice
       : null
-  const boardPickOptional = boardPick?.kind === 'tideSwap'
+  const boardPickOptional = boardPick?.kind === 'tideSwap' || boardPick?.kind === 'selectTarget'
 
   const counterWith = (targetChainId: string) => {
     const me = match.players[controlling]
@@ -519,13 +521,17 @@ export default function MatchPage() {
     // at the top 5 → play it") auto-resolve in the engine — activate with no target
     // prompt even though the first sentence ("kill a friendly unit") looks targeted.
     const autoResolves = !!(ab.effect.peekBanishPlay || ab.effect.playUnitFromTrash || ab.effect.playUnitFromHand || ab.effect.revealPlayFromDeck || ab.effect.peekDraw || ab.effect.peekToHand || ab.effect.returnFromTrash)
-    const needsTgt = !autoResolves && (ab.effect.damage > 0 || ab.effect.buff > 0 || ab.effect.stun > 0 || ab.effect.kill > 0 || ab.effect.grantAssault > 0 || ab.effect.grantGanking || ab.effect.readyUnits > 0 || /\bmove\b/i.test(ab.effectText) || /(return|put|bounce)[^.]*\bhand\b/i.test(ab.effectText) || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf))
+    // "Deal damage equal to my Might to a unit at a battlefield" (Caitlyn - Patrolling
+    // and kin) parses as dealMight (dealer 'self'), not effect.damage — let the player
+    // pick the enemy, restricted to battlefield units, instead of auto-strongest.
+    const dealMightSelf = ab.effect.dealMight?.dealer === 'self'
+    const needsTgt = !autoResolves && (dealMightSelf || ab.effect.damage > 0 || ab.effect.buff > 0 || ab.effect.stun > 0 || ab.effect.kill > 0 || ab.effect.grantAssault > 0 || ab.effect.grantGanking || ab.effect.readyUnits > 0 || /\bmove\b/i.test(ab.effectText) || /(return|put|bounce)[^.]*\bhand\b/i.test(ab.effectText) || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf))
     if (!needsTgt) {
       act({ type: 'ACTIVATE_UNIT', player: controlling, iid })
       return
     }
-    const scope: 'enemy' | 'friendly' = (ab.effect.damage > 0 || ab.effect.stun > 0 || ab.effect.kill > 0) ? 'enemy' : 'friendly'
-    setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, player: controlling, kind: 'activateUnit', count: 1, picked: [], targetScope: scope })
+    const scope: 'enemy' | 'friendly' = (dealMightSelf || ab.effect.damage > 0 || ab.effect.stun > 0 || ab.effect.kill > 0) ? 'enemy' : 'friendly'
+    setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, player: controlling, kind: 'activateUnit', count: 1, picked: [], targetScope: scope, battlefieldOnly: dealMightSelf })
     flash(scope === 'enemy' ? 'Pick an enemy unit.' : 'Pick a unit to buff.')
   }
 
@@ -552,7 +558,8 @@ export default function MatchPage() {
     if (!targeting) return []
     if (targeting.kind === 'gear') return friendlyUnitIids(match, controlling)
     if (targeting.kind === 'activateUnit') {
-      const units = match.battlefields.flatMap((b) => b.units).concat(match.players.flatMap((p) => p.zones.base.filter((c) => getCard(c.cardId)?.type === 'unit')))
+      const baseUnits = targeting.battlefieldOnly ? [] : match.players.flatMap((p) => p.zones.base.filter((c) => getCard(c.cardId)?.type === 'unit'))
+      const units = match.battlefields.flatMap((b) => b.units).concat(baseUnits)
       return units.filter((u) => (targeting.targetScope === 'enemy' ? u.owner !== controlling : u.owner === controlling)).map((u) => u.iid)
     }
     return getLegalTargets(match, getCard(targeting.cardId)!, controlling)
@@ -878,7 +885,18 @@ export default function MatchPage() {
           onPick={(iid) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && (
+      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind === 'optionalPay' && (
+        <PromptModal
+          title={`✦ ${match.pendingChoice.srcName ?? 'Optional Cost'}`}
+          message={match.pendingChoice.prompt}
+          options={[
+            { label: optionalPayLabel(match.pendingChoice.payload), onClick: () => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: 'pay' }), variant: 'primary' },
+            { label: 'Decline', onClick: () => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null }) },
+          ]}
+          onCancel={() => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null })}
+        />
+      )}
+      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'selectTarget' && (
         <ChoiceModal
           title={
             match.pendingChoice.kind === 'stealUnit'
