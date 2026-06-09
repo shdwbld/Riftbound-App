@@ -5916,6 +5916,9 @@ describe('A1 trigger events — globalDefend, killWithSpell, once-per-turn', () 
     let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [victim.iid], payment: emptyPayment() })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    // P0: surfaced as an optional Pay/Decline choice; accept to play it from trash.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.players[0].zones.base.some((c) => c.cardId === 'ogn-037-298')).toBe(true)
     expect(r.state.players[0].zones.trash.some((c) => c.cardId === 'ogn-037-298')).toBe(false)
   })
@@ -6408,8 +6411,10 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     s.players[0].zones.hand.push(cone)
     const enemy = mk(injectCard('a3-bc2-e', 'enemy', { might: 4 }), 1, { exhausted: true })
     s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
-    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: cone.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: cone.iid, payment: emptyPayment() })
     expect(r.error).toBeUndefined()
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget') // P0: pick which enemy to move
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: enemy.iid })
     expect(r.state.players[1].zones.base.some((u) => u.iid === enemy.iid)).toBe(true) // sent to its base
     expect(r.state.players[1].zones.base.find((u) => u.iid === enemy.iid)?.stunned).toBe(true) // and stunned
     expect(r.state.players[0].zones.base.find((c) => c.iid === cone.iid)?.exhausted).toBe(true) // cone exhausted itself
@@ -6850,6 +6855,9 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.error).toBeFalsy()
     expect(r.state.players[0].zones.hand.some((c) => c.iid === unit.iid)).toBe(true) // returned to hand
+    // P0: the channel is now an optional Pay/Decline choice.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.players[0].zones.runePool.some((x) => x.exhausted)).toBe(true) // channeled a rune exhausted
   })
 
@@ -6942,8 +6950,13 @@ describe('Phase B — card wiring (conditional Might)', () => {
     const friendly = mk(furyUnit.id, 0)
     const enemy = mk(injectCard('b-bb-enemy', 'x', { type: 'unit', might: 4 }), 1)
     s.battlefields[0] = { cardId: battlefield.id, units: [friendly, enemy], controller: null }
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: bb.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: bb.iid, payment: emptyPayment() })
     expect(r.error).toBeFalsy()
+    // P0: two mandatory picks — first which friendly to return, then which enemy.
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: friendly.iid })
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: enemy.iid })
     expect(r.state.players[0].zones.hand.some((c) => c.iid === friendly.iid)).toBe(true) // friendly returned
     expect(r.state.players[1].zones.hand.some((c) => c.iid === enemy.iid)).toBe(true) // enemy returned
   })

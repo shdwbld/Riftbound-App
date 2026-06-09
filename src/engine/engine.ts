@@ -2009,10 +2009,18 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
     }
   }
   // Immortal Phoenix (ogn-037-298): "When you kill a unit with a spell, you may pay
-  // 1 Energy + Fury to play me from your trash." Auto-paid when the caster affords it.
+  // 1 Energy + Fury to play me from your trash." Surfaced as a Pay/Decline choice (P0);
+  // the op pays the specific cost via playFromTrashPayingCost.
   if (caster != null && defeated.some((u) => u.killedBySpell)) {
     const phoenix = s.players[caster].zones.trash.find((c) => c.cardId === 'ogn-037-298')
-    if (phoenix) s = playFromTrashPayingCost(s, caster, phoenix.iid, { energy: 1, power: { fury: 1 } })
+    if (phoenix && canAffordEnergy(s.players[caster], 1)) {
+      s = queueOptionalPay(s, caster, {
+        prompt: 'Immortal Phoenix — pay ⚡1 + 🔥 to play it from your trash?',
+        srcName: 'Immortal Phoenix',
+        cost: {},
+        op: { type: 'playFromTrash', cardIid: phoenix.iid, energy: 1, power: { fury: 1 } },
+      })
+    }
   }
   return fireTriggers(s, fired)
 }
@@ -2155,14 +2163,20 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
     }
     // other "exhaust me" payoffs stay manual.
   }
-  // pay-Energy optional payoffs (Blood Rose).
+  // pay-Energy optional payoffs (Blood Rose, …) — surfaced as a Pay/Decline choice
+  // (P0) instead of auto-paying, so the player chooses whether to spend the Energy.
   for (const f of all.filter((f) => payEnergyOpt(f.ability.text))) {
     const m = f.ability.text.match(/you may pay :rb_energy_(\d+): to\b/i)
     if (!m) continue
-    const pl = s.players[player]
-    if (payEnergyAuto(pl, parseInt(m[1], 10))) {
-      for (const l of applyParsed(s, pl, f.ability.effect, undefined, f.sourceIid)) s = log(s, player, l)
-    }
+    const n = parseInt(m[1], 10)
+    if (!canAffordEnergy(s.players[player], n)) continue
+    const nm = getCard(f.sourceCardId ?? '')?.name ?? 'A card'
+    s = queueOptionalPay(s, player, {
+      prompt: `${nm} — pay ⚡${n} for its effect?`,
+      srcName: nm,
+      cost: { energy: n },
+      op: { type: 'applyEffectFromSource', effect: f.ability.effect, sourceIid: f.sourceIid },
+    })
   }
   return s
 }
@@ -2197,11 +2211,12 @@ function queueOptionalPay(s: MatchState, player: PlayerId, d: { prompt: string; 
   return s
 }
 
-/** Queue a "you may" TARGET pick the player board-selects (surfaced after the
- *  action). A decline applies nothing. No-op when there are no candidates. */
-function queueSelectTarget(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; options: { iid: string; label: string }[]; op: DeferredOp }): MatchState {
+/** Queue a TARGET pick the player board-selects (surfaced after the action).
+ *  `optional` (default true, "you may"): a decline applies nothing. When false
+ *  (mandatory), a decline auto-applies `op` to `defaultIid`. No-op if no candidates. */
+function queueSelectTarget(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; options: { iid: string; label: string }[]; op: DeferredOp; optional?: boolean; defaultIid?: string }): MatchState {
   if (d.options.length === 0) return s
-  ;(s.pendingDecisions ??= []).push({ player, kind: 'selectTarget', prompt: d.prompt, srcName: d.srcName, options: d.options, op: d.op })
+  ;(s.pendingDecisions ??= []).push({ player, kind: 'selectTarget', prompt: d.prompt, srcName: d.srcName, options: d.options, op: d.op, optional: d.optional, defaultIid: d.defaultIid })
   return s
 }
 
@@ -2229,7 +2244,7 @@ function surfaceNextDecision(s: MatchState): MatchState {
     prompt: head.prompt,
     srcName: head.srcName,
     options: head.options ?? [{ iid: 'pay', label: 'Pay' }],
-    payload: JSON.stringify({ cost: head.cost, op: head.op }),
+    payload: JSON.stringify({ cost: head.cost, op: head.op, optional: head.optional, defaultIid: head.defaultIid }),
   }
   return s
 }
@@ -2244,6 +2259,26 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
       return s
     case 'bounceTargetToHand':
       return chosenIid ? bounceUnitToHand(s, chosenIid, player, '', 0) : s
+    case 'sendTargetToBase':
+      // Moving an enemy to base fires "when you move an enemy unit" (Blast Cone's Stun).
+      if (chosenIid && sendUnitToBase(s, chosenIid)) s = blastConeOnEnemyMove(s, player, chosenIid)
+      return s
+    case 'dragonsRageCollision': {
+      const src = findUnitAnywhere(s, op.sourceIid)
+      const other = chosenIid ? findUnitAnywhere(s, chosenIid) : undefined
+      if (!src || !other) return s
+      const m1 = mightOf(src), m2 = mightOf(other)
+      const dead = applyTargetDamage(s, other.iid, m1).concat(applyTargetDamage(s, src.iid, m2))
+      s = log(s, player, `Dragon's Rage: ${getCard(src.cardId)?.name} and ${getCard(other.cardId)?.name} dealt ${m1}/${m2} to each other.`)
+      return fireDeaths(s, dead, player)
+    }
+    case 'playFromTrash':
+      return playFromTrashPayingCost(s, player, op.cardIid, { energy: op.energy, power: op.power })
+    case 'applyEffectFromSource': {
+      const eff = op.effect as ParsedEffect
+      for (const l of applyParsed(s, s.players[player], eff, undefined, op.sourceIid)) s = log(s, player, l)
+      return s
+    }
   }
 }
 
@@ -3677,13 +3712,14 @@ function returnUnitToHand(s: MatchState, bfIndex: number, iid: string): EngineCa
   }
   s.players[u.owner].zones.hand.push({ iid: u.iid, cardId: u.cardId, owner: u.owner, exhausted: false, damage: 0, attached: [] })
   recomputeControllers(s)
-  if (rippersBay && makeBfApi(s).payEnergy(u.owner, 1)) {
-    // "may pay 1 to channel 1 rune exhausted" — auto-pay when affordable.
-    const r = s.players[u.owner].zones.runeDeck.shift()
-    if (r) {
-      s.players[u.owner].zones.runePool.push({ ...r, exhausted: true })
-      s.log.push({ turn: s.turn, player: u.owner, text: `Ripper's Bay: paid 1 to channel a rune (exhausted).` })
-    }
+  if (rippersBay && canAffordEnergy(s.players[u.owner], 1)) {
+    // "may pay 1 to channel 1 rune exhausted" — surfaced as a Pay/Decline choice (P0).
+    queueOptionalPay(s, u.owner, {
+      prompt: "Ripper's Bay — pay ⚡1 to channel a rune (exhausted)?",
+      srcName: "Ripper's Bay",
+      cost: { energy: 1 },
+      op: { type: 'channelExhausted', n: 1 },
+    })
   }
   return u
 }
@@ -7060,12 +7096,22 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         if (!legionGated) {
           const txt = (card.text ?? '').toLowerCase()
           const isUnit = (u: EngineCard) => getCard(u.cardId)?.type === 'unit'
-          // Beast Below: "return another friendly unit and an enemy unit to their owners' hands."
+          // Beast Below: "return another friendly unit and an enemy unit to their owners'
+          // hands." Mandatory — let the player pick WHICH of each (P0); a decline
+          // auto-picks (lowest-Might friendly / strongest enemy, as before).
           if (/return another friendly unit and an enemy unit to their owners'? hands/.test(txt)) {
-            const friendly = [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === action.player && u.iid !== ci.iid && isUnit(u)).sort((a, b) => mightOf(a) - mightOf(b))[0]
-            const enemy = s1.battlefields.flatMap((b) => b.units).filter((u) => isEnemyTo(s1, action.player, u) && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))[0]
-            if (friendly) s1 = bounceUnitToHand(s1, friendly.iid, action.player, card.name, 0)
-            if (enemy) s1 = bounceUnitToHand(s1, enemy.iid, action.player, card.name, 0)
+            const friendlies = [...p.zones.base, ...s1.battlefields.flatMap((b) => b.units)].filter((u) => controllerOf(u) === action.player && u.iid !== ci.iid && isUnit(u)).sort((a, b) => mightOf(a) - mightOf(b))
+            const enemies = s1.battlefields.flatMap((b) => b.units).filter((u) => isEnemyTo(s1, action.player, u) && isUnit(u)).sort((a, b) => mightOf(b) - mightOf(a))
+            if (friendlies.length) s1 = queueSelectTarget(s1, action.player, {
+              prompt: 'Beast Below — return one of YOUR units to its hand.', srcName: 'Beast Below',
+              options: friendlies.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+              op: { type: 'bounceTargetToHand' }, optional: false, defaultIid: friendlies[0].iid,
+            })
+            if (enemies.length) s1 = queueSelectTarget(s1, action.player, {
+              prompt: 'Beast Below — return an ENEMY unit to its hand.', srcName: 'Beast Below',
+              options: enemies.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+              op: { type: 'bounceTargetToHand' }, optional: false, defaultIid: enemies[0].iid,
+            })
           }
           // Windsinger: "you may return another unit at a battlefield with N Might or less to its owner's hand."
           // "you may" → let the player board-pick the unit (or decline) after play (P0).
@@ -7260,18 +7306,17 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           for (const line of applyParsed(st, st.players[action.player], gearOnPlay, undefined, ci.iid))
             st = log(st, action.player, line)
           st = fireTokenPlay(st, action.player, tokenUnitsIn(gearOnPlay))
-          // Blast Cone: "When you play this, you may move an enemy unit." Auto-sends
-          // the strongest enemy to its base; Part 2 (blastConeOnEnemyMove) then exhausts
-          // the freshly-played cone to [Stun] that unit.
+          // Blast Cone: "When you play this, you may move an enemy unit." Let the player
+          // pick which enemy to send to its base (P0); the sendTargetToBase op then fires
+          // blastConeOnEnemyMove to [Stun] the moved unit. Optional ("you may").
           if (card.name === 'Blast Cone') {
-            const enemy = st.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== action.player && getCard(u.cardId)?.type === 'unit').sort((a, b) => mightOf(b) - mightOf(a))[0]
-            if (enemy) {
-              const nm = getCard(enemy.cardId)?.name
-              if (sendUnitToBase(st, enemy.iid)) {
-                st = log(st, action.player, `Blast Cone: moved ${nm} to its base.`)
-                st = blastConeOnEnemyMove(st, action.player, enemy.iid)
-              }
-            }
+            const enemies = st.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== action.player && getCard(u.cardId)?.type === 'unit')
+            if (enemies.length) st = queueSelectTarget(st, action.player, {
+              prompt: 'Blast Cone — move an enemy unit to its base (then Stun it)?',
+              srcName: 'Blast Cone',
+              options: enemies.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+              op: { type: 'sendTargetToBase' },
+            })
           }
           return st
         }
@@ -7834,13 +7879,19 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(log(s, action.player, `${pc.srcName}: paid${cost.energy ? ` ⚡${cost.energy}` : ''}${cost.powerAny ? ` ♺${cost.powerAny}` : ''}.`))
       }
 
-      // P0 select-target (Windsinger, …): apply the op to the board-picked unit, or
-      // decline (these are "you may" effects, so a decline applies nothing).
+      // P0 select-target (Windsinger, Beast Below, …): apply the op to the board-picked
+      // unit. Optional picks ("you may") apply nothing on decline; mandatory picks
+      // (Beast Below, Dragon's Rage) auto-apply to defaultIid on decline.
       if (pc.kind === 'selectTarget') {
-        let parsed: { op: DeferredOp }
+        let parsed: { op: DeferredOp; optional?: boolean; defaultIid?: string }
         try { parsed = JSON.parse(pc.payload ?? '{}') } catch { return ok(s) }
-        if (action.iid === null) return ok(log(s, action.player, `${pc.srcName}: declined.`))
-        s = applyDeferredOp(s, action.player, parsed.op, action.iid)
+        let pick = action.iid
+        if (pick === null) {
+          if (parsed.optional !== false) return ok(log(s, action.player, `${pc.srcName}: declined.`))
+          pick = parsed.defaultIid ?? pc.options[0]?.iid ?? null // mandatory → auto-pick
+        }
+        if (!pick) return ok(s)
+        s = applyDeferredOp(s, action.player, parsed.op, pick)
         return ok(s)
       }
 

@@ -333,8 +333,18 @@ export type DeferredOp =
   | { type: 'returnSelfToHand'; sourceIid: string }
   /** Channel N runes exhausted (Ripper's Bay). */
   | { type: 'channelExhausted'; n: number }
-  /** Bounce the board-picked unit (selectTarget) to its owner's hand (Windsinger). */
+  /** Bounce the board-picked unit (selectTarget) to its owner's hand (Windsinger, Beast Below). */
   | { type: 'bounceTargetToHand' }
+  /** Send the board-picked enemy unit to its owner's base (Blast Cone on-play). */
+  | { type: 'sendTargetToBase' }
+  /** Dragon's Rage: the moved unit and the board-picked enemy deal their Mights to each other. */
+  | { type: 'dragonsRageCollision'; sourceIid: string }
+  /** Play a specific card from trash, paying a fixed cost (Immortal Phoenix). */
+  | { type: 'playFromTrash'; cardIid: string; energy: number; power: Record<string, number> }
+  /** Apply an arbitrary parsed on-trigger effect from a source (Blood Rose & the
+   *  "you may pay :rb_energy_N: to <effect>" play-trigger family). `effect` is a
+   *  serialized ParsedEffect (plain data); the engine casts + replays it. */
+  | { type: 'applyEffectFromSource'; effect: unknown; sourceIid?: string }
 
 /** A queued player decision (optional cost to pay, or a target to pick) recorded
  *  during synchronous effect resolution and surfaced one at a time AFTER the action
@@ -348,6 +358,11 @@ export interface PendingDecision {
   cost?: { energy?: number; powerAny?: number }
   /** selectTarget: the board-pick candidate units. */
   options?: { iid: string; label: string }[]
+  /** selectTarget: false = mandatory (a decline auto-applies `op` to `defaultIid`).
+   *  Defaults to true ("you may" — a decline applies nothing). */
+  optional?: boolean
+  /** selectTarget: the iid auto-picked when a mandatory pick is declined. */
+  defaultIid?: string
   /** The effect applied once accepted (optionalPay) or a unit is picked (selectTarget). */
   op: DeferredOp
 }

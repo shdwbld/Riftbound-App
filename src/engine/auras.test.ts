@@ -157,14 +157,17 @@ describe('Batch 1 — Revna the Lorekeeper (spent 4+ Energy = this spell)', () =
 
 describe('Batch 2 — Blood Rose (pay 1 Energy to gain 1 XP)', () => {
   const BR = 'When you play a unit, you may pay :rb_energy_1: to gain 1 XP.'
-  it('pays 1 Energy from pool to gain 1 XP', () => {
+  it('offers to pay 1 Energy to gain 1 XP, and pays on accept (P0 optional-pay)', () => {
     const s = baseState()
     s.players[0].zones.base.push(mk(injectCard('bloodrose', BR, { type: 'gear', energy: 1, power: {} }), 0))
     s.players[0].pool = { energy: 1, power: {} }
     const u = mk(zeroUnit, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay') // surfaced, not auto-paid
+    expect(r.state.players[0].xp).toBe(0)
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.players[0].xp).toBe(1)
     expect(r.state.players[0].pool.energy).toBe(0)
   })
