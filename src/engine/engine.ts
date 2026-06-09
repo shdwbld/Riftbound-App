@@ -538,7 +538,7 @@ function conditionMet(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: 
   if (e.condition.kind === 'totalMightAtLeast') {
     const sum = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
       .filter((u) => controllerOf(u) === p.id && def(u)?.type === 'unit' && u.iid !== sourceIid)
-      .reduce((n, u) => n + mightOf(u, null, s.players[u.owner]?.xp ?? 0), 0)
+      .reduce((n, u) => n + statMight(u, null, s.players[u.owner]?.xp ?? 0), 0)
     return sum >= e.condition.value
   }
   const hand = p.zones.hand.length
@@ -1590,7 +1590,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     // damage equal to my Might to an enemy unit in a base."
     if (ability.event === 'conquer' && srcName === 'Yone - Blademaster' && sourceIid && wasUncontrolled) {
       const self = findUnitAnywhere(s, sourceIid)
-      const amt = self ? mightOf(self, null, p.xp ?? 0) : 0
+      const amt = self ? statMight(self, null, p.xp ?? 0) : 0
       const enemiesInBase = s.players.flatMap((pl) => pl.id !== player ? pl.zones.base.filter((u) => getCard(u.cardId)?.type === 'unit') : [])
       const target = enemiesInBase.sort((a, b) => mightOf(b) - mightOf(a))[0]
       if (target && amt > 0) {
@@ -1682,7 +1682,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const kato = findUnitAnywhere(s, sourceIid)
       if (bi >= 0 && kato) {
         const kw = parseKeywords(getCard(kato.cardId))
-        const katoMight = mightOf(kato)
+        const katoMight = statMight(kato)
         const allies = [...s.players[player].zones.base, ...s.battlefields.flatMap((b) => b.units)]
           .filter((u) => isFriendlyTo(s, player, u) && u.iid !== sourceIid && getCard(u.cardId)?.type === 'unit')
         const target = allies.length ? allies.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi)) : undefined
@@ -2276,7 +2276,7 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
       const src = findUnitAnywhere(s, op.sourceIid)
       const other = chosenIid ? findUnitAnywhere(s, chosenIid) : undefined
       if (!src || !other) return s
-      const m1 = mightOf(src), m2 = mightOf(other)
+      const m1 = statMight(src), m2 = statMight(other)
       const dead = applyTargetDamage(s, other.iid, m1).concat(applyTargetDamage(s, src.iid, m2))
       s = log(s, player, `Dragon's Rage: ${getCard(src.cardId)?.name} and ${getCard(other.cardId)?.name} dealt ${m1}/${m2} to each other.`)
       return fireDeaths(s, dead, player)
@@ -2735,7 +2735,7 @@ function makeBfApi(s: MatchState): BfApi {
       return true
     },
     hasMightyHere(player, bfIndex) {
-      return !!s.battlefields[bfIndex]?.units.some((x) => controllerOf(x) === player && mightOf(x) >= 5)
+      return !!s.battlefields[bfIndex]?.units.some((x) => controllerOf(x) === player && statMight(x) >= 5)
     },
     score(player, n) {
       s.players[player].points += n
@@ -4894,15 +4894,17 @@ function awardPoints(
 
 type CombatRole = 'attacker' | 'defender' | null
 
-/** A unit's effective Might in a given combat role, including Assault/Shield
- *  keyword bonuses, attached-gear bonuses, and marked damage. Backline units
- *  don't fight on the frontline (0). */
-function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
+/** A unit's FULL Might STAT in a combat role — printed Might + gear + buffs +
+ *  tempMight + [Assault]/[Shield]/[Level] bonuses, WITHOUT subtracting marked
+ *  damage. This is the Might a unit DEALS in combat and the [Mighty] threshold:
+ *  per Rules 142.2 / 443.1.d, damage never lowers the Might a unit deals (it only
+ *  counts toward death). Backline units don't fight on the frontline (0). */
+function statMight(ci: EngineCard, role: CombatRole = null, xp = 0): number {
   const d = def(ci)
   if (!d || !isUnit(d)) return 0
   const k = parseKeywords(d)
   if (k.backline) return 0
-  let m = d.might - ci.damage + gearMight(ci, xp) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
+  let m = d.might + gearMight(ci, xp) + (ci.buffs ?? 0) + (ci.tempMight ?? 0)
   if (role === 'attacker') m += k.assault + (ci.grantAssault ?? 0) // [Assault] granted this turn
   if (role === 'defender') m += k.shield + (ci.grantShield ?? 0) // [Shield] granted this turn
   // Attached gear grants its [Assault]/[Shield] to the equipped unit's combat role
@@ -4917,15 +4919,24 @@ function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
   return Math.max(0, m)
 }
 
-/** Combat damage a unit DEALS — 0 if Stunned (it still keeps Might to survive). */
+/** A unit's REMAINING Might — its stat Might MINUS marked damage: the death / HP
+ *  pool. A unit is defeated when this reaches 0 (Rule 142.3.a), and damage-assignment
+ *  uses it as the per-unit lethal threshold. Do NOT use this for the Might a unit
+ *  DEALS or for [Mighty] — use statMight (damage doesn't reduce the stat). */
+function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
+  return Math.max(0, statMight(ci, role, xp) - ci.damage)
+}
+
+/** Combat damage a unit DEALS — its full stat Might (marked damage never lowers it),
+ *  0 if Stunned (it still keeps Might to survive). */
 function damageOutput(ci: EngineCard, role: CombatRole, xp = 0): number {
-  return ci.stunned ? 0 : mightOf(ci, role, xp)
+  return ci.stunned ? 0 : statMight(ci, role, xp)
 }
 
 /** Mighty: a unit with effective Might >= 5. (xp-agnostic quick check; the
  *  xp-aware version is the `mighty` state in the registry — `stateActive`.) */
 export function isMighty(ci: EngineCard): boolean {
-  return mightOf(ci) >= 5
+  return statMight(ci) >= 5
 }
 
 /** ── State engine ──────────────────────────────────────────────────────────
@@ -4947,7 +4958,7 @@ interface StateDef {
 const STATES: StateDef[] = [
   // 5+ effective Might (base + buffs + temp + gear + level; no combat-role/aura
   // bonuses — matches the Deathknell `mightyAtDeath` snapshot).
-  { name: 'mighty', isActive: (s, u) => mightOf(u, null, s.players[u.owner]?.xp ?? 0) >= 5 },
+  { name: 'mighty', isActive: (s, u) => statMight(u, null, s.players[u.owner]?.xp ?? 0) >= 5 },
   // The only friendly unit at its battlefield (units in base are never "alone").
   { name: 'alone', isActive: (s, u) => { const bi = bfIndexOfUnit(s, u.iid); return bi >= 0 && s.battlefields[bi].units.filter((x) => controllerOf(x) === controllerOf(u)).length === 1 } },
   // Carries a +1 Might buff counter.
@@ -5067,7 +5078,7 @@ export function combatMightAt(s: MatchState, bfIndex: number, u: EngineCard, rol
   if (!bf) return 0
   const alone = bf.units.filter((x) => controllerOf(x) === controllerOf(u)).length === 1
   const bonusOf = bfCombatBonus(s, bfIndex, role === 'attacker' && alone, role === 'defender' && alone)
-  return Math.max(0, mightOf(u, role, s.players[u.owner]?.xp ?? 0) + bonusOf(u, role) + auraMightBonus(s, u))
+  return Math.max(0, statMight(u, role, s.players[u.owner]?.xp ?? 0) + bonusOf(u, role) + auraMightBonus(s, u))
 }
 
 /** Flat +Might from attached gear (for UI badges). */
@@ -5259,7 +5270,7 @@ function conditionalMight(s: MatchState, u: EngineCard, role: CombatRole, alone:
     if (/double my might this combat/.test(text)) {
       const bi = s.battlefields.findIndex((bf) => bf.units.some((x) => x.iid === u.iid))
       const enemies = bi >= 0 ? s.battlefields[bi].units.filter((x) => controllerOf(x) !== controllerOf(u)).length : 0
-      if (enemies === 1) b += mightOf(u, role, owner.xp ?? 0)
+      if (enemies === 1) b += statMight(u, role, owner.xp ?? 0)
     }
     // Controller's gear: Mask of Foresight — "When a friendly unit attacks or
     // defends alone, give it +N Might this turn." Modeled as a lone-combatant aura.
@@ -5541,7 +5552,7 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
   const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
   const dealt = (u: EngineCard, role: CombatRole) =>
-    u.stunned ? 0 : Math.max(0, mightOf(u, role, xpOf(u)) + bonusOf(u, role))
+    u.stunned ? 0 : Math.max(0, statMight(u, role, xpOf(u)) + bonusOf(u, role))
   const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
   const defendMight = defenders.reduce((a, u) => a + dealt(u, 'defender'), 0)
   // Mover's damage hits the defenders; the defending side's damage hits attackers.
@@ -5680,7 +5691,7 @@ function nextSplitTrigger(s: MatchState, bfIndex: number): { sourceIid: string; 
     if (!m) continue
     const enemies = bf.units.filter((u) => controllerOf(u) !== moverOwner && getCard(u.cardId)?.type === 'unit')
     const hp: Record<string, number> = {}
-    for (const e of enemies) hp[e.iid] = Math.max(0, mightOf(e) - (e.damage ?? 0))
+    for (const e of enemies) hp[e.iid] = mightOf(e) // mightOf already nets out damage (clamped ≥0)
     if (enemies.every((e) => hp[e.iid] <= 0)) continue // no living target to place on
     return {
       sourceIid: a.iid,
@@ -5740,7 +5751,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
   const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
   const dealt = (u: EngineCard, role: CombatRole) =>
-    u.stunned ? 0 : Math.max(0, mightOf(u, role, xpOf(u)) + bonusOf(u, role))
+    u.stunned ? 0 : Math.max(0, statMight(u, role, xpOf(u)) + bonusOf(u, role))
   const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
   const defendMight = defenders.reduce((a, u) => a + dealt(u, 'defender'), 0)
 
@@ -5906,7 +5917,7 @@ function resolveSpellEffects(
   if (e.deathgrip) {
     const killU = targets?.[0] ? findUnitAnywhere(s, targets[0]) : undefined
     if (killU && isFriendlyTo(s, controller, killU)) {
-      const might = mightOf(killU)
+      const might = statMight(killU)
       const buffU = targets?.[1] ? findUnitAnywhere(s, targets[1]) : undefined
       const dead = killTarget(s, killU.iid)
       s = log(s, controller, `${card.name}: killed ${getCard(killU.cardId)?.name} (Might ${might}).`)
@@ -5968,7 +5979,7 @@ function resolveSpellEffects(
       .sort((a, b) => mightOf(b) - mightOf(a))[0]
     const enemy = s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== controller).sort((a, b) => mightOf(b) - mightOf(a))[0]
     if (dealer && enemy) {
-      const amt = mightOf(dealer)
+      const amt = statMight(dealer)
       s = log(s, controller, `${card.name}: ${getCard(dealer.cardId)?.name} deals ${amt} to ${getCard(enemy.cardId)?.name}.`)
       s = fireDeaths(s, applyTargetDamage(s, enemy.iid, amt, true, controller))
       const d = findUnitAnywhere(s, dealer.iid)
@@ -6077,7 +6088,7 @@ function resolveSpellEffects(
     const enemiesAll = s.battlefields.flatMap((b) => b.units).filter((u) => controllerOf(u) !== controller && isUnitCard(u))
     const statOf = (u: EngineCard) => dm.useStat === 'assault'
       ? parseKeywords(getCard(u.cardId)).assault + (u.grantAssault ?? 0)
-      : mightOf(u, null, s.players[u.owner]?.xp ?? 0)
+      : statMight(u, null, s.players[u.owner]?.xp ?? 0)
     const chosen = (own: boolean) => (targets ?? []).map((t) => findUnitAnywhere(s, t)).find((u) => !!u && (own ? controllerOf(u) === controller : controllerOf(u) !== controller))
     const dealer = chosen(true) ?? friendlies.sort((a, b) => statOf(b) - statOf(a))[0]
     if (!dealer) return log(s, controller, `${card.name} fizzled — no friendly unit.`)
@@ -7196,7 +7207,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const self = findUnitAnywhere(s1, ci.iid)
           const statOf = (u: EngineCard) => e.dealMight!.useStat === 'assault'
             ? parseKeywords(getCard(u.cardId)).assault + (u.grantAssault ?? 0)
-            : mightOf(u, null, s1.players[u.owner]?.xp ?? 0)
+            : statMight(u, null, s1.players[u.owner]?.xp ?? 0)
           const foe = s1.battlefields.flatMap((b) => b.units).filter((u) => isEnemyTo(s1, action.player, u) && getCard(u.cardId)?.type === 'unit').sort((a, b) => statOf(b) - statOf(a))[0]
           if (self && foe) {
             const selfAmt = statOf(self)
@@ -7947,8 +7958,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
               const others = s.battlefields[dest].units.filter((u) => controllerOf(u) === controllerOf(card) && u.iid !== card.iid && getCard(u.cardId)?.type === 'unit')
               if (others.length) {
                 const other = others.reduce((hi, u) => (mightOf(u) > mightOf(hi) ? u : hi))
-                const m1 = mightOf(card)
-                const m2 = mightOf(other)
+                const m1 = statMight(card)
+                const m2 = statMight(other)
                 let dead: EngineCard[] = []
                 dead = dead.concat(applyTargetDamage(s, other.iid, m1))
                 dead = dead.concat(applyTargetDamage(s, card.iid, m2))
@@ -8377,7 +8388,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         offerChoice(s, { player: action.player, kind: 'heimerBorrow', bfIndex: -1, prompt: `${name} — borrow a friendly [Exhaust] ability.`, options, payload: u.iid })
         return ok(log(s, action.player, `${name}: choose a friendly [Exhaust] ability to borrow.`))
       }
-      const mightNow = mightOf(u) // for "double my Might" before any change
+      const mightNow = statMight(u) // for "double my Might" before any change
       // Pay the cost: energy/runes, recycle-from-trash, exhaust, kill-this.
       const cost = { energy: ab.energy, power: ab.power }
       if (!costIsFree(cost)) {
@@ -8461,7 +8472,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // at a battlefield." Use the player's chosen target, else auto-pick the
         // strongest enemy at a battlefield (per the auto-resolve preference).
         const bi = battlefieldOf(s1, u.iid)
-        const amt = bi >= 0 ? combatMightAt(s1, bi, u, 'attacker') : mightOf(u)
+        const amt = bi >= 0 ? combatMightAt(s1, bi, u, 'attacker') : statMight(u)
         const explicit = action.targets?.[0]
         // Honor the player's chosen target only if it's a valid enemy at a battlefield
         // (the card says "a unit at a battlefield"); else fall back to strongest enemy.

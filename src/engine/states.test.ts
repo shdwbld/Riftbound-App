@@ -179,28 +179,28 @@ describe('state engine', () => {
     })
   })
 
-  // ── mighty — damage lowers it ─────────────────────────────────────────────
+  // ── mighty — damage does NOT lower the Might stat (Rule 142.2) ────────────
   describe('mighty — damage', () => {
-    it('base-6 unit with damage:2 is NOT mighty (6-2=4)', () => {
+    it('base-6 unit with damage:2 is STILL mighty (Might stat is 6, damage doesn\'t reduce it)', () => {
       const id = injectCard('test-dmg-6', '', { might: 6 })
       const s = baseState()
       const u = mk(id, 0, { damage: 2 })
       s.battlefields[0].units.push(u)
-      expect(stateActive(s, u, 'mighty')).toBe(false)
+      expect(stateActive(s, u, 'mighty')).toBe(true)
     })
 
-    it('base-6 unit with damage:1 IS mighty (6-1=5)', () => {
-      const id = injectCard('test-dmg-6-1', '', { might: 6 })
+    it('base-5 unit with damage:3 is STILL mighty (stat 5 ≥ 5 regardless of damage)', () => {
+      const id = injectCard('test-dmg-5', '', { might: 5 })
       const s = baseState()
-      const u = mk(id, 0, { damage: 1 })
+      const u = mk(id, 0, { damage: 3 })
       s.battlefields[0].units.push(u)
       expect(stateActive(s, u, 'mighty')).toBe(true)
     })
 
-    it('base-5 unit with damage:1 is NOT mighty (5-1=4)', () => {
-      const id = injectCard('test-dmg-5', '', { might: 5 })
+    it('base-4 unit with damage:0 is NOT mighty (stat 4 < 5)', () => {
+      const id = injectCard('test-dmg-4', '', { might: 4 })
       const s = baseState()
-      const u = mk(id, 0, { damage: 1 })
+      const u = mk(id, 0, { damage: 0 })
       s.battlefields[0].units.push(u)
       expect(stateActive(s, u, 'mighty')).toBe(false)
     })

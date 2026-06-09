@@ -6086,6 +6086,22 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(strongAfter?.tempMight ?? 0).toBe(0) // strongest (auto target) untouched
   })
 
+  it('a damaged attacker deals its FULL Might in a showdown (damage ≠ attacking power)', () => {
+    const s = baseState()
+    const attacker = mk(injectCard('dmg-atk', 'A unit.', { might: 6 }), 0, { damage: 2 }) // remaining HP 4, but DEALS 6
+    s.players[0].zones.base.push(attacker)
+    const blocker = mk(injectCard('dmg-def', 'A unit.', { might: 6 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [blocker], controller: 1 }
+    s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: attacker.iid, toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    // The attacker deals 6 (its stat Might), NOT 6−2=4 → the base-6 blocker takes 6 and dies.
+    const all = r.state.battlefields.flatMap((b) => b.units).concat(r.state.players.flatMap((p) => p.zones.base))
+    expect(all.some((u) => u.iid === blocker.iid)).toBe(false)
+  })
+
   it('Volibear - Furious: on attack, pauses for a FREE split-damage placement that the dealer resolves', () => {
     const voli = injectCard('a2-voli', 'When I attack, deal 5 damage split among any number of enemy units here.', { name: 'Volibear - Furious', might: 9 })
     const s = baseState()

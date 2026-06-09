@@ -32,7 +32,9 @@ function effectiveMight(ci: CardInstance, base: number): { might: number; booste
     if (m && !/this turn/i.test(t)) gear += parseInt(m[1], 10)
   }
   const mods = (x.buffs ?? 0) + (x.tempMight ?? 0) + gear
-  return { might: Math.max(0, base + mods - ci.damage), boosted: mods > 0 }
+  // Show the Might STAT (damage never lowers a unit's Might) — marked damage is
+  // surfaced separately via the −N badge, so it isn't subtracted here.
+  return { might: Math.max(0, base + mods), boosted: mods > 0 }
 }
 
 export default function BoardCard({
@@ -172,8 +174,8 @@ export default function BoardCard({
         if (lvl.might > 0) parts.push(`+${lvl.might} Level`)
         if (aura !== 0) parts.push(`${aura > 0 ? '+' : ''}${aura} aura`)
         if ((x.tempMight ?? 0) !== 0) parts.push(`${(x.tempMight ?? 0) > 0 ? '+' : ''}${x.tempMight} this turn`)
-        if (ci.damage > 0) parts.push(`−${ci.damage} damage`)
-        const mightTitle = `Might: ${parts.join(' ')} = ${might}`
+        // Might (the stat) excludes damage; damage is shown as a trailing annotation.
+        const mightTitle = `Might: ${parts.join(' ')} = ${might}${ci.damage > 0 ? ` (−${ci.damage} damage marked → ${Math.max(0, might - ci.damage)} to kill)` : ''}`
         const badges = keywordBadges(def)
         const lvlThreshold = parseKeywords(def).level
         return (
