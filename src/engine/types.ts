@@ -345,13 +345,22 @@ export type DeferredOp =
    *  "you may pay :rb_energy_N: to <effect>" play-trigger family). `effect` is a
    *  serialized ParsedEffect (plain data); the engine casts + replays it. */
   | { type: 'applyEffectFromSource'; effect: unknown; sourceIid?: string }
+  /** Kill the chosen gear (selectGear), then its controller draws `draw` (Pickpocket
+   *  & the killGear family). */
+  | { type: 'killTargetGear'; draw: number }
+  /** Move the chosen attached gear (selectGear) from one host unit to another
+   *  (Azir - Ascendant steals a gear when the target has 2+). */
+  | { type: 'moveAttachedGear'; fromIid: string; toIid: string }
+  /** Override the elderOnPlay chain trigger's target for one location (selectTarget;
+   *  Elder Dragon picks which enemy at each location takes 1 damage). */
+  | { type: 'setElderTarget'; locIndex: number }
 
 /** A queued player decision (optional cost to pay, or a target to pick) recorded
  *  during synchronous effect resolution and surfaced one at a time AFTER the action
  *  completes (via surfaceNextDecision in reduce). Avoids pausing mid-trigger-loop. */
 export interface PendingDecision {
   player: PlayerId
-  kind: 'optionalPay' | 'selectTarget'
+  kind: 'optionalPay' | 'selectTarget' | 'selectGear'
   prompt: string
   srcName: string
   /** optionalPay: the cost paid if the player accepts. */
@@ -461,7 +470,8 @@ export interface MatchState {
       // P0 generic deferral (choice-restoration): an optional cost the player may
       // pay (custom Pay/Decline modal), or a target the player board-picks. The
       // deferred effect is carried as a serialized DeferredOp in `payload`.
-      | 'optionalPay' | 'selectTarget'
+      // selectGear surfaces as a list modal (gears aren't board-clickable).
+      | 'optionalPay' | 'selectTarget' | 'selectGear'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]

@@ -1177,9 +1177,10 @@ export default function OnlinePage() {
       {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'selectTarget' && (
         <ChoiceModal
           title={
-            match.pendingChoice.kind === 'revealOpponent' ? '🃏 Reveal a Hand'
-              : match.pendingChoice.kind === 'revealBattlefield' ? '✦ Choose a Battlefield'
-                : '✦ Battlefield'
+            match.pendingChoice.kind === 'selectGear' ? '⚙ Choose a Gear'
+              : match.pendingChoice.kind === 'revealOpponent' ? '🃏 Reveal a Hand'
+                : match.pendingChoice.kind === 'revealBattlefield' ? '✦ Choose a Battlefield'
+                  : '✦ Battlefield'
           }
           subtitle={match.pendingChoice.prompt}
           options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}

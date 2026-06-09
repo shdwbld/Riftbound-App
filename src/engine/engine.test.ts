@@ -6042,6 +6042,26 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)).toBe(false) // resolved → killed
   })
 
+  it('Elder Dragon on-play: lets you pick WHICH enemy at a location takes the 1 (P0)', () => {
+    const dragonId = injectCard('a2-dragon3', 'Any amount of your damage is enough to kill enemy units. When you play me, choose up to one enemy unit at each location. Deal 1 to them.', { name: 'Elder Dragon', might: 10, energy: 0, power: {} })
+    const s = baseState()
+    const strong = mk(injectCard('a2-ed-strong', 'A unit.', { might: 9 }), 1)
+    const weak = mk(injectCard('a2-ed-weak', 'A unit.', { might: 1 }), 1)
+    s.battlefields[0].units.push(strong, weak)
+    const dragon = mk(dragonId, 0)
+    s.players[0].zones.hand.push(dragon)
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: dragon.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    // Two enemies at the location → the Elder player picks which one (not auto-strongest).
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: weak.iid }) // pick the WEAK one
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    const units = r.state.battlefields.flatMap((b) => b.units)
+    expect(units.some((u) => u.iid === weak.iid)).toBe(false) // chosen weak one died
+    expect(units.some((u) => u.iid === strong.iid)).toBe(true) // strongest spared (would've died on auto)
+  })
+
   it('Volibear - Furious: on attack, pauses for a FREE split-damage placement that the dealer resolves', () => {
     const voli = injectCard('a2-voli', 'When I attack, deal 5 damage split among any number of enemy units here.', { name: 'Volibear - Furious', might: 9 })
     const s = baseState()
@@ -6513,8 +6533,10 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     s.players[1].zones.base.push(gear)
     const rake = mk(rid, 0)
     s.players[0].zones.hand.push(rake)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: rake.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: rake.iid, payment: emptyPayment() })
     expect(r.error).toBeUndefined()
+    expect(r.state.pendingChoice?.kind).toBe('selectGear') // P0: pick which gear
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: gear.iid })
     expect(r.state.players[1].zones.base.some((x) => x.iid === gear.iid)).toBe(false)
     expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true)
   })
@@ -6529,7 +6551,8 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     s.battlefields[0] = { cardId: battlefield.id, units: [host], controller: 1 }
     const rake = mk(rid, 0)
     s.players[0].zones.hand.push(rake)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: rake.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: rake.iid, payment: emptyPayment() })
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'g-iid-1' })
     expect(r.state.battlefields[0].units[0].attached).toHaveLength(0)
     expect(r.state.players[1].zones.trash.some((x) => x.iid === 'g-iid-1')).toBe(true)
   })
@@ -6547,6 +6570,7 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: spell.iid, targets: [], payment: emptyPayment() })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: gear.iid }) // P0: pick the gear
     expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true) // gear killed
     expect(r.state.players[1].zones.hand.length).toBe(before + 2) // its controller drew 2
   })
@@ -6572,7 +6596,8 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     s.players[1].zones.base.push(gear)
     const pp = mk(pid, 0)
     s.players[0].zones.hand.push(pp)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: pp.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: pp.iid, payment: emptyPayment() })
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: gear.iid })
     expect(r.state.players[1].zones.trash.some((x) => x.iid === gear.iid)).toBe(true) // killed
     expect(r.state.players[0].zones.base.some((c) => c.cardId === GOLD_TOKEN_ID)).toBe(true) // gold made
   })
@@ -6589,8 +6614,9 @@ describe('A4 — transient grants ([Shield]/[Tank]) & gear edge cases', () => {
     s.players[0].zones.hand.push(handGear)
     const jayce = mk(jid, 0)
     s.players[0].zones.hand.push(jayce)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: jayce.iid, payment: emptyPayment() })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: jayce.iid, payment: emptyPayment() })
     expect(r.error).toBeUndefined()
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: friendlyGear.iid }) // P0: pick the gear to sacrifice
     expect(r.state.players[0].zones.trash.some((x) => x.iid === friendlyGear.iid)).toBe(true) // sacrificed
     expect(r.state.players[0].zones.base.some((x) => x.iid === handGear.iid)).toBe(true) // played free
     expect(r.state.players[0].zones.hand.some((x) => x.iid === handGear.iid)).toBe(false)
@@ -7151,10 +7177,12 @@ describe('Phase B — card wiring (conditional Might)', () => {
     s.players[1].zones.base.push(foeGear)
     const z = mk(zid, 0)
     s.players[0].zones.hand.push(z)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: z.iid, payment: emptyPayment(), payAdditionalCost: true })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: z.iid, payment: emptyPayment(), payAdditionalCost: true })
     expect(r.error).toBeFalsy()
     expect(r.state.players[0].zones.base.some((g) => g.iid === myGear.iid)).toBe(false) // friendly gear paid as cost
     expect(r.state.players[0].zones.trash.some((g) => g.iid === myGear.iid)).toBe(true)
+    expect(r.state.pendingChoice?.kind).toBe('selectGear') // P0: pick the bonus enemy gear
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: foeGear.iid })
     expect(r.state.players[1].zones.base.some((g) => g.iid === foeGear.iid)).toBe(false) // enemy gear killed (bonus)
     expect(r.state.players[1].zones.trash.some((g) => g.iid === foeGear.iid)).toBe(true)
   })

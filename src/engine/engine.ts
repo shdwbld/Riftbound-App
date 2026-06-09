@@ -2220,6 +2220,15 @@ function queueSelectTarget(s: MatchState, player: PlayerId, d: { prompt: string;
   return s
 }
 
+/** Queue a GEAR pick surfaced as a list modal (gears aren't board-clickable —
+ *  mirrors Akshan's stealGear). Mandatory by default (a decline auto-picks
+ *  `defaultIid`, preserving the old lowest-cost auto-kill). No-op if no options. */
+function queueSelectGear(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; options: { iid: string; label: string }[]; op: DeferredOp; optional?: boolean; defaultIid?: string }): MatchState {
+  if (d.options.length === 0) return s
+  ;(s.pendingDecisions ??= []).push({ player, kind: 'selectGear', prompt: d.prompt, srcName: d.srcName, options: d.options, op: d.op, optional: d.optional, defaultIid: d.defaultIid })
+  return s
+}
+
 /** Move the head of the decision queue into `pendingChoice` so the UI surfaces it.
  *  No-op if a choice is already active. Drops selectTarget candidates that have left
  *  play; skips a whole decision if none remain. Called from reduce() post-action. */
@@ -2277,6 +2286,32 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
     case 'applyEffectFromSource': {
       const eff = op.effect as ParsedEffect
       for (const l of applyParsed(s, s.players[player], eff, undefined, op.sourceIid)) s = log(s, player, l)
+      return s
+    }
+    case 'killTargetGear': {
+      if (!chosenIid) return s
+      const nm = getCard(allGearInPlay(s).find((g) => g.iid === chosenIid)?.cardId ?? '')?.name ?? 'a gear'
+      const owner = killGearByIid(s, chosenIid)
+      s = log(s, player, `Killed ${nm}.`)
+      if (op.draw > 0 && owner != null) { drawN(s.players[owner], op.draw); s = log(s, player, `Its controller drew ${op.draw}.`) }
+      return s
+    }
+    case 'moveAttachedGear': {
+      if (!chosenIid) return s
+      const from = findUnitAnywhere(s, op.fromIid), to = findUnitAnywhere(s, op.toIid)
+      if (!from || !to) return s
+      const ri = (from.attached ?? []).findIndex((ref) => ref === chosenIid)
+      if (ri >= 0) {
+        const [ref] = from.attached.splice(ri, 1)
+        to.attached.push(ref)
+        s = log(s, player, `Stole ${getCard(ref.split('|')[0])?.name ?? 'a gear'} from ${getCard(from.cardId)?.name}.`)
+      }
+      return s
+    }
+    case 'setElderTarget': {
+      if (!chosenIid) return s
+      const item = [...s.chain].reverse().find((c) => c.trigger?.kind === 'elderOnPlay')
+      if (item?.targets && op.locIndex < item.targets.length) item.targets[op.locIndex] = chosenIid
       return s
     }
   }
@@ -2957,12 +2992,21 @@ function applyKillGear(s: MatchState, player: PlayerId, spec: { scope: 'friendly
     return true
   })
   if (!gears.length) return { killed: false, lines: ['No valid gear to kill.'] }
-  const pick = gears.reduce((lo, g) => (gearEnergyOf(g) <= gearEnergyOf(lo) ? g : lo))
-  const nm = getCard(pick.cardId)?.name ?? 'a gear'
-  const owner = killGearByIid(s, pick.iid)
-  const lines = [`Killed ${nm}.`]
-  if (controllerDraw > 0 && owner != null) { drawN(s.players[owner], controllerDraw); lines.push(`Its controller drew ${controllerDraw}.`) }
-  return { killed: true, lines }
+  // Let the player pick WHICH gear (list modal) instead of auto-killing the cheapest;
+  // a decline auto-picks the lowest-cost gear (preserving the old behavior). The kill
+  // + controller-draw resolve via the killTargetGear op. `killed: true` means a gear
+  // WILL be killed (candidates exist), so "if you do" chains (Pickpocket gold) still fire.
+  const lowest = gears.reduce((lo, g) => (gearEnergyOf(g) <= gearEnergyOf(lo) ? g : lo))
+  const scopeLbl = spec.scope === 'enemy' ? ' (enemy)' : spec.scope === 'friendly' ? ' (friendly)' : ''
+  queueSelectGear(s, player, {
+    prompt: `Kill a gear${scopeLbl}.`,
+    srcName: 'Kill a gear',
+    options: gears.map((g) => ({ iid: g.iid, label: getCard(g.cardId)?.name ?? 'a gear' })),
+    op: { type: 'killTargetGear', draw: controllerDraw },
+    optional: false,
+    defaultIid: lowest.iid,
+  })
+  return { killed: true, lines: ['Choosing a gear to kill…'] }
 }
 
 /** Record a conquered battlefield for the turn (Perched Grimwyrm's placement
@@ -4052,6 +4096,22 @@ function openElderOnPlay(s: MatchState, player: PlayerId): MatchState {
     id: makeChainId(), kind: 'trigger', controller: player, cardId: elderId,
     instance: { iid: '', cardId: elderId, owner: player, exhausted: false, damage: 0, attached: [] },
     payment: { exhaust: [], recycle: [] }, targets, trigger: { kind: 'elderOnPlay', locs },
+  })
+  // Let the player choose WHICH enemy takes the 1 damage at each BATTLEFIELD location
+  // with 2+ options (overrides the auto-strongest default via setElderTarget), before
+  // the reaction window opens. Base locations stay auto (loc -1 doesn't carry an owner).
+  targets.forEach((tIid, idx) => {
+    const li = locs[idx]
+    if (li < 0) return
+    const cands = s.battlefields[li].units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit')
+    if (cands.length >= 2) s = queueSelectTarget(s, player, {
+      prompt: `Elder Dragon — deal 1 to which enemy at ${bfBaseNameAt(s, li) || `Battlefield ${li + 1}`}?`,
+      srcName: 'Elder Dragon',
+      options: cands.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+      op: { type: 'setElderTarget', locIndex: idx },
+      optional: false,
+      defaultIid: tIid,
+    })
   })
   s.passes = 0
   s.priority = nextPlayer(s, player)
@@ -7879,10 +7939,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(log(s, action.player, `${pc.srcName}: paid${cost.energy ? ` ⚡${cost.energy}` : ''}${cost.powerAny ? ` ♺${cost.powerAny}` : ''}.`))
       }
 
-      // P0 select-target (Windsinger, Beast Below, …): apply the op to the board-picked
-      // unit. Optional picks ("you may") apply nothing on decline; mandatory picks
-      // (Beast Below, Dragon's Rage) auto-apply to defaultIid on decline.
-      if (pc.kind === 'selectTarget') {
+      // P0 select-target (Windsinger, Beast Below, …) + select-gear (kill/steal a gear).
+      // Apply the op to the board-picked unit / chosen gear. Optional picks ("you may")
+      // apply nothing on decline; mandatory picks auto-apply to defaultIid on decline.
+      if (pc.kind === 'selectTarget' || pc.kind === 'selectGear') {
         let parsed: { op: DeferredOp; optional?: boolean; defaultIid?: string }
         try { parsed = JSON.parse(pc.payload ?? '{}') } catch { return ok(s) }
         let pick = action.iid
@@ -8310,10 +8370,20 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         ;(tgtBf >= 0 ? s1.battlefields[tgtBf].units : s1.players[action.player].zones.base).push(azir)
         ;(azirBf >= 0 ? s1.battlefields[azirBf].units : s1.players[action.player].zones.base).push(tgt)
         recomputeControllers(s1)
-        if (tgt.attached.length > 0) {
+        if (tgt.attached.length === 1) {
           const stolen = tgt.attached.splice(0, 1)[0]
           azir.attached.push(stolen)
           s1 = log(s1, action.player, `${name}: stole ${getCard(stolen.split('|')[0])?.name} from ${getCard(tgt.cardId)?.name}.`)
+        } else if (tgt.attached.length > 1) {
+          // 2+ gears — let the player choose which one to steal (list modal).
+          s1 = queueSelectGear(s1, action.player, {
+            prompt: `${name} — steal which gear from ${getCard(tgt.cardId)?.name}?`,
+            srcName: name,
+            options: tgt.attached.map((ref) => ({ iid: ref, label: getCard(ref.split('|')[0])?.name ?? 'a gear' })),
+            op: { type: 'moveAttachedGear', fromIid: tgt.iid, toIid: azir.iid },
+            optional: false,
+            defaultIid: tgt.attached[0],
+          })
         }
         s1.players[action.player].azirSwappedThisTurn = true
         return ok(log(s1, action.player, `${name}: swapped locations with ${getCard(tgt.cardId)?.name}.`))

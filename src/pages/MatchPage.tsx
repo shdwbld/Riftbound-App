@@ -903,11 +903,13 @@ export default function MatchPage() {
               ? '⚔ Take Control of a Unit'
               : match.pendingChoice.kind === 'stealGear'
                 ? '⚙ Steal a Gear'
-                : match.pendingChoice.kind === 'revealOpponent'
-                  ? '🃏 Reveal a Hand'
-                  : match.pendingChoice.kind === 'revealBattlefield'
-                    ? '✦ Choose a Battlefield'
-                    : '✦ Battlefield'
+                : match.pendingChoice.kind === 'selectGear'
+                  ? '⚙ Choose a Gear'
+                  : match.pendingChoice.kind === 'revealOpponent'
+                    ? '🃏 Reveal a Hand'
+                    : match.pendingChoice.kind === 'revealBattlefield'
+                      ? '✦ Choose a Battlefield'
+                      : '✦ Battlefield'
           }
           subtitle={match.pendingChoice.prompt}
           options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
