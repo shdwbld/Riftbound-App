@@ -27,6 +27,9 @@ export type OverrideOp =
   | 'channelExhausted' | 'setTempMight' | 'sacrifice' | 'tutorShuffle'
   | 'killGear' | 'bounceGear'
   | 'revealFacedown' | 'removeFacedown' | 'bulkMove' | 'swapZone'
+  // Reveal a face-down [Hidden] card IN PLACE (flip up + resolve/play it for 0 at its
+  // battlefield), or relocate it to another battlefield (uses `action.toBattlefield`).
+  | 'revealFacedownInPlace' | 'moveFacedown'
   // Advanced game-state overrides (can break a game — that's the point).
   | 'setActive' | 'setTurn' | 'setPointsToWin' | 'setWinner' | 'setPhase'
   | 'clearChain' | 'clearShowdown' | 'setController' | 'triggerEnterPlay' | 'clearTurnState'

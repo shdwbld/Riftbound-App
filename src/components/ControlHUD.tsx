@@ -382,6 +382,20 @@ function SelectedTab({
       </div>
 
       <div className="space-y-2">
+        {zone === 'battlefield' && bfIndex != null && match.battlefields[bfIndex]?.facedown?.iid === ci.iid && (
+          <div className={SECTION}>
+            <div className={LABEL}>Hidden card</div>
+            <div className="flex flex-wrap gap-1">
+              <button className={BTN} title="Flip it up and resolve/play it for 0 here" onClick={() => ov('revealFacedownInPlace')}>⚡ Reveal in place</button>
+              <button className={BTN} onClick={() => ov('revealFacedown')}>👁 To hand</button>
+              <button className={BTN} onClick={() => ov('removeFacedown')}>🗑 Trash</button>
+              <button className={BTN} onClick={() => ov('removeFacedown', { flag: 'banish' })}>⊗ Banish</button>
+              {match.battlefields.map((b, i) => (i === bfIndex || b.facedown ? null : (
+                <button key={i} className={BTN} title={`Move to ${bare(getCard(b.cardId)?.name) || `Battlefield ${i + 1}`}`} onClick={() => ov('moveFacedown', { toBattlefield: i })}>↗ Move to BF {i + 1}</button>
+              )))}
+            </div>
+          </div>
+        )}
         {isUnit && (
           <div className={SECTION}>
             <div className={LABEL}>State</div>

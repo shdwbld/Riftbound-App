@@ -5838,6 +5838,24 @@ describe('Manual override — grant flags / setDamage / readyAll', () => {
     expect(rem.state.players[0].zones.trash.some((c) => c.iid === fd2.iid)).toBe(true)
   })
 
+  it('moveFacedown relocates a hidden card; revealFacedownInPlace flips it up into play', () => {
+    // moveFacedown: bf0 → empty bf1.
+    const s1 = baseState(); s1.sandbox = true
+    const fd1 = mk(furyUnit.id, 0, { facedown: true })
+    s1.battlefields[0] = { cardId: battlefield.id, units: [], controller: null, facedown: fd1 }
+    s1.battlefields[1] = { cardId: battlefield.id, units: [], controller: null }
+    const mv = reduce(s1, { type: 'OVERRIDE', player: 0, op: 'moveFacedown', iid: fd1.iid, toBattlefield: 1 })
+    expect(mv.state.battlefields[0].facedown).toBeNull()
+    expect(mv.state.battlefields[1].facedown?.iid).toBe(fd1.iid)
+    // revealFacedownInPlace: a hidden UNIT flips up and enters play at its battlefield.
+    const s2 = baseState(); s2.sandbox = true
+    const fd2 = mk(furyUnit.id, 0, { facedown: true })
+    s2.battlefields[0] = { cardId: battlefield.id, units: [], controller: null, facedown: fd2 }
+    const flip = reduce(s2, { type: 'OVERRIDE', player: 0, op: 'revealFacedownInPlace', iid: fd2.iid })
+    expect(flip.state.battlefields[0].facedown).toBeNull()
+    expect(flip.state.battlefields[0].units.some((u) => u.iid === fd2.iid)).toBe(true) // played for 0 here
+  })
+
   it('bulkMove moves a whole zone; swapZone swaps zones between players', () => {
     const s = baseState(); s.sandbox = true
     s.players[0].zones.hand.push(mk(furyUnit.id, 0), mk(furyUnit.id, 0))

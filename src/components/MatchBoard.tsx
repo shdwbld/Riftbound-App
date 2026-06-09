@@ -270,6 +270,7 @@ export default function MatchBoard({
     if (it.activateIid) onActivateUnit?.(it.activateIid)
     else if (it.attachGearIid) onAttachGear?.(it.attachGearIid)
     else if (it.moveGearIid) onMoveGear?.(it.moveGearIid.gearIid, it.moveGearIid.fromUnitIid, it.moveGearIid.owner)
+    else if (it.inspectCardId) { const c = getCard(it.inspectCardId); if (c) onInspect?.(c) }
     else if (it.action) onCardAction?.(it.action)
     setMenu(null)
   }
@@ -773,8 +774,16 @@ export default function MatchBoard({
       // Reveal/remove a battlefield's face-down [Hidden] card (sandbox tools beyond
       // the normal "Reveal = play for 0").
       if (ci.facedown && zone === 'battlefield') {
+        const bfIdx = match.battlefields.findIndex((b) => b.facedown?.iid === ci.iid)
+        const moveItems: MenuItem[] = match.battlefields
+          .map((b, i) => ({ b, i }))
+          .filter(({ b, i }) => i !== bfIdx && !b.facedown)
+          .map(({ b, i }) => ({ label: `↗ Move to ${getCard(b.cardId)?.name ?? `Battlefield ${i + 1}`}`, action: ov('moveFacedown', { toBattlefield: i }) }))
         groups.push({ label: 'Hidden card', items: [
+          { label: '🔍 Peek (inspect)', inspectCardId: ci.cardId },
+          { label: '⚡ Reveal in place (play for 0)', action: ov('revealFacedownInPlace') },
           { label: '👁 Reveal to hand', action: ov('revealFacedown') },
+          ...moveItems,
           { label: '🗑 Remove (trash)', action: ov('removeFacedown') },
           { label: '⊗ Remove (banish)', action: ov('removeFacedown', { flag: 'banish' }) },
         ] })

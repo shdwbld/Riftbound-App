@@ -40,6 +40,8 @@ export type MenuItem = {
   activateIid?: string
   attachGearIid?: string
   moveGearIid?: { gearIid: string; fromUnitIid: string; owner: PlayerId }
+  /** Open the card detail modal for this card id (peek at a face-down card). */
+  inspectCardId?: string
   stepper?: { title: string; make: (n: number) => Action }
   openSearch?: { source: SearchSource; owner: PlayerId }
   /** Enter board move-targeting mode instead of dispatching (Move). */

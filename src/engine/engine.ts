@@ -8833,6 +8833,28 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
           break
         }
+        // Flip a face-down [Hidden] card up and resolve/play it for 0 at its battlefield
+        // (vs. revealFacedown which returns it to hand) — lets the override TRIGGER it.
+        case 'revealFacedownInPlace': {
+          if (!action.iid) break
+          const bfi = s.battlefields.findIndex((b) => b.facedown?.iid === action.iid)
+          if (bfi < 0) break
+          const fd = s.battlefields[bfi].facedown!
+          const card = getCard(fd.cardId)
+          s.battlefields[bfi].facedown = null
+          if (card) s = resolveRevealedCard(s, fd.owner, fd, card, bfi)
+          break
+        }
+        // Relocate a face-down [Hidden] card to another battlefield (only if empty).
+        case 'moveFacedown': {
+          if (!action.iid || action.toBattlefield == null) break
+          const src = s.battlefields.find((b) => b.facedown?.iid === action.iid)
+          const dest = s.battlefields[action.toBattlefield]
+          if (!src || !dest || dest.facedown) break
+          dest.facedown = src.facedown
+          src.facedown = null
+          break
+        }
         // Move ALL cards of one zone to another (optionally another player's zone).
         case 'bulkMove': {
           const from = action.fromZone
