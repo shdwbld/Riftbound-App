@@ -6102,6 +6102,34 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(all.some((u) => u.iid === blocker.iid)).toBe(false)
   })
 
+  it('Lee Sin - Ascetic holds multiple buffs; a normal unit still caps at 1 (Rule 705.1)', () => {
+    const s = baseState()
+    const lee = mk(injectCard('lee-ascetic', ':rb_exhaust:: Buff me. (I get a +1 buff.) I can have any number of buffs.', { name: 'Lee Sin - Ascetic', might: 3 }), 0)
+    const normal = mk(injectCard('plain-unit', 'A unit.', { might: 3 }), 0)
+    s.players[0].zones.base.push(lee, normal)
+    // Buffs STACK on Lee Sin - Ascetic (+2 Might from 2 buffs)...
+    let r = reduce(s, { type: 'BUFF_UNIT', player: 0, iid: lee.iid })
+    r = reduce(r.state, { type: 'BUFF_UNIT', player: 0, iid: lee.iid })
+    expect(r.state.players[0].zones.base.find((u) => u.iid === lee.iid)?.buffs).toBe(2)
+    // ...but a normal unit refuses a second buff (capped at 1).
+    const n1 = reduce(s, { type: 'BUFF_UNIT', player: 0, iid: normal.iid })
+    expect(n1.error).toBeFalsy()
+    const n2 = reduce(n1.state, { type: 'BUFF_UNIT', player: 0, iid: normal.iid })
+    expect(n2.error).toBeTruthy()
+    expect(n1.state.players[0].zones.base.find((u) => u.iid === normal.iid)?.buffs).toBe(1)
+  })
+
+  it('Lee Sin - Ascetic ":rb_exhaust:: Buff me" applies a buff via activation', () => {
+    const s = baseState()
+    const lee = mk(injectCard('lee-ascetic-act', ':rb_exhaust:: Buff me. (I get a +1 buff.) I can have any number of buffs.', { name: 'Lee Sin - Ascetic', might: 3 }), 0)
+    s.players[0].zones.base.push(lee)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: lee.iid })
+    expect(r.error).toBeFalsy()
+    const after = r.state.players[0].zones.base.find((u) => u.iid === lee.iid)
+    expect(after?.buffs).toBe(1) // buffSelf applied via the activated ability
+    expect(after?.exhausted).toBe(true) // paid the :rb_exhaust: cost
+  })
+
   it('Volibear - Furious: on attack, pauses for a FREE split-damage placement that the dealer resolves', () => {
     const voli = injectCard('a2-voli', 'When I attack, deal 5 damage split among any number of enemy units here.', { name: 'Volibear - Furious', might: 9 })
     const s = baseState()

@@ -210,7 +210,7 @@ export default function BoardCard({
                 <span className="rounded-br bg-rose-600/90 px-0.5 font-bold text-white" title="Mighty (≥5 Might)">M</span>
               )}
               {(x.buffs ?? 0) > 0 && (
-                <span className="rounded-br bg-emerald-500/80 px-0.5 text-black" title="Buffed (permanent +Might)">✦</span>
+                <span className="rounded-br bg-emerald-500/80 px-0.5 font-bold text-black" title={`Buffed (permanent +${x.buffs} Might)`}>✦{(x.buffs ?? 0) > 1 ? `×${x.buffs}` : ''}</span>
               )}
               {(x.tempMight ?? 0) > 0 && (
                 <span className="rounded-br bg-teal-400/90 px-0.5 font-bold text-black" title={`+${x.tempMight} Might this turn`}>↑</span>

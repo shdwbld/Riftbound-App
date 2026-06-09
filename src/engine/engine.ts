@@ -563,17 +563,30 @@ function makeReflection(source: EngineCard, owner: PlayerId, turn: number, ready
   }
 }
 
+/** Max buffs a unit may hold — 1 (Rule 705.1), or Infinity for a card whose text
+ *  says "I can have any number of buffs" (Lee Sin - Ascetic). */
+function buffCapOf(card: Card | undefined): number {
+  return card && /can have any number of buffs/i.test(card.text ?? '') ? Infinity : 1
+}
+
+/** Place a +1 Might buff on `u` if it's under its cap (Rule 706 — a buff isn't
+ *  placed if the unit is already at cap). Returns true if a buff was added. */
+function addBuff(u: EngineCard): boolean {
+  if ((u.buffs ?? 0) >= buffCapOf(getCard(u.cardId))) return false
+  u.buffs = (u.buffs ?? 0) + 1
+  return true
+}
+
 /** Auto-resolve a parsed "buff" effect (the +1 Might token). Self-buffs land on
  *  the source unit; targeted buffs ("buff a/another friendly unit") auto-pick the
- *  controller's highest-base-Might un-buffed unit — buffs can't stack, so already
- *  buffed units gain nothing, and a fat target also turns on Lee Sin's auras. No
- *  manual prompt (abilities auto-resolve). */
+ *  controller's highest-base-Might un-buffed unit. Buffs cap at one per unit
+ *  (Rule 705.1) — except a unit that "can have any number of buffs" (Lee Sin -
+ *  Ascetic), via buffCapOf. No manual prompt (abilities auto-resolve). */
 function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: string): string[] {
   if (!e.buff && !e.buffAll) return []
   const lines: string[] = []
   const give = (u: EngineCard | undefined) => {
-    if (!u || !isFriendlyTo(s, p.id, u) || (u.buffs ?? 0) >= 1) return false
-    u.buffs = 1
+    if (!u || !isFriendlyTo(s, p.id, u) || !addBuff(u)) return false
     emit({ kind: 'buff', iid: u.iid, player: p.id })
     lines.push(`Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
     for (const l of fireBuffReactions(s, p, u.iid)) lines.push(l)
@@ -591,7 +604,7 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
   }
   if (!e.buffSelf && !e.buffAll && e.buff) {
     const candidates = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-      .filter((u) => isFriendlyTo(s, p.id, u) && def(u)?.type === 'unit' && (u.buffs ?? 0) < 1)
+      .filter((u) => isFriendlyTo(s, p.id, u) && def(u)?.type === 'unit' && (u.buffs ?? 0) < buffCapOf(getCard(u.cardId)))
       .filter((u) => !(e.buffExcludesSelf && u.iid === sourceIid))
       .sort((a, b) => (def(b)?.type === 'unit' ? (def(b) as { might: number }).might : 0) - (def(a)?.type === 'unit' ? (def(a) as { might: number }).might : 0))
     for (let i = 0; i < e.buff && i < candidates.length; i++) give(candidates[i])
@@ -954,7 +967,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       )
       if (friendly.length) {
         const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
-        tgt.buffs = 1
+        addBuff(tgt)
         emit({ kind: 'buff', iid: tgt.iid, player: p.id })
         lines.push(`Revealed a Bird/Cat/Dog/Poro — buffed ${getCard(tgt.cardId)?.name} (+1 Might).`)
       }
@@ -1640,7 +1653,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       if (gear && self) {
         removeFromZone(p, 'base', gear.iid)
         sendToTrash(p, gear)
-        if ((self.buffs ?? 0) < 1) { self.buffs = 1; emit({ kind: 'buff', iid: self.iid, player }) }
+        if (addBuff(self)) emit({ kind: 'buff', iid: self.iid, player })
         s = log(s, player, `${label}: Adaptatron killed ${getCard(gear.cardId)?.name} to buff itself.`)
       } else if (self && (self.buffs ?? 0) > 0) {
         self.buffs = 0 // no gear to pay → revert any generic self-buff
@@ -3722,7 +3735,7 @@ function bfUnitPlayedHere(s: MatchState, player: PlayerId, bfIndex: number, iid:
   if (name === 'Valley of Idols') {
     // "you may pay 1 to [Buff] it" — pure benefit, auto-pay when affordable.
     const u = s.battlefields[bfIndex].units.find((x) => x.iid === iid)
-    if (u && (u.buffs ?? 0) < 1 && makeBfApi(s).payEnergy(player, 1)) {
+    if (u && (u.buffs ?? 0) < buffCapOf(getCard(u.cardId)) && makeBfApi(s).payEnergy(player, 1)) {
       u.buffs = (u.buffs ?? 0) + 1
       s.log.push({ turn: s.turn, player, text: `Valley of Idols: paid 1 to Buff ${getCard(u.cardId)?.name}.` })
     }
@@ -4640,9 +4653,9 @@ function finishBeginning(s: MatchState): MatchState {
     if (passive.buffOnHold) {
       // Pick an UN-buffed friendly unit here (a buff is capped at one per unit, so
       // holding repeatedly must not stack on the same unit).
-      const target = bf.units.find((u) => controllerOf(u) === ap && (u.buffs ?? 0) < 1)
+      const target = bf.units.find((u) => controllerOf(u) === ap && (u.buffs ?? 0) < buffCapOf(getCard(u.cardId)))
       if (target) {
-        target.buffs = 1
+        addBuff(target)
         s = log(s, ap, `${bfName} (hold): buffed ${getCard(target.cardId)?.name} (+1).`)
       }
     }
@@ -8467,6 +8480,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       } else if (ab.effect.tempMightSelf) {
         u.tempMight = (u.tempMight ?? 0) + ab.effect.tempMightSelf
         emit({ kind: 'buff', iid: u.iid, player: action.player })
+      } else if (ab.effect.buffSelf) {
+        // ":rb_exhaust:: Buff me." (Lee Sin - Ascetic) — a permanent +1 Might buff on
+        // self, capped per buffCapOf (Ascetic can stack any number).
+        if (addBuff(u)) { emit({ kind: 'buff', iid: u.iid, player: action.player }); for (const l of fireBuffTriggers(s1, s1.players[action.player], u.iid)) s1 = log(s1, action.player, l) }
       } else if (ab.effect.dealMight?.dealer === 'self') {
         // Caitlyn - Patrolling: ":rb_exhaust:: Deal damage equal to my Might to a unit
         // at a battlefield." Use the player's chosen target, else auto-pick the
@@ -8511,7 +8528,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           // at one per unit (buffing an already-buffed unit does nothing).
           if (ab.effect.buff) {
             const tu = findUnitAnywhere(s1, t)
-            if (tu && (tu.buffs ?? 0) < 1) { tu.buffs = 1; emit({ kind: 'buff', iid: tu.iid, player: action.player }) }
+            if (tu && addBuff(tu)) emit({ kind: 'buff', iid: tu.iid, player: action.player })
           }
           // "Move a friendly unit … to its base" (The Syren, Yasuo pull-back).
           if (/\bmove\b/i.test(ab.effectText) && /\bbase\b/i.test(ab.effectText) && battlefieldOf(s1, t) >= 0)
@@ -9095,8 +9112,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         ...s.battlefields.flatMap((b) => b.units),
       ]) {
         if (u.iid === action.iid && controllerOf(u) === action.player) {
-          if ((u.buffs ?? 0) >= 1) return fail(state, 'A unit can have at most 1 Buff.')
-          u.buffs = 1
+          if (!addBuff(u)) return fail(state, 'A unit can have at most 1 Buff.')
           emit({ kind: 'buff', iid: u.iid, player: action.player })
           let out = log(s, action.player, `Buffed ${getCard(u.cardId)?.name} (+1 Might).`)
           for (const l of fireBuffTriggers(out, out.players[action.player], u.iid)) out = log(out, action.player, l)
