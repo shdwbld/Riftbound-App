@@ -311,6 +311,13 @@ export interface ShowdownState {
   /** Source iids whose split-damage trigger has been resolved this showdown (so the
    *  combat resolver doesn't re-prompt for them when it re-enters). */
   splitDone?: string[]
+  /** P5: a pending champion combat-trigger target pick (Ahri - Inquisitive, self-
+   *  dealMight, Yasuo/Kha'Zix), resolved BEFORE the combat math via
+   *  RESOLVE_COMBAT_TARGET. `options` are the enemy units here to choose from. */
+  combatTargetPick?: { sourceIid: string; srcName: string; bfIndex: number; options: { iid: string; label: string }[] }
+  /** P5: champion combat trigger sourceIid → chosen enemy iid, read by the trigger
+   *  handlers (preChosenCombatEnemy) instead of auto-picking the strongest. */
+  combatPicks?: Record<string, string>
   /** A pending invitation: a combatant has asked `to` to join and help, awaiting
    *  their accept/decline. */
   invite?: { from: PlayerId; to: PlayerId }
@@ -636,6 +643,9 @@ export type Action =
   /** Resolve a pending FREE split-damage placement (Volibear - Furious's attack
    *  trigger): distribute the N counters across the chosen enemy units, no lethal-first. */
   | { type: 'RESOLVE_SPLIT_DAMAGE'; player: PlayerId; allocations: Record<string, number> }
+  /** P5: pick which enemy a champion combat trigger hits, before the combat math
+   *  (Ahri - Inquisitive, self-dealMight, Yasuo/Kha'Zix). `iid` null → auto-pick. */
+  | { type: 'RESOLVE_COMBAT_TARGET'; player: PlayerId; iid: string | null }
   | { type: 'STUN_UNIT'; player: PlayerId; iid: string }
   /** Detach a piece of gear from a unit (the gear returns to your Base). */
   | { type: 'DETACH'; player: PlayerId; unitIid: string; gearIid: string }

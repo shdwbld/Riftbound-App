@@ -1464,7 +1464,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       const canPay = srcName !== "Kha'Zix - Evolving Hunter" || p.xp >= 3
       if (self && canPay) {
         const amt = combatMightAt(s, bi, self, 'attacker')
-        const target = pickEnemyToDamage(s, s.battlefields[bi].units, player, amt)
+        const target = preChosenCombatEnemy(s, sourceIid, player, bi) ?? pickEnemyToDamage(s, s.battlefields[bi].units, player, amt)
         if (target && amt > 0) {
           if (srcName === "Kha'Zix - Evolving Hunter") p.xp -= 3
           const dead = applyTargetDamage(s, target.iid, amt, true, player)
@@ -1485,7 +1485,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         const amt = dm.useStat === 'assault'
           ? parseKeywords(getCard(self.cardId)).assault + (self.grantAssault ?? 0)
           : combatMightAt(s, bi, self, ability.event === 'attack' ? 'attacker' : 'defender')
-        const target = pickEnemyToDamage(s, s.battlefields[bi].units, player, amt)
+        const target = preChosenCombatEnemy(s, sourceIid, player, bi) ?? pickEnemyToDamage(s, s.battlefields[bi].units, player, amt)
         if (target && amt > 0) {
           s = log(s, player, `${label}: ${srcName} dealt ${amt} to ${getCard(target.cardId)?.name}.`)
           s = fireDeaths(s, applyTargetDamage(s, target.iid, amt, true, player))
@@ -1506,7 +1506,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     if ((ability.event === 'attack' || ability.event === 'defend') && sourceIid && srcName === 'Ahri - Inquisitive') {
       // "When I attack or defend, give an enemy unit here −2 Might this turn (min 1)."
       const bi = battlefieldOf(s, sourceIid)
-      const target = bi >= 0 ? pickStrongestEnemy(s, s.battlefields[bi].units, player) : undefined
+      const target = bi >= 0 ? (preChosenCombatEnemy(s, sourceIid, player, bi) ?? pickStrongestEnemy(s, s.battlefields[bi].units, player)) : undefined
       if (target) {
         applyTempMight(s, target.iid, -2, 1)
         s = log(s, player, `${label}: ${srcName} gave ${getCard(target.cardId)?.name} −2 Might this turn (min 1).`)
@@ -5569,24 +5569,19 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
  *  pre-combat board effects (Yasuo - Remorseful's damage, Warwick - Hunter's kill,
  *  Vi - Peacekeeper's stun, Ahri - Inquisitive's −2) shape the showdown. Win-combat
  *  and death triggers still fire afterward (in finalizeShowdown). */
-function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
+/** Collect every attack/defend trigger that fires for a showdown (unit + attached
+ *  gear + the defending player's global "when you defend" permanents). Pure — used
+ *  both by fireCombatTriggers and the pre-combat target-pick scan (P5). */
+function collectCombatFired(s: MatchState, bfIndex: number): FiredTrigger[] {
   const bf = s.battlefields[bfIndex]
   const mover = s.showdown?.movedUnit
   const moverOwner = (() => { const u = bf.units.find((x) => x.iid === mover); return u ? controllerOf(u) : s.activePlayer })()
   const attackers = bf.units.filter((u) => controllerOf(u) === moverOwner)
   const defenders = bf.units.filter((u) => controllerOf(u) !== moverOwner)
-  // Ahri - Nine-Tailed Fox (legend): "When an enemy unit attacks a battlefield you
-  // control, give it −1 Might this turn (min 1)." Applies to each attacker when the
-  // pre-combat controller (a defender) has Ahri in play.
-  const controller = bf.controller
-  if (controller != null && controller !== moverOwner && playerHasLegend(s, controller, 'Ahri - Nine-Tailed Fox')) {
-    for (const u of [...attackers]) applyTempMight(s, u.iid, -1, 1)
-    if (attackers.length) s = log(s, controller, `Ahri - Nine-Tailed Fox: gave ${attackers.length} attacker(s) −1 Might this turn (min 1).`)
-  }
   const combatFired: FiredTrigger[] = []
-  // Collect a unit's own combat triggers plus those of any attached gear ("when the
-  // equipped unit attacks/defends → …", e.g. Recurve Bow). Gear triggers resolve with
-  // the HOST as source so "here"/"me" target the unit, but carry the gear's text.
+  // A unit's own combat triggers plus those of any attached gear ("when the equipped
+  // unit attacks/defends → …", e.g. Recurve Bow). Gear triggers resolve with the HOST
+  // as source so "here"/"me" target the unit, but carry the gear's text.
   const collectCombat = (u: EngineCard, event: TriggerEvent) => {
     for (const ab of triggersFor(def(u), event))
       combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId })
@@ -5611,7 +5606,65 @@ function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
           combatFired.push({ player: defenderPlayer, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex })
     }
   }
-  return fireTriggers(s, combatFired, bfIndex)
+  return combatFired
+}
+
+/** The candidate enemy units for a champion combat trigger that targets "an enemy
+ *  here" (Ahri - Inquisitive, generic self-dealMight like Ezreal/Lucian, Yasuo /
+ *  Kha'Zix). Returns null for triggers whose target isn't a deterministic single
+ *  enemy (TF's rune-gated pick, Teemo's conditional damage — left auto). (P5) */
+function combatTargetEnemies(s: MatchState, f: FiredTrigger, bfIndex: number): EngineCard[] | null {
+  if (!f.sourceIid || battlefieldOf(s, f.sourceIid) !== bfIndex) return null
+  const srcName = (getCard(f.sourceCardId ?? '')?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+  const ev = f.ability.event
+  const targets =
+    (ev === 'attack' && (srcName === 'Yasuo - Remorseful' || srcName === "Kha'Zix - Evolving Hunter")) ||
+    ((ev === 'attack' || ev === 'defend') && f.ability.effect.dealMight?.dealer === 'self') ||
+    ((ev === 'attack' || ev === 'defend') && srcName === 'Ahri - Inquisitive')
+  if (!targets) return null
+  return s.battlefields[bfIndex].units.filter((u) => isEnemyTo(s, f.player, u) && getCard(u.cardId)?.type === 'unit')
+}
+
+/** The next champion combat trigger awaiting a player target-pick this showdown
+ *  (2+ enemy options, not yet chosen). null when all are resolved. (P5) */
+function nextCombatTargetPick(s: MatchState, bfIndex: number): { sourceIid: string; srcName: string; player: PlayerId; options: { iid: string; label: string }[] } | null {
+  const done = s.showdown?.combatPicks ?? {}
+  for (const f of collectCombatFired(s, bfIndex)) {
+    if (!f.sourceIid || done[f.sourceIid] != null) continue
+    const enemies = combatTargetEnemies(s, f, bfIndex)
+    if (enemies && enemies.length >= 2) return {
+      sourceIid: f.sourceIid,
+      srcName: (getCard(f.sourceCardId ?? '')?.name ?? 'A unit').replace(/\s*\([^)]*\)\s*$/, ''),
+      player: f.player,
+      options: enemies.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+    }
+  }
+  return null
+}
+
+/** A champion combat trigger's player-chosen enemy at `bfIndex`, if one was picked
+ *  pre-combat (P5) and is still a valid enemy here; else undefined (→ auto-pick). */
+function preChosenCombatEnemy(s: MatchState, sourceIid: string, player: PlayerId, bfIndex: number): EngineCard | undefined {
+  const pick = s.showdown?.combatPicks?.[sourceIid]
+  if (!pick) return undefined
+  const u = s.battlefields[bfIndex]?.units.find((x) => x.iid === pick)
+  return u && isEnemyTo(s, player, u) ? u : undefined
+}
+
+function fireCombatTriggers(s: MatchState, bfIndex: number): MatchState {
+  const bf = s.battlefields[bfIndex]
+  const mover = s.showdown?.movedUnit
+  const moverOwner = (() => { const u = bf.units.find((x) => x.iid === mover); return u ? controllerOf(u) : s.activePlayer })()
+  const attackers = bf.units.filter((u) => controllerOf(u) === moverOwner)
+  // Ahri - Nine-Tailed Fox (legend): "When an enemy unit attacks a battlefield you
+  // control, give it −1 Might this turn (min 1)." Applies to each attacker when the
+  // pre-combat controller (a defender) has Ahri in play.
+  const controller = bf.controller
+  if (controller != null && controller !== moverOwner && playerHasLegend(s, controller, 'Ahri - Nine-Tailed Fox')) {
+    for (const u of [...attackers]) applyTempMight(s, u.iid, -1, 1)
+    if (attackers.length) s = log(s, controller, `Ahri - Nine-Tailed Fox: gave ${attackers.length} attacker(s) −1 Might this turn (min 1).`)
+  }
+  return fireTriggers(s, collectCombatFired(s, bfIndex), bfIndex)
 }
 
 /** The next unresolved "deal N damage split among any number of enemy units here"
@@ -5647,6 +5700,14 @@ function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
     s.showdown!.splitDamage = split
     s.showdown!.priority = split.step.dealer
     return s // paused — wait for RESOLVE_SPLIT_DAMAGE
+  }
+  // P5: champion combat triggers (Ahri - Inquisitive, self-dealMight, Yasuo/Kha'Zix)
+  // let the controller pick WHICH enemy here, BEFORE the math — one prompt each.
+  const ctp = nextCombatTargetPick(s, bfIndex)
+  if (ctp) {
+    s.showdown!.combatTargetPick = { sourceIid: ctp.sourceIid, srcName: ctp.srcName, bfIndex, options: ctp.options }
+    s.showdown!.priority = ctp.player
+    return s // paused — wait for RESOLVE_COMBAT_TARGET
   }
   s = fireCombatTriggers(s, bfIndex)
   const { steps } = showdownSteps(s, bfIndex)
@@ -8832,6 +8893,20 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       return ok(resolveShowdown(s, s.showdown!.battlefield))
     }
 
+    case 'RESOLVE_COMBAT_TARGET': {
+      if (state.phase !== 'showdown' || !state.showdown?.combatTargetPick)
+        return fail(state, 'No combat target to pick right now.')
+      const ctp = state.showdown.combatTargetPick
+      if (state.showdown.priority !== action.player) return fail(state, 'Not your target to pick.')
+      let s = clone(state)
+      // Honor the chosen enemy; a null/invalid pick falls back to the strongest option.
+      const valid = action.iid && ctp.options.some((o) => o.iid === action.iid) ? action.iid : null
+      const pick = valid ?? [...ctp.options].map((o) => findUnitAnywhere(s, o.iid)).filter((u): u is EngineCard => !!u).sort((a, b) => mightOf(b) - mightOf(a))[0]?.iid ?? ctp.options[0].iid
+      s.showdown!.combatPicks = { ...(s.showdown!.combatPicks ?? {}), [ctp.sourceIid]: pick }
+      s.showdown!.combatTargetPick = undefined
+      return ok(resolveShowdown(s, s.showdown!.battlefield))
+    }
+
     case 'PASS': {
       if (state.phase !== 'showdown' || !state.showdown)
         return fail(state, 'Nothing to pass on.')
@@ -8839,6 +8914,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return fail(state, 'Not your priority.')
       if (state.showdown.assign) return fail(state, 'Assign combat damage first.')
       if (state.showdown.splitDamage) return fail(state, 'Place the split damage first.')
+      if (state.showdown.combatTargetPick) return fail(state, 'Pick the combat trigger target first.')
       if (state.showdown.invite) return fail(state, 'An invitation is awaiting a response.')
       const s = clone(state)
       s.showdown!.passes += 1

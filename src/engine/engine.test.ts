@@ -6062,6 +6062,30 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     expect(units.some((u) => u.iid === strong.iid)).toBe(true) // strongest spared (would've died on auto)
   })
 
+  it('P5: Ahri - Inquisitive lets the attacker pick WHICH enemy gets −2 Might (combat pause)', () => {
+    const ahriId = injectCard('p5-ahri', 'When I attack or defend, give an enemy unit here −2 :rb_might: this turn (min 1).', { name: 'Ahri - Inquisitive', might: 5 })
+    const s = baseState()
+    const strong = mk(injectCard('p5-strong', 'A unit.', { might: 8 }), 1, { exhausted: true })
+    const weak = mk(injectCard('p5-weak', 'A unit.', { might: 6 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [strong, weak], controller: 1 }
+    const ahri = mk(ahriId, 0, { stunned: true } as Partial<EngineCard>) // stunned → no combat dmg, isolates the debuff
+    s.players[0].zones.base.push(ahri)
+    s.players[1].zones.mainDeck.push(mk(furyUnit.id, 1))
+    let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: ahri.iid, toBattlefield: 0 }) // attack
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    // Combat pauses BEFORE the math for the attacker to choose Ahri's target.
+    expect(r.state.showdown?.combatTargetPick?.srcName).toBe('Ahri - Inquisitive')
+    expect(r.state.showdown!.combatTargetPick!.options.some((o) => o.iid === weak.iid)).toBe(true)
+    r = reduce(r.state, { type: 'RESOLVE_COMBAT_TARGET', player: 0, iid: weak.iid }) // pick the WEAK one
+    expect(r.error).toBeUndefined()
+    const all = r.state.battlefields.flatMap((b) => b.units)
+    const weakAfter = all.find((u) => u.iid === weak.iid)
+    const strongAfter = all.find((u) => u.iid === strong.iid)
+    expect(weakAfter?.tempMight).toBe(-2) // chosen enemy debuffed
+    expect(strongAfter?.tempMight ?? 0).toBe(0) // strongest (auto target) untouched
+  })
+
   it('Volibear - Furious: on attack, pauses for a FREE split-damage placement that the dealer resolves', () => {
     const voli = injectCard('a2-voli', 'When I attack, deal 5 damage split among any number of enemy units here.', { name: 'Volibear - Furious', might: 9 })
     const s = baseState()

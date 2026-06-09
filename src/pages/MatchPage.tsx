@@ -696,6 +696,16 @@ export default function MatchPage() {
           />
         ) : null
       })()}
+      {/* P5: pick which enemy a champion combat trigger hits (before the math). */}
+      {match.showdown?.combatTargetPick && match.showdown.priority === controlling && (
+        <ChoiceModal
+          title={`⚔ ${match.showdown.combatTargetPick.srcName}`}
+          subtitle="Choose which enemy this combat trigger hits."
+          options={match.showdown.combatTargetPick.options.map((o) => ({ label: o.label, value: o.iid }))}
+          onPick={(iid) => act({ type: 'RESOLVE_COMBAT_TARGET', player: controlling, iid: String(iid) })}
+          onCancel={() => act({ type: 'RESOLVE_COMBAT_TARGET', player: controlling, iid: null })}
+        />
+      )}
       {summary && (
         <BattleSummary match={match} events={summary.events} token={summary.token} onClose={() => setSummary(null)} />
       )}
