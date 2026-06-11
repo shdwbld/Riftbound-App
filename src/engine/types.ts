@@ -502,6 +502,10 @@ export interface MatchState {
    *  player who will take an additional turn — consumed FIFO at END_TURN before the
    *  normal next player. Chaining multiple Time Warps stacks the queue. */
   extraTurns?: PlayerId[]
+  /** G4: the Ending Step is underway (rule 317.1) — end-of-turn triggers are on
+   *  the Chain; the cleanup/expiration sweep and the turn hand-off run once the
+   *  chain empties and no decision is pending (maybeFinishEndTurn). */
+  endingTurn?: boolean
   /** Unyielding Spirit: "Prevent all spell and ability damage this turn." All
    *  applyTargetDamage (spell/ability) is zeroed while set; combat is unaffected.
    *  Cleared at END_TURN. */

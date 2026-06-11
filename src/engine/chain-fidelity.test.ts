@@ -244,6 +244,50 @@ describe('Phase G1 — triggers on the chain with smart auto-pass', () => {
     expect(r.state.players[1].zones.runePool.length).toBe(0) // the rune was recycled
   })
 
+  it('G4: end-of-turn triggers resolve and the turn hands off synchronously when quiet', () => {
+    const s = baseState() // activePlayer = 1
+    s.players[1].zones.base.push(mk(injectCard('cf-eot-draw', 'At the end of your turn, draw 1.', { name: 'Aurora' }), 1))
+    const before = s.players[1].zones.hand.length
+    const r = reduce(s, { type: 'END_TURN', player: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.hand.length).toBe(before + 1) // EOT trigger drew
+    expect(r.state.activePlayer).toBe(0) // hand-off completed in the same action
+    expect(r.state.endingTurn).toBeFalsy()
+  })
+
+  it('G4: the Ending Step runs BEFORE expiration — "this turn" state is live in the window', () => {
+    const s = baseState() // activePlayer = 1
+    s.players[1].zones.base.push(mk(injectCard('cf-eot-draw2', 'At the end of your turn, draw 1.', { name: 'Aurora' }), 1))
+    const buffed = mk(furyUnit.id, 1, { tempMight: 2 })
+    s.players[1].zones.base.push(buffed)
+    s.players[0].zones.hand.push(mk(injectCard('cf-eot-react', '[Reaction] Draw 1.', { type: 'spell', energy: 0, power: {} }), 0))
+    let r = reduce(s, { type: 'END_TURN', player: 1 })
+    expect(r.error).toBeFalsy()
+    // Paused in the Ending Step: the chain holds the EOT trigger, the turn has
+    // NOT handed off, and the Expiration sweep has NOT run yet.
+    expect(r.state.chain.length).toBe(1)
+    expect(r.state.activePlayer).toBe(1)
+    expect(r.state.players[1].zones.base.find((u) => u.iid === buffed.iid)?.tempMight).toBe(2) // still live
+    expect(reduce(r.state, { type: 'END_TURN', player: 1 }).error).toBeTruthy() // can't end twice (chain-open guard)
+    // The opponent passes → trigger resolves → expiration + hand-off complete.
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.activePlayer).toBe(0)
+    expect(r.state.players[1].zones.base.find((u) => u.iid === buffed.iid)?.tempMight ?? 0).toBe(0) // expired
+  })
+
+  it('G4: all units heal at the End of Turn Cleanup (rule 317.3)', () => {
+    const s = baseState() // activePlayer = 1
+    const wounded = mk(furyUnit.id, 1, { damage: 1 })
+    s.players[1].zones.base.push(wounded)
+    const enemyWounded = mk(furyUnit.id, 0, { damage: 2 })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemyWounded], controller: 0 }
+    const r = reduce(s, { type: 'END_TURN', player: 1 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.base.find((u) => u.iid === wounded.iid)?.damage).toBe(0)
+    expect(r.state.battlefields[0].units.find((u) => u.iid === enemyWounded.iid)?.damage).toBe(0)
+  })
+
   it('a Reaction played in the window resolves before the trigger (LIFO)', () => {
     const s = baseState()
     s.players[0].zones.base.push(mk(SOT_DRAW, 0))

@@ -35,13 +35,14 @@ export type TriggerEvent =
   | 'targeted' // a unit is chosen as a spell/ability target (Jae Medarda, Irelia - Fervent)
   | 'hide' // you hide a card facedown (Katarina - Reckless)
   | 'opponentMove' // an opponent moves a unit to a battlefield (Volibear - Imposing)
+  | 'endOfTurn' // "at the end of your turn" (G4 Ending Step — synthesized from endOfTurnEffect, not parsed)
 
 /** Runtime list of all trigger events (mirrors the TriggerEvent union above) —
  *  used by the card-spec editor vocabulary so its options can't drift from the engine. */
 export const TRIGGER_EVENTS: TriggerEvent[] = [
   'play', 'conquer', 'hold', 'death', 'startOfTurn', 'attack', 'defend', 'move',
   'winCombat', 'stun', 'enemyDeath', 'discard', 'recycleRune', 'recycleCard', 'spendBuff',
-  'becomesState', 'buff', 'targeted', 'hide', 'opponentMove',
+  'becomesState', 'buff', 'targeted', 'hide', 'opponentMove', 'endOfTurn',
 ]
 
 export interface TriggeredAbility {

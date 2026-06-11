@@ -7025,6 +7025,63 @@ function onChainEmptied(s: MatchState): MatchState {
   return s
 }
 
+/** G4 (rule 317): complete the turn hand-off once the Ending Step's chain has
+ *  emptied and no decision is pending. Order per the rulebook: End of Turn
+ *  Cleanup (heal all units — 317.3 "2c"), the Expiration Step (all "this turn"
+ *  effects expire simultaneously: tempMight / grants / stun / one-shot shields /
+ *  Hostile Takeover control), pools empty, then extraTurns / next player and
+ *  beginTurn. No-op unless END_TURN set `endingTurn`. */
+function maybeFinishEndTurn(state: MatchState): MatchState {
+  if (!state.endingTurn) return state
+  if (state.chain.length > 0 || state.pendingChoice || state.pendingDecisions?.length) return state
+  let s = state
+  s.endingTurn = undefined
+  const ender = s.activePlayer
+  // End of Turn Cleanup (heal) + Expiration Step ("this turn" wipes), applied in
+  // one sweep: damage, Might modifiers, Stun, granted keywords, and the one-shot
+  // "would die this turn" death/banish replacements (Highlander, Smite).
+  for (const pl of s.players) {
+    for (const z of Object.keys(pl.zones) as ZoneId[])
+      pl.zones[z] = pl.zones[z].map((c) => ({ ...c, damage: 0, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false, preventNextDamage: false }))
+  }
+  for (const bf of s.battlefields)
+    bf.units = bf.units.map((u) => ({ ...u, damage: 0, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false, preventNextDamage: false }))
+  // Hostile Takeover: "until end of turn" stolen units revert now — clear the
+  // control override and recall them to their OWNER's base (once controlledBy is
+  // cleared, controller == owner, so this is the owner's base per Rule 428). A
+  // stolen unit that died this turn is gone from these zones, so it's skipped.
+  const reverting: EngineCard[] = []
+  for (const bf of s.battlefields) reverting.push(...bf.units.filter((u) => u.stolenUntilEot))
+  for (const pl of s.players) reverting.push(...pl.zones.base.filter((u) => u.stolenUntilEot))
+  for (const u of reverting) {
+    for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === u.iid); if (i >= 0) bf.units.splice(i, 1) }
+    for (const pl of s.players) pl.zones.base = pl.zones.base.filter((x) => x.iid !== u.iid)
+    u.controlledBy = undefined
+    u.stolenUntilEot = undefined
+    s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
+    s.log.push({ turn: s.turn, player: u.owner, text: `Hostile Takeover expired — ${getCard(u.cardId)?.name ?? 'a unit'} recalled to its owner.` })
+  }
+  if (reverting.length) recomputeControllers(s)
+  // As the Expiration Step ends, the rune pools empty (rule 317.4).
+  s.players[ender].pool = { energy: 0, power: {} }
+  s.preventAbilityDamageThisTurn = undefined // Unyielding Spirit lasts only "this turn"
+  // Time Warp: a queued extra turn goes to its caster, deferring the normal next
+  // player (skip any whose caster has since been eliminated). Else advance normally.
+  let extra = s.extraTurns ?? []
+  while (extra.length && s.players[extra[0]]?.out) extra = extra.slice(1)
+  if (extra.length) {
+    const who = extra[0]
+    s.extraTurns = extra.slice(1)
+    s.activePlayer = who
+    s = log(s, who, `${s.players[who].name} takes an extra turn (Time Warp).`)
+  } else {
+    s.extraTurns = []
+    s.activePlayer = nextPlayer(s, ender)
+  }
+  s.turn = s.turn + 1
+  return beginTurn(s)
+}
+
 /** Phase G smart auto-pass loop: while the TOP of the chain is a trigger item,
  *  seats with no legal reaction auto-pass; when every alive seat would auto-pass,
  *  the trigger resolves. Pauses with priority on the first seat that holds a
@@ -7160,6 +7217,8 @@ export function reduce(state: MatchState, action: Action): EngineResult {
   if (!result.error) result.state = autoPassTriggers(result.state)
   // Surface any queued optional-pay / target decision (P0) one at a time.
   if (!result.error) result.state = surfaceNextDecision(result.state)
+  // G4: complete a pending turn hand-off once the Ending Step settles.
+  if (!result.error) result.state = maybeFinishEndTurn(result.state)
   // Only attach events on a successful application (no error).
   if (!result.error && pendingEvents.length) result.events = pendingEvents
   return result
@@ -9543,24 +9602,20 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     case 'END_TURN': {
       const guard = requireActiveAction(state, action.player)
       if (guard) return fail(state, guard)
+      if (state.endingTurn) return fail(state, 'The turn is already ending.')
       let s = clone(state)
-      // End-of-turn cleanup: clear "this turn" Might modifiers, Stun, and the
-      // one-shot "would die this turn" death/banish replacements (Highlander, Smite).
-      for (const pl of s.players) {
-        for (const z of Object.keys(pl.zones) as ZoneId[])
-          pl.zones[z] = pl.zones[z].map((c) => ({ ...c, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false, preventNextDamage: false }))
-      }
-      for (const bf of s.battlefields)
-        bf.units = bf.units.map((u) => ({ ...u, tempMight: 0, stunned: false, grantAssault: 0, grantGanking: false, grantShield: 0, grantTank: false, grantDeflect: 0, deathShield: false, banishShield: false, preventNextDamage: false }))
-      // "At the end of your turn, …" effects for the ending player's permanents
-      // (Dazzling Aurora's free-unit engine; Annie - Dark Child's ready-runes —
-      // hence the legend is included). Base gear + units + battlefield units + legend.
+      // G4 (rule 317.1): the Ending Step comes FIRST — "at the end of your turn"
+      // triggers go on the Chain while "this turn" state (tempMight, grants,
+      // stuns) is still live; the old order wiped it before they could read it.
+      // The cleanup/expiration sweep and the hand-off run in maybeFinishEndTurn
+      // once the chain has emptied (synchronously when nobody holds a reaction).
       const ender = state.activePlayer
       const perms = [
         ...s.players[ender].zones.base,
         ...s.battlefields.flatMap((b) => b.units.filter((u) => controllerOf(u) === ender)),
         ...(s.players[ender].legend ? [s.players[ender].legend!] : []),
       ]
+      const eotFired: FiredTrigger[] = []
       for (const perm of perms) {
         const def = getCard(perm.cardId)
         if (!def) continue
@@ -9569,42 +9624,17 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // isn't on a battlefield (in base / legend zone).
         if (/if (?:i'm|i am) at a battlefield/i.test(def.text ?? '') && battlefieldOf(s, perm.iid) < 0) continue
         if (hasUntargetedPart(eot))
-          for (const line of applyParsed(s, s.players[ender], eot, undefined, perm.iid)) s = log(s, ender, `${def.name}: ${line}`)
+          eotFired.push({
+            player: ender,
+            sourceIid: perm.iid,
+            sourceCardId: perm.cardId,
+            ability: { event: 'endOfTurn', scope: 'global', optional: false, effect: eot, text: 'at the end of your turn' },
+          })
       }
-      // Hostile Takeover: "until end of turn" stolen units revert now — clear the
-      // control override and recall them to their OWNER's base (once controlledBy is
-      // cleared, controller == owner, so this is the owner's base per Rule 428). A
-      // stolen unit that died this turn is gone from these zones, so it's skipped.
-      const reverting: EngineCard[] = []
-      for (const bf of s.battlefields) reverting.push(...bf.units.filter((u) => u.stolenUntilEot))
-      for (const pl of s.players) reverting.push(...pl.zones.base.filter((u) => u.stolenUntilEot))
-      for (const u of reverting) {
-        for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === u.iid); if (i >= 0) bf.units.splice(i, 1) }
-        for (const pl of s.players) pl.zones.base = pl.zones.base.filter((x) => x.iid !== u.iid)
-        u.controlledBy = undefined
-        u.stolenUntilEot = undefined
-        s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
-        s.log.push({ turn: s.turn, player: u.owner, text: `Hostile Takeover expired — ${getCard(u.cardId)?.name ?? 'a unit'} recalled to its owner.` })
-      }
-      if (reverting.length) recomputeControllers(s)
-      // Empty the ending player's resource pool.
-      s.players[state.activePlayer].pool = { energy: 0, power: {} }
-      s.preventAbilityDamageThisTurn = undefined // Unyielding Spirit lasts only "this turn"
-      // Time Warp: a queued extra turn goes to its caster, deferring the normal next
-      // player (skip any whose caster has since been eliminated). Else advance normally.
-      let extra = s.extraTurns ?? []
-      while (extra.length && s.players[extra[0]]?.out) extra = extra.slice(1)
-      if (extra.length) {
-        const who = extra[0]
-        s.extraTurns = extra.slice(1)
-        s.activePlayer = who
-        s = log(s, who, `${s.players[who].name} takes an extra turn (Time Warp).`)
-      } else {
-        s.extraTurns = []
-        s.activePlayer = nextPlayer(s, state.activePlayer)
-      }
-      s.turn = state.turn + 1
-      return ok(beginTurn(s))
+      s.endingTurn = true
+      s = pushFiredTriggers(s, eotFired)
+      s = autoPassTriggers(s)
+      return ok(maybeFinishEndTurn(s))
     }
 
     case 'DRAW': {
