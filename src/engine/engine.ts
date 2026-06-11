@@ -4454,9 +4454,10 @@ function moveUnits(
     markConquered(s2, player, toBattlefield)
     s2 = grantHunt(s2, player, toBattlefield)
     s2 = applyConquerPassive(s2, player, toBattlefield)
-    s2 = fireTriggers(s2, collectGlobal(s2, player, 'conquer'), toBattlefield, 0, prevController == null)
+    // G3: conquer triggers go on the Chain (rule 376.4 — chained after control +
+    // the Victory Point); smart auto-pass keeps reaction-free boards synchronous.
     const here = s2.battlefields[toBattlefield].units.filter((u) => controllerOf(u) === player).map((u) => u.iid)
-    s2 = fireTriggers(s2, collectSelf(s2, player, 'conquer', here), toBattlefield, 0, prevController == null)
+    s2 = pushFiredTriggers(s2, [...collectGlobal(s2, player, 'conquer'), ...collectSelf(s2, player, 'conquer', here)], toBattlefield, 0, prevController == null)
     offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
     s2 = offerTrashConquerReturn(s2, player) // Super Mega Death Rocket!
   }
@@ -4493,8 +4494,8 @@ function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedI
     s = grantHunt(s, movedOwner, bfIndex)
     s = applyConquerPassive(s, movedOwner, bfIndex)
     const here = bf.units.filter((u) => controllerOf(u) === movedOwner).map((u) => u.iid)
-    s = fireTriggers(s, collectGlobal(s, movedOwner, 'conquer'), bfIndex, 0, priorController == null)
-    s = fireTriggers(s, collectSelf(s, movedOwner, 'conquer', here), bfIndex, 0, priorController == null)
+    // G3: conquer triggers chain (see moveUnits).
+    s = pushFiredTriggers(s, [...collectGlobal(s, movedOwner, 'conquer'), ...collectSelf(s, movedOwner, 'conquer', here)], bfIndex, 0, priorController == null)
     offerLeblanc(s, movedOwner, bfIndex)
     s = offerTrashConquerReturn(s, movedOwner) // Super Mega Death Rocket!
   }
@@ -4749,11 +4750,12 @@ function finishBeginning(s: MatchState): MatchState {
     }
   // Card "when you hold" (global) + "when I hold" (self, on units at held BFs).
   if (holdsAny) {
-    s = fireTriggers(s, collectGlobal(s, ap, 'hold'))
     const heldUnitIids = s.battlefields
       .filter((b) => b.controller === ap)
       .flatMap((b) => b.units.filter((u) => controllerOf(u) === ap).map((u) => u.iid))
-    s = fireTriggers(s, collectSelf(s, ap, 'hold', heldUnitIids))
+    // G3: hold triggers chain; finishBeginning runs inside beginTurn, so settle here too.
+    s = pushFiredTriggers(s, [...collectGlobal(s, ap, 'hold'), ...collectSelf(s, ap, 'hold', heldUnitIids)])
+    s = autoPassTriggers(s)
   }
 
   // Ashe - Focused: "When they hold, return it to their hand." When the now-holding
@@ -6125,8 +6127,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const moverHere = s.battlefields[bfIndex].units.filter((u) => controllerOf(u) === moverOwner).map((u) => u.iid)
   const enemyHere = s.battlefields[bfIndex].units.some((u) => controllerOf(u) !== moverOwner)
   if (moverHere.length > 0 && !enemyHere) {
-    s = fireTriggers(s, collectSelf(s, moverOwner, 'winCombat', moverHere))
-    s = fireTriggers(s, collectGlobal(s, moverOwner, 'winCombat'))
+    // G3: win-combat triggers chain.
+    s = pushFiredTriggers(s, [...collectSelf(s, moverOwner, 'winCombat', moverHere), ...collectGlobal(s, moverOwner, 'winCombat')])
   }
 
   // Conquer: mover ends as sole controller of a battlefield they didn't hold.
@@ -6141,8 +6143,8 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     markConquered(s, moverOwner, bfIndex)
     s = grantHunt(s, moverOwner, bfIndex)
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
-    s = fireTriggers(s, collectGlobal(s, moverOwner, 'conquer'), bfIndex, excess, prevController == null)
-    s = fireTriggers(s, collectSelf(s, moverOwner, 'conquer', moverHere), bfIndex, excess, prevController == null)
+    // G3: combat-conquer triggers chain (excess threaded for excess-damage gates).
+    s = pushFiredTriggers(s, [...collectGlobal(s, moverOwner, 'conquer'), ...collectSelf(s, moverOwner, 'conquer', moverHere)], bfIndex, excess, prevController == null)
     offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
     s = offerTrashConquerReturn(s, moverOwner) // Super Mega Death Rocket!
   }
