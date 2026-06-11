@@ -50,6 +50,7 @@ Convert mid-effect auto-pay sites to `queuePayCost`/upgraded `queueOptionalPay` 
 - **C1 – existing optionalPay sites** (Vayne 1632, Immortal Phoenix 2030, Blood Rose 2187, Ripper's Bay 3774): populate `resolvedCost` so the modal gets real costs.
 - **C2 – play/effect-time sites**: generic activated-gear power pips (756), playUnitFromTrash/FromHand power-due (892, 912), `payFixedCost`/`playFromTrashPayingCost` (2543, 2577, 8197 Phoenix from-trash payment itself), spell power-due (6360), Mageseeker multi-move surcharge (4215), Jax - Unrelenting attach cost (~3101), Mistfall (~615 — also stop auto-firing the "you may", it's an optionalPay), Rumble - Hotheaded (also let player pick WHICH card to recycle via `selectTarget`).
 - **C3 – death-adjacent sites**: Altar of Blood (5810), Sett - The Boss death-save (3902). These run inside death/cleanup loops — **verify re-entrancy first**; if a mid-death pause is unsafe today, defer them to Phase G3 (the chain rework gives deaths a safe pause point) rather than hacking it.
+  - **VERIFIED UNSAFE (2026-06-11) → deferred to G3.** Both pay inside the combat-finalization death loop / `tryRecallInsteadOfDeath`; a queued decision can't retroactively pull the unit out of `defeated` after Deathknells fire and the conquer math runs (and a late "save" would restore from trash with double-fire risk). They keep their inline auto-pay until G3 gives deaths a chain pause point.
 
 ## Phase D — Combat-time payments & forced picks (reuse P5 pre-math pattern)
 
