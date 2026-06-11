@@ -325,8 +325,17 @@ export interface ShowdownState {
   /** Phase D: pre-math combat decisions already resolved or declined this showdown
    *  (pay-gated triggers / Atakhan forced kills), so resolveShowdown doesn't
    *  re-queue them when it re-enters. Key = sourceIid (`${sourceIid}:${player}`
-   *  for Atakhan's per-defender picks). */
+   *  for Atakhan's per-defender picks; `rescueSett:${iid}`/`rescueAltar:${iid}`
+   *  for G3 paid death-replacements). */
   combatDone?: string[]
+  /** G3: the resolved damage steps stashed while a paid death-replacement
+   *  decision (Sett / Altar of Blood) is pending — finalizeShowdown re-enters
+   *  with these exact steps after each accept/decline. */
+  pendingSteps?: DamageAssignStep[]
+  /** G3: units whose controller PAID a death-replacement this combat (the
+   *  payment + side costs were taken at RESOLVE_CHOICE); the death loop recalls
+   *  them instead of killing them. */
+  rescues?: Record<string, 'sett' | 'altar'>
   /** A pending invitation: a combatant has asked `to` to join and help, awaiting
    *  their accept/decline. */
   invite?: { from: PlayerId; to: PlayerId }
@@ -407,6 +416,10 @@ export type DeferredOp =
   /** Atakhan: `defender` must kill one of their units here — chosenIid
    *  (selectTarget, mandatory) is the unit they picked. */
   | { type: 'combatAtakhanKill'; sourceIid: string; defender: PlayerId; bfIndex: number }
+  /** G3 paid death-replacement (rune cost just paid): record the rescue of
+   *  `unitIid` and re-enter finalizeShowdown. Sett also exhausts himself and
+   *  spends the unit's buff (the non-rune part of his cost). */
+  | { type: 'combatRescue'; kind: 'sett' | 'altar'; unitIid: string; settIid?: string; bfIndex: number }
 
 /** A queued player decision (optional cost to pay, or a target to pick) recorded
  *  during synchronous effect resolution and surfaced one at a time AFTER the action

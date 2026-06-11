@@ -224,6 +224,12 @@ describe('Altar of Blood', () => {
     s.showdown = { battlefield: 0, priority: 0, passes: 0, movedUnit: attacker.iid } as never
     let r = reduce(s, { type: 'PASS', player: 0 })
     r = reduce(r.state, { type: 'PASS', player: 1 })
+    // G3: the rescue is the OWNER'S choice now — an optionalPay pauses the
+    // combat finalization before the death applies.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    expect(r.state.pendingChoice?.player).toBe(1)
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: 'pay' })
+    expect(r.error).toBeFalsy()
     // Combat resolved.
     expect(r.state.showdown).toBeNull()
     // Defender was recalled to base (exhausted, healed), NOT trashed.

@@ -2007,7 +2007,11 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
       })
     }
   }
-  return fireTriggers(s, fired)
+  // G3: Deathknells + death triggers go on the Chain (rule 415.1.a / 735.1 — the
+  // dying unit's location/attributes were snapshotted above into each FiredTrigger),
+  // resolving via smart auto-pass. Death replacements (Zhonya's, Sett, Altar,
+  // Smite) already happened upstream — a replaced death never reaches here.
+  return pushFiredTriggers(s, fired)
 }
 
 /** Whether a "when you play a <X>" trigger matches the card actually played.
@@ -2395,6 +2399,26 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
       }
       return combatOpDone(s, key, op.bfIndex)
     }
+    case 'combatRescue': {
+      const key = `${op.kind === 'sett' ? 'rescueSett' : 'rescueAltar'}:${op.unitIid}`
+      const u = s.battlefields[op.bfIndex]?.units.find((x) => x.iid === op.unitIid)
+      if (u && op.kind === 'sett') {
+        // The non-rune part of Sett's cost: exhaust him and spend the unit's buff.
+        const sett = op.settIid ? controlledPermanents(s, player).find((x) => x.iid === op.settIid) : undefined
+        if (sett && !sett.exhausted && (u.buffs ?? 0) > 0) {
+          sett.exhausted = true
+          u.buffs = (u.buffs ?? 0) - 1
+          s.showdown!.rescues = { ...(s.showdown!.rescues ?? {}), [op.unitIid]: 'sett' }
+          s = log(s, player, `Sett - The Boss: paid to save ${getCard(u.cardId)?.name ?? 'a unit'} from dying.`)
+        } else {
+          s = log(s, player, `Sett - The Boss: the rescue fell through (Sett unavailable).`)
+        }
+      } else if (u) {
+        s.showdown!.rescues = { ...(s.showdown!.rescues ?? {}), [op.unitIid]: 'altar' }
+        s = log(s, player, `Altar of Blood: paid 3 to save ${getCard(u.cardId)?.name ?? 'a unit'} from dying.`)
+      }
+      return combatOpDone(s, key, op.bfIndex)
+    }
   }
 }
 
@@ -2411,16 +2435,31 @@ function combatOpKey(op: DeferredOp): string | null {
       return op.sourceIid
     case 'combatAtakhanKill':
       return `${op.sourceIid}:${op.defender}`
+    case 'combatRescue':
+      return `${op.kind === 'sett' ? 'rescueSett' : 'rescueAltar'}:${op.unitIid}`
     default:
       return null
   }
 }
 
+/** A combat-time decision (Phase D pre-math / G3 death-replacement) is queued or
+ *  surfaced — pause-scan re-entries must not double-queue. */
+function combatDecisionPending(s: MatchState): boolean {
+  const ops: (DeferredOp | undefined)[] = (s.pendingDecisions ?? []).map((d) => d.op)
+  try { ops.push((JSON.parse(s.pendingChoice?.payload ?? 'null') as { op?: DeferredOp } | null)?.op) } catch { /* not a decision payload */ }
+  return ops.some((op) => op && combatOpKey(op) !== null)
+}
+
 /** Phase D: mark a pre-math combat decision resolved and resume the paused
- *  showdown (resolveShowdown re-enters and queues the next decision, if any). */
+ *  showdown. Pre-death pauses (G3 rescues) re-enter finalizeShowdown with the
+ *  stashed steps; pre-math pauses re-enter resolveShowdown. */
 function combatOpDone(s: MatchState, key: string, bfIndex: number): MatchState {
   if (s.showdown) s.showdown.combatDone = [...(s.showdown.combatDone ?? []), key]
-  if (s.phase === 'showdown' && s.showdown?.battlefield === bfIndex) return resolveShowdown(s, bfIndex)
+  if (s.phase === 'showdown' && s.showdown?.battlefield === bfIndex) {
+    const steps = s.showdown.pendingSteps
+    if (steps) return finalizeShowdown(s, bfIndex, steps)
+    return resolveShowdown(s, bfIndex)
+  }
   return s
 }
 
@@ -4021,7 +4060,7 @@ function grantHunt(s: MatchState, player: PlayerId, bfIndex: number): MatchState
  *  returns true → the caller recalls the unit (heal + exhaust → base) instead of
  *  trashing it. `bfIndex` (the dying unit's battlefield, when it died at one)
  *  scopes the location-bound saves ("…you control here"). */
-function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard, bfIndex?: number): boolean {
+function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard, bfIndex?: number, opts?: { skipSett?: boolean }): boolean {
   if (u.deathShield) { u.deathShield = false; return true }
   // Self-sacrificing attached gear that saves the equipped unit: Zhonya's Hourglass
   // ("if a friendly unit would die, kill this instead") and Guardian Angel ("if I
@@ -4051,8 +4090,10 @@ function tryRecallInsteadOfDeath(s: MatchState, u: EngineCard, bfIndex?: number)
   }
   // Sett - The Boss: "If a buffed unit you control would die, you may pay
   // [rainbow], exhaust me, and spend its buff to heal it, exhaust it, and recall
-  // it instead." Pure rescue → auto-paid when ready and affordable (like Altar).
-  if ((u.buffs ?? 0) > 0) {
+  // it instead." For COMBAT deaths the choice is asked pre-death (G3 rescue
+  // decisions in finalizeShowdown → skipSett); for spell/ability kills the pay
+  // still auto-resolves inline (a mid-spell pause isn't safe — documented gap).
+  if (!opts?.skipSett && (u.buffs ?? 0) > 0) {
     const sett = controlledPermanents(s, u.owner).find(
       (x) => x.iid !== u.iid && !x.exhausted &&
         /if a buffed unit you control would die/i.test(getCard(x.cardId)?.text ?? ''),
@@ -5899,9 +5940,7 @@ function nextSplitTrigger(s: MatchState, bfIndex: number): { sourceIid: string; 
  *  old auto-resolve's silent skip. */
 function queueNextCombatDecision(s: MatchState, bfIndex: number): boolean {
   // Already paused on one of ours (a PASS re-entry must not double-queue)?
-  const pendingOps: (DeferredOp | undefined)[] = (s.pendingDecisions ?? []).map((d) => d.op)
-  try { pendingOps.push((JSON.parse(s.pendingChoice?.payload ?? 'null') as { op?: DeferredOp } | null)?.op) } catch { /* not a decision payload */ }
-  if (pendingOps.some((op) => op && combatOpKey(op) !== null)) return true
+  if (combatDecisionPending(s)) return true
   const done = new Set(s.showdown?.combatDone ?? [])
   const mark = (key: string) => { s.showdown!.combatDone = [...(s.showdown!.combatDone ?? []), key]; done.add(key) }
   const pause = (player: PlayerId) => { s.showdown!.priority = player }
@@ -6043,6 +6082,65 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   // Defeats from the resolved steps.
   const defendersDefeated = new Set<string>(steps.filter((st) => st.side === 'defenders').flatMap((st) => st.defeated))
   const attackersDefeated = new Set<string>(steps.filter((st) => st.side === 'attackers').flatMap((st) => st.defeated))
+
+  // G3: PAID death-replacements (Sett - The Boss, Altar of Blood) are the owner's
+  // choice ("you may pay …"), asked BEFORE the deaths apply. Scan would-die units
+  // for undecided rescues; queue ONE optionalPay and pause — each accept/decline
+  // re-enters with the same steps (showdown.pendingSteps). Free replacements
+  // (death shield / Zhonya's / Soraka) need no choice and stay inline below.
+  if (!combatDecisionPending(s)) {
+    const isDead = (u: EngineCard) =>
+      (controllerOf(u) !== moverOwner && defendersDefeated.has(u.iid)) ||
+      (controllerOf(u) === moverOwner && attackersDefeated.has(u.iid))
+    const hasFreeRescue = (u: EngineCard): boolean =>
+      !!u.deathShield ||
+      u.attached.some((ref) => {
+        const gc = getCard(ref.split('|')[0])
+        const txt = (gc?.text ?? '').toLowerCase()
+        return /would die/.test(txt) && (txt.includes('kill this') || (gc != null && txt.includes(`kill ${gc.name.toLowerCase()}`)))
+      }) ||
+      bf.units.some((x) => sameTeam(s, controllerOf(x), controllerOf(u)) && x.iid !== u.iid && mightOf(u) < mightOf(x) &&
+        /if another unit you control here would die/i.test(getCard(x.cardId)?.text ?? ''))
+    const done = new Set(s.showdown?.combatDone ?? [])
+    const decided = s.showdown?.rescues ?? {}
+    const atAltar = bfBaseNameAt(s, bfIndex) === 'Altar of Blood'
+    for (const u of bf.units) {
+      if (!isDead(u) || decided[u.iid] || hasFreeRescue(u)) continue
+      const owner = controllerOf(u)
+      const nm = getCard(u.cardId)?.name ?? 'a unit'
+      if (!done.has(`rescueSett:${u.iid}`) && (u.buffs ?? 0) > 0) {
+        const sett = controlledPermanents(s, owner).find(
+          (x) => x.iid !== u.iid && !x.exhausted && /if a buffed unit you control would die/i.test(getCard(x.cardId)?.text ?? ''),
+        )
+        if (sett && autoPay(s.players[owner], { energy: 0, power: {}, powerAny: 1 })) {
+          s.showdown!.pendingSteps = steps
+          s = queueOptionalPay(s, owner, {
+            prompt: `Sett - The Boss — pay 1 Power (any), exhaust Sett, and spend ${nm}'s buff to save it from dying?`,
+            srcName: 'Sett - The Boss',
+            cost: {},
+            resolvedCost: { energy: 0, power: {}, powerAny: 1 },
+            op: { type: 'combatRescue', kind: 'sett', unitIid: u.iid, settIid: sett.iid, bfIndex },
+          })
+          s.showdown!.priority = owner
+          return s // paused — wait for RESOLVE_CHOICE
+        }
+      }
+      if (atAltar && !done.has(`rescueAltar:${u.iid}`) && getCard(u.cardId)?.supertype !== 'token' &&
+          autoPay(s.players[owner], { energy: 0, power: {}, powerAny: 3 })) {
+        s.showdown!.pendingSteps = steps
+        s = queueOptionalPay(s, owner, {
+          prompt: `Altar of Blood — pay 3 Power (any) to heal, exhaust, and recall ${nm} instead of letting it die?`,
+          srcName: 'Altar of Blood',
+          cost: {},
+          resolvedCost: { energy: 0, power: {}, powerAny: 3 },
+          op: { type: 'combatRescue', kind: 'altar', unitIid: u.iid, bfIndex },
+        })
+        s.showdown!.priority = owner
+        return s // paused — wait for RESOLVE_CHOICE
+      }
+    }
+  } else return s // a rescue decision is already pending — don't re-enter past it
+  s.showdown!.pendingSteps = undefined
   s.showdown!.assign = undefined
 
   // Attack/Defend triggers already fired in fireCombatTriggers (before the math),
@@ -6063,10 +6161,10 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     }
   }
 
-  // Altar of Blood: "If a unit here would die during combat, its controller may
-  // pay 3 [any] to heal it, exhaust it, and recall it instead." Pure rescue, so
-  // auto-paid when affordable; the saved unit is recalled (exhausted) to base.
-  const altarOfBlood = bfBaseNameAt(s, bfIndex) === 'Altar of Blood'
+  // Death replacements: PAID rescues (Sett / Altar of Blood) were already decided
+  // and paid in the G3 scan above (showdown.rescues); free ones (death shield /
+  // Zhonya's / Soraka) resolve inline here. Sett's inline auto-pay is skipped —
+  // the decision system owns it for combat deaths.
   const rescued = new Set<string>()
   const survivors: EngineCard[] = []
   const defeated: EngineCard[] = []
@@ -6074,16 +6172,16 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     const dead =
       (controllerOf(u) !== moverOwner && defendersDefeated.has(u.iid)) ||
       (controllerOf(u) === moverOwner && attackersDefeated.has(u.iid))
-    if (dead && tryRecallInsteadOfDeath(s, u, bfIndex)) {
-      // Zhonya's / shield / Soraka / Sett: heal, exhaust, recall to base.
+    if (dead && s.showdown?.rescues?.[u.iid]) {
+      // Paid rescue (cost settled at RESOLVE_CHOICE): heal, exhaust, recall.
+      recallToBase(s, u)
+      rescued.add(u.iid)
+      s = log(s, u.owner, `${getCard(u.cardId)?.name} was saved — healed, exhausted, recalled to base (${s.showdown.rescues[u.iid] === 'altar' ? 'Altar of Blood' : 'Sett - The Boss'}).`)
+    } else if (dead && tryRecallInsteadOfDeath(s, u, bfIndex, { skipSett: true })) {
+      // Zhonya's / shield / Soraka: heal, exhaust, recall to base.
       recallToBase(s, u)
       rescued.add(u.iid)
       s = log(s, u.owner, `${getCard(u.cardId)?.name} was saved — healed, exhausted, recalled to base.`)
-    } else if (dead && altarOfBlood && getCard(u.cardId)?.supertype !== 'token' && makeBfApi(s).payPowerAny(u.owner, 3)) {
-      s.players[u.owner].zones.base.push({ ...u, exhausted: true, damage: 0 })
-      emit({ kind: 'buff', iid: u.iid, player: u.owner })
-      rescued.add(u.iid)
-      s = log(s, u.owner, `Altar of Blood: paid 3 to heal, exhaust, and recall ${getCard(u.cardId)?.name} to base.`)
     } else if (dead && trashOrBanish(s, u)) {
       // Smite: banished instead of dying — death replaced, no death trigger.
       rescued.add(u.iid) // not a death for trigger purposes

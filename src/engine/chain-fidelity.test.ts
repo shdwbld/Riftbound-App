@@ -159,6 +159,91 @@ describe('Phase G1 — triggers on the chain with smart auto-pass', () => {
     expect(r.state.phase).not.toBe('showdown') // combat resolved
   })
 
+  it('G3: a Deathknell chains and auto-resolves when no seat holds a reaction', () => {
+    const s = baseState()
+    s.activePlayer = 0
+    const dk = mk(injectCard('cf-dk', '[Deathknell] — Draw 1.', { name: 'Martyr', might: 1 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [dk], controller: 1 }
+    const bolt = mk(injectCard('cf-bolt', 'Deal 3 to a unit at a battlefield.', { type: 'spell', energy: 0, power: {} }), 0)
+    s.players[0].zones.hand.push(bolt)
+    const p1Hand = s.players[1].zones.hand.length
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: bolt.iid, targets: [dk.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.chain.length).toBe(0) // bolt resolved; Deathknell chained then auto-resolved
+    expect(r.state.players[1].zones.trash.some((c) => c.iid === dk.iid)).toBe(true) // died
+    expect(r.state.players[1].zones.hand.length).toBe(p1Hand + 1) // Deathknell drew 1
+  })
+
+  it('G3: a Deathknell holds a reaction window open for an opponent who can respond', () => {
+    const s = baseState()
+    s.activePlayer = 0
+    const dk = mk(injectCard('cf-dk2', '[Deathknell] — Draw 1.', { name: 'Martyr', might: 1 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [dk], controller: 1 }
+    const bolt = mk(injectCard('cf-bolt2', 'Deal 3 to a unit at a battlefield.', { type: 'spell', energy: 0, power: {} }), 0)
+    s.players[0].zones.hand.push(bolt)
+    s.players[1].zones.hand.push(mk(injectCard('cf-dk-react', '[Reaction] Draw 1.', { type: 'spell', energy: 0, power: {} }), 1))
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: bolt.iid, targets: [dk.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.error).toBeFalsy()
+    // The bolt resolved (unit died); the Deathknell sits on the chain awaiting P1.
+    expect(r.state.players[1].zones.trash.some((c) => c.iid === dk.iid)).toBe(true)
+    expect(r.state.chain.length).toBe(1)
+    expect(r.state.chain[0].kind).toBe('trigger')
+    expect(r.state.priority).toBe(1)
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    expect(r.state.chain.length).toBe(0) // P0 auto-passed → Deathknell resolved
+  })
+
+  it('G3: declining the Altar of Blood rescue lets the unit die', () => {
+    const altar = CARD_INDEX['unl-206-219'] ? 'unl-206-219' : battlefield.id
+    const s = baseState()
+    s.activePlayer = 0
+    const attacker = mk(injectCard('cf-aob-atk', 'x', { might: 5 }), 0)
+    const defender = mk(injectCard('cf-aob-def', 'x', { might: 2 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: altar, units: [defender], controller: 1 }
+    s.players[0].zones.base.push(attacker)
+    for (let i = 0; i < 3; i++) s.players[1].zones.runePool.push(mk(furyRune.id, 1))
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [attacker.iid], toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay') // the owner's choice (G3)
+    expect(r.state.pendingChoice?.player).toBe(1)
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: null }) // decline
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[1].zones.trash.some((c) => c.iid === defender.iid)).toBe(true) // died
+    expect(r.state.players[1].zones.runePool.length).toBe(3) // nothing was paid
+    expect(r.state.phase).not.toBe('showdown') // combat finished after the decline
+  })
+
+  it('G3: Sett-style buffed-unit rescue is asked, pays, and saves in combat', () => {
+    const s = baseState()
+    s.activePlayer = 0
+    const attacker = mk(injectCard('cf-sett-atk', 'x', { might: 5 }), 0)
+    const defender = mk(injectCard('cf-sett-def', 'x', { might: 2 }), 1, { exhausted: true, buffs: 1 })
+    s.battlefields[0] = { cardId: battlefield.id, units: [defender], controller: 1 }
+    s.players[0].zones.base.push(attacker)
+    const sett = mk(injectCard('cf-sett', 'If a buffed unit you control would die, you may pay 1, exhaust me, and spend its buff to heal it, exhaust it, and recall it instead.', { name: 'Sett - The Boss', might: 6 }), 1)
+    s.players[1].zones.base.push(sett)
+    s.players[1].zones.runePool.push(mk(furyRune.id, 1))
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [attacker.iid], toBattlefield: 0 })
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    expect(r.state.pendingChoice?.srcName).toBe('Sett - The Boss')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: 'pay' })
+    expect(r.error).toBeFalsy()
+    const saved = r.state.players[1].zones.base.find((u) => u.iid === defender.iid)
+    expect(saved).toBeTruthy() // recalled, not trashed
+    expect(saved!.buffs ?? 0).toBe(0) // buff spent
+    expect(r.state.players[1].zones.base.find((u) => u.iid === sett.iid)?.exhausted).toBe(true) // Sett exhausted
+    expect(r.state.players[1].zones.runePool.length).toBe(0) // the rune was recycled
+  })
+
   it('a Reaction played in the window resolves before the trigger (LIFO)', () => {
     const s = baseState()
     s.players[0].zones.base.push(mk(SOT_DRAW, 0))
