@@ -1,8 +1,8 @@
 # Rules-Fidelity Campaign: kill auto-payments, fix broken steps & cards
 
-**Status (2026-06-11): Phases A–D DONE — Phases E–G remain.** Shipped: A `86eba83`, B `0616847`, C1 `7f7cded`, C2a `5458c58`, C2b `cb73a59`, C2c `83d2174`, D `8313755` (825 tests green). C3 (Altar of Blood / Sett) verified UNSAFE to defer → lands with G3 (see the C3 bullet). Key invariant established in C: **RESOLVE_CHOICE is the single payment site — DeferredOps never re-pay.** Engine.ts line anchors below predate the A–D edits; **re-verify before editing**.
+**Status (2026-06-11): Phases A–D + G DONE — Phases E–F remain.** Shipped: A `86eba83`, B `0616847`, C1 `7f7cded`, C2a `5458c58`, C2b `cb73a59`, C2c `83d2174`, D `8313755`, G1 `40053fc`, G2 `04bb150`, G3a `e28c122`, G3b `7495c3c`, G3c `b8989c7`, G4 `3cc7ef4` (840 tests green, new suite `chain-fidelity.test.ts`). Key invariants: **RESOLVE_CHOICE is the single payment site — DeferredOps never re-pay** (C); **trigger chain items resolve through fireTriggers + smart auto-pass keeps reaction-free boards synchronous** (G). Engine.ts line anchors below predate the edits; **re-verify before editing**.
 
-**NEXT: Phase E** (user checkpoints at phase boundaries — get a go-ahead before starting each phase).
+**NEXT: Phase E** (user checkpoints at phase boundaries — get a go-ahead before starting each phase). Phase G was implemented out of order at the user's request; E and F remain.
 
 User decisions locked in: prompt for **every** non-free rune spend when manual pay is on (toggle still bypasses), and **full chain fidelity** (showdown spells AND death/end-of-turn triggers on the chain).
 
@@ -96,15 +96,22 @@ Large (L, last): 15. Svellsongur — forward host's attack/defend triggers + act
 - Sand Soldier token numbering (high, UX) — render a per-token index badge so targets are distinguishable.
 - "teemo" (vague) — reproduce from the stored fixture; fix what it shows.
 
-## Phase G — Full chain fidelity (riskiest; staged, last)
+## Phase G — Full chain fidelity — ✅ DONE (G1 `40053fc`, G2 `04bb150`, G3a `e28c122`, G3b `7495c3c`, G3c `b8989c7`, G4 `3cc7ef4`)
 
 Design: triggers/deaths become `ChainItem{kind:'trigger'}` entries resolved through the existing PASS_PRIORITY loop instead of inline `fireTriggers`. To keep play fast, add **smart auto-pass**: a seat's priority auto-passes when it has no legal reaction (no ready/recyclable runes for any reaction-speed card in hand, no hidden card, no [Reaction] ability) — outcome-equivalent to the rules without click spam.
 
-- **G1 – infra**: generalize `ChainItem.kind:'trigger'` to carry a fired-trigger payload (controller, source iid/cardId, parsed effect, pre-picked targets); `resolveTopOfChain` applies it; smart auto-pass helper; chain UI labels trigger items (chain spotlight already exists).
-- **G2 – showdown spells on the chain** (engine.ts:7520–7534 "legacy path"): push ChainItem + priority window instead of instant resolve → counters work in showdowns.
-- **G3 – trigger families onto the chain**: play-triggers, conquer/hold, start-of-turn; then **death/Deathknell** (queue chain items after combat finalization / after the killing spell resolves — this also gives C3's Sett/Altar sites their safe pause point); then end-of-turn.
-- **G4 – END_TURN restructure**: fire end-of-turn triggers (as chain items) BEFORE the "this turn" cleanup sweep (today cleanup at 9035–9040 runs first, triggers at 9041–9058 read wiped state); turn hand-off waits for the chain to empty (interacts with `extraTurns` queue).
-- Expect heavy test churn in `engine.test.ts` (441KB asserts synchronous outcomes): add a test helper `passUntilQuiet(state)` that auto-passes priority until the chain empties, and sweep affected tests onto it.
+- ✅ **G1 – infra**: `ChainItem.trigger` gained `{kind:'fired', fired: FiredTrigger, excess?, wasUncontrolled?}` — resolves through the existing `fireTriggers`, so every bespoke handler is reused untouched. `pushFiredTriggers` pushes in reverse `orderTriggers` order (first-fired resolves first). `autoPassTriggers` (central post-action hook + beginTurn tail) auto-passes seats with no affordable Reaction/Action spell / Quick Draw gear / Ambush unit / revealable Hidden card (`seatHasLegalReaction` mirrors canPlay minus the priority check) — when all seats auto-pass, the trigger resolves synchronously in the same reduce() call, which kept the synchronous test idiom green (NO passUntilQuiet sweep was needed!). Spells/counters on top keep the manual flow. COUNTER rejects trigger items (rule 352). Pilot family: start-of-turn.
+- ✅ **G2 – showdown spells on the chain**: legacy instant-resolve path deleted; spells fall through to the normal chain push (rule 344.3) → **counters work in showdowns**. PASS is blocked while the chain exists (Showdown Closed); `onChainEmptied` passes focus from its frozen holder + resets showdown passes (the legacy path also let the caster pass straight into combat without the opponent re-passing — fixed). Hooked at PASS_PRIORITY resolve, the auto-pass loop, and the Hard Bargain splice.
+- ✅ **G3 – trigger families onto the chain**: conquer/hold/winCombat (5 sites; each global+self pair combined into ONE push to preserve order), deaths/Deathknell (single change in fireDeaths' tail converts all ~18 call sites; snapshots per rule 415/735 were already on the FiredTrigger), play-triggers (firePlayTriggers generic batch + fireTokenPlay; play-trigger items land ABOVE a pending spell and resolve first while the spell stays counterable — rule 351). **C3's Sett/Altar combat rescues became real choices**: a pre-death scan in finalizeShowdown queues optionalPay per would-die unit (steps stashed in `showdown.pendingSteps`, verdicts in `showdown.rescues`, decided-keys in `combatDone`; accept/decline re-enters finalizeShowdown with the SAME steps). Free rescues (shield/Zhonya/Soraka) stay inline and suppress the prompt.
+- ✅ **G4 – END_TURN restructure** (rule 317): Ending Step FIRST — end-of-turn effects are synthesized into `endOfTurn` FiredTriggers and chained while "this turn" state is live; `maybeFinishEndTurn` (runs when the chain empties + no decisions) does the End of Turn Cleanup incl. **heal all units (rule 317.3 2c — marked damage no longer leaks across turns)**, the Expiration sweep, pool drain, extraTurns consumption, and beginTurn. `state.endingTurn` flags the in-flight hand-off.
+- Test churn was minimal (smart auto-pass preserved synchronicity): ~6 tests updated, 13 added (`chain-fidelity.test.ts`); 840 green.
+
+**Phase G known gaps (deliberate):**
+- Long-tail trigger families still fire inline: stun, recycleRune/recycleCard, buff, targeted, hide, discard, move, opponentMove, becomesState, spendBuff (low interaction value; convert opportunistically).
+- Sett's SPELL-kill death-save still auto-pays inline (`tryRecallInsteadOfDeath` default path) — a mid-spell pause is unsafe; only COMBAT deaths prompt.
+- Combat attack/defend triggers stay on the Phase D pre-math decision machinery rather than a literal rule-344.3 "Initial Chain".
+- A paused start-of-turn window doesn't halt the rest of beginTurn (channel/draw proceed; the window resolves at the start of the Action Phase).
+- `autoPassTriggers` gotcha for future editors: when trigger items above a spell resolve, it opens a FRESH response window on the spell (passes=0, priority = opponent of its controller) — without this, counters bounce off 'Not your priority'.
 
 ## Skipped/deferred (with reasons, so they aren't re-audited)
 
