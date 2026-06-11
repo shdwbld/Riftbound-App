@@ -2029,15 +2029,17 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
   }
   // Immortal Phoenix (ogn-037-298): "When you kill a unit with a spell, you may pay
   // 1 Energy + Fury to play me from your trash." Surfaced as a Pay/Decline choice (P0);
-  // the op pays the specific cost via playFromTrashPayingCost.
+  // RESOLVE_CHOICE pays `resolvedCost` (rune picker), so the op's cost is zeroed —
+  // playFromTrashPayingCost only handles the trash→base move.
   if (caster != null && defeated.some((u) => u.killedBySpell)) {
     const phoenix = s.players[caster].zones.trash.find((c) => c.cardId === 'ogn-037-298')
-    if (phoenix && canAffordEnergy(s.players[caster], 1)) {
+    if (phoenix && autoPay(s.players[caster], { energy: 1, power: { fury: 1 } })) {
       s = queueOptionalPay(s, caster, {
         prompt: 'Immortal Phoenix — pay ⚡1 + 🔥 to play it from your trash?',
         srcName: 'Immortal Phoenix',
-        cost: {},
-        op: { type: 'playFromTrash', cardIid: phoenix.iid, energy: 1, power: { fury: 1 } },
+        cost: { energy: 1 },
+        resolvedCost: { energy: 1, power: { fury: 1 } },
+        op: { type: 'playFromTrash', cardIid: phoenix.iid, energy: 0, power: {} },
       })
     }
   }

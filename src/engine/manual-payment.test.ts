@@ -255,6 +255,32 @@ describe('optionalPay — explicit payment end-to-end (real site)', () => {
     expect(r.state.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(2) // + channeled exhausted
   })
 
+  it('Immortal Phoenix: payload carries ⚡1+🔥 resolvedCost; explicit payment plays it without double-paying', () => {
+    const killId = injectCard('mp-kill', 'Kill a unit.', { type: 'spell', energy: 0, power: {} })
+    const s = baseState()
+    const victim = mk(furyUnit.id, 1)
+    s.players[1].zones.base.push(victim)
+    s.players[0].zones.trash.push(mk('ogn-037-298', 0)) // Immortal Phoenix
+    const e1 = mk(furyRune.id, 0) // exhaust for the Energy
+    const f1 = mk(furyRune.id, 0) // recycle for the Fury slot
+    s.players[0].zones.runePool.push(e1, f1)
+    const sp = mk(killId, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [victim.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    const payload = JSON.parse(r.state.pendingChoice?.payload ?? '{}')
+    expect(payload.resolvedCost).toEqual({ energy: 1, power: { fury: 1 } })
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay', payment: { exhaust: [e1.iid], recycle: [f1.iid] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((c) => c.cardId === 'ogn-037-298')).toBe(true)
+    // Exactly the chosen runes were spent — the zero-cost op didn't re-pay.
+    const pool = r.state.players[0].zones.runePool
+    expect(pool.find((x) => x.iid === e1.iid)?.exhausted).toBe(true)
+    expect(pool.some((x) => x.iid === f1.iid)).toBe(false) // recycled away
+  })
+
   it("Ripper's Bay channel: legacy accept with no payment still auto-pays", () => {
     const s = baseState()
     s.battlefields[0] = { cardId: 'unl-214-219', units: [mk(furyUnit.id, 0)], controller: 0 }
