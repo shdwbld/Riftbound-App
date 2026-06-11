@@ -165,6 +165,8 @@ export default function MatchPage() {
   const [activatePay, setActivatePay] = useState<{ iid: string; card: Card | null; cost: ResolvedCost; ab: NonNullable<ReturnType<typeof canActivateUnit>> } | null>(null)
   // Pending Hide payment (rune picker before HIDE — 1 wild Power, Teemo: 1 Energy).
   const [hidePay, setHidePay] = useState<{ iid: string; toBattlefield: number; runeIid: string; card: Card | null; cost: ResolvedCost & { powerAny?: number } } | null>(null)
+  // Pending Mageseeker Investigator group-move surcharge (rune picker before MOVE_UNITS).
+  const [movePay, setMovePay] = useState<{ iids: string[]; toBattlefield: number; cost: ResolvedCost & { powerAny?: number } } | null>(null)
   // Pending "Move equipment to another unit" choice (sandbox).
   const [movePick, setMovePick] = useState<{ gearIid: string; fromUnitIid: string; owner: PlayerId } | null>(null)
   // Pending play destination for a unit whose rules let it enter a battlefield.
@@ -618,7 +620,17 @@ export default function MatchPage() {
         perspective={controlling}
         canAct
         onPlay={play}
-        onMove={(iids, bf) => act({ type: 'MOVE_UNITS', player: controlling, iids, toBattlefield: bf })}
+        onMove={(iids, bf) => {
+          // Mageseeker Investigator: rainbow Power per extra unit in a group move
+          // to her battlefield — open the rune picker when manual pay is on (the
+          // engine auto-picks otherwise and stays the validator either way).
+          const tolls = iids.length > 1
+            ? match.battlefields[bf].units.filter((u) => (u.controlledBy ?? u.owner) !== controlling && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator').length
+            : 0
+          const due = (iids.length - 1) * tolls
+          if (due > 0 && manualPay) setMovePay({ iids, toBattlefield: bf, cost: { energy: 0, power: {}, powerAny: due } })
+          else act({ type: 'MOVE_UNITS', player: controlling, iids, toBattlefield: bf })
+        }}
         onRecall={(iids) => act({ type: 'RETREAT_UNITS', player: controlling, iids })}
         onPass={() => act({ type: 'PASS', player: controlling })}
         onPassPriority={() => act({ type: 'PASS_PRIORITY', player: controlling })}
@@ -916,6 +928,20 @@ export default function MatchPage() {
             const h = hidePay
             setHidePay(null)
             act({ type: 'HIDE', player: controlling, iid: h.iid, toBattlefield: h.toBattlefield, runeIid: h.runeIid, payment })
+          }}
+        />
+      )}
+      {movePay && (
+        <PaymentModal
+          player={match.players[controlling]}
+          title={`Move ${movePay.iids.length} units — Mageseeker toll`}
+          cost={movePay.cost}
+          confirmLabel="Pay & move ▶"
+          onCancel={() => setMovePay(null)}
+          onConfirm={(payment) => {
+            const m = movePay
+            setMovePay(null)
+            act({ type: 'MOVE_UNITS', player: controlling, iids: m.iids, toBattlefield: m.toBattlefield, payment })
           }}
         />
       )}

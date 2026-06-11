@@ -232,6 +232,69 @@ describe('Phase B — pre-dispatch explicit payments', () => {
   })
 })
 
+describe('Phase C2c — Mageseeker move toll & Rumble pick-then-pay', () => {
+  it('MOVE_UNITS pays the Mageseeker Investigator toll with the CHOSEN rune', () => {
+    const invId = injectCard('mp-inv', 'Opponents must pay :rb_rune_rainbow: for each unit beyond the first to move multiple units to my battlefield at the same time.', { name: 'Mageseeker Investigator', type: 'unit', might: 4 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(invId, 1)], controller: 1 }
+    const a = mk(furyUnit.id, 0)
+    const b = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(a, b)
+    const r1 = mk(furyRune.id, 0)
+    const r2 = mk(calmRune.id, 0)
+    s.players[0].zones.runePool.push(r1, r2)
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [a.iid, b.iid], toBattlefield: 0, payment: { exhaust: [], recycle: [r2.iid] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === a.iid)).toBe(true) // moved
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === r2.iid)).toBe(false) // chosen rune recycled
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === r1.iid)).toBe(true) // untouched
+  })
+
+  it('MOVE_UNITS rejects an invalid toll payment (nothing moves, nothing spent)', () => {
+    const invId = injectCard('mp-inv2', 'Opponents must pay :rb_rune_rainbow: for each unit beyond the first to move multiple units to my battlefield at the same time.', { name: 'Mageseeker Investigator', type: 'unit', might: 4 })
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(invId, 1)], controller: 1 }
+    const a = mk(furyUnit.id, 0)
+    const b = mk(furyUnit.id, 0)
+    s.players[0].zones.base.push(a, b)
+    const r1 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(r1)
+    // Exhausting doesn't pay Power — the toll wants a recycle.
+    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [a.iid, b.iid], toBattlefield: 0, payment: { exhaust: [r1.iid], recycle: [] } })
+    expect(r.error).toBeTruthy()
+    expect(r.state.battlefields[0].units.some((u) => u.iid === a.iid)).toBe(false)
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === r1.iid)?.exhausted).toBe(false)
+  })
+
+  it('Rumble - Hotheaded: board-pick the spare, then pay the Might-reduced Energy remainder', () => {
+    const hot = injectCard('mp-hot', 'When I conquer, you may recycle another friendly unit to play a Mech from your trash. Reduce its Energy cost by the Might of the unit you recycled.', { name: 'Rumble - Hotheaded', type: 'unit', energy: 0, power: {}, might: 4, tags: ['Mech'] })
+    const trashMech = injectCard('mp-hot-mech', 'A unit.', { type: 'unit', energy: 5, power: {}, might: 6, tags: ['Mech'] })
+    const spare = injectCard('mp-hot-spare', 'A unit.', { type: 'unit', energy: 1, power: {}, might: 3 })
+    const s = baseState()
+    const rumble = mk(hot, 0)
+    const spareU = mk(spare, 0)
+    s.players[0].zones.base.push(rumble, spareU)
+    s.players[0].zones.trash.push(mk(trashMech, 0))
+    const e1 = mk(furyRune.id, 0)
+    const e2 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(e1, e2)
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [rumble.iid], toBattlefield: 0 }) // uncontested conquer
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: spareU.iid })
+    // 5 Energy − Might 3 = 2 Energy remainder → rune picker (payCost).
+    expect(r.state.pendingChoice?.kind).toBe('payCost')
+    const payload = JSON.parse(r.state.pendingChoice?.payload ?? '{}')
+    expect(payload.resolvedCost?.energy).toBe(2)
+    expect(r.state.players[0].zones.base.some((x) => x.iid === spareU.iid)).toBe(true) // NOT recycled yet
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay', payment: { exhaust: [e1.iid, e2.iid], recycle: [] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((c) => c.cardId === trashMech)).toBe(true) // Mech played
+    expect(r.state.players[0].zones.mainDeck.some((c) => c.cardId === spare)).toBe(true) // spare recycled after payment
+    expect(r.state.players[0].zones.runePool.every((x) => x.exhausted)).toBe(true) // both chosen runes spent
+  })
+})
+
 describe('optionalPay — explicit payment end-to-end (real site)', () => {
   it("Ripper's Bay channel: accept with an explicit rune payment", () => {
     const s = baseState()

@@ -2467,7 +2467,12 @@ describe('tokens (Recruit)', () => {
     s.players[0].zones.trash.push(mk(trashMech, 0))
     // Move Rumble onto an empty battlefield → conquers it → conquer trigger fires.
     s.battlefields[0] = { cardId: battlefield.id, units: [], controller: null }
-    const r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [rumble.iid], toBattlefield: 0 })
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [rumble.iid], toBattlefield: 0 })
+    expect(r.error).toBeFalsy()
+    // C2: the player board-picks WHICH unit to recycle (Might 3 covers the
+    // 3-Energy Mech → free, so the play resolves right on the pick).
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: spareU.iid })
     expect(r.error).toBeFalsy()
     expect(r.state.players[0].zones.trash.some((c) => c.cardId === trashMech)).toBe(false) // Mech left trash
     expect(r.state.players[0].zones.base.some((c) => c.cardId === trashMech)).toBe(true) // played to base

@@ -118,6 +118,8 @@ export default function OnlinePage() {
   const [activatePay, setActivatePay] = useState<{ iid: string; card: Card | null; cost: ResolvedCost; ab: NonNullable<ReturnType<typeof canActivateUnit>> } | null>(null)
   // Pending Hide payment (rune picker before HIDE — 1 wild Power, Teemo: 1 Energy).
   const [hidePay, setHidePay] = useState<{ iid: string; toBattlefield: number; runeIid: string; card: Card | null; cost: ResolvedCost & { powerAny?: number } } | null>(null)
+  // Pending Mageseeker Investigator group-move surcharge (rune picker before MOVE_UNITS).
+  const [movePay, setMovePay] = useState<{ iids: string[]; toBattlefield: number; cost: ResolvedCost & { powerAny?: number } } | null>(null)
   // True while the rune picker is open for an ACCEPTED optionalPay pendingChoice
   // (two-step: Pay/Decline prompt → rune picker). Reset whenever the choice changes.
   const [choicePaying, setChoicePaying] = useState(false)
@@ -1016,7 +1018,16 @@ export default function OnlinePage() {
         perspective={seat}
         canAct={myTurn}
         onPlay={play}
-        onMove={(iids, bf) => dispatch({ type: 'MOVE_UNITS', player: seat, iids, toBattlefield: bf })}
+        onMove={(iids, bf) => {
+          // Mageseeker Investigator: rainbow Power per extra unit in a group move
+          // to her battlefield — always-manual online, so open the rune picker.
+          const tolls = iids.length > 1
+            ? match.battlefields[bf].units.filter((u) => !sameTeam(match, (u.controlledBy ?? u.owner), seat) && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator').length
+            : 0
+          const due = (iids.length - 1) * tolls
+          if (due > 0) setMovePay({ iids, toBattlefield: bf, cost: { energy: 0, power: {}, powerAny: due } })
+          else dispatch({ type: 'MOVE_UNITS', player: seat, iids, toBattlefield: bf })
+        }}
         onPass={() => dispatch({ type: 'PASS', player: seat })}
         onPassPriority={() => dispatch({ type: 'PASS_PRIORITY', player: seat })}
         onCounter={counterWith}
@@ -1259,6 +1270,20 @@ export default function OnlinePage() {
             const h = hidePay
             setHidePay(null)
             dispatch({ type: 'HIDE', player: seat, iid: h.iid, toBattlefield: h.toBattlefield, runeIid: h.runeIid, payment })
+          }}
+        />
+      )}
+      {movePay && (
+        <PaymentModal
+          player={match.players[seat]}
+          title={`Move ${movePay.iids.length} units — Mageseeker toll`}
+          cost={movePay.cost}
+          confirmLabel="Pay & move ▶"
+          onCancel={() => setMovePay(null)}
+          onConfirm={(payment) => {
+            const m = movePay
+            setMovePay(null)
+            dispatch({ type: 'MOVE_UNITS', player: seat, iids: m.iids, toBattlefield: m.toBattlefield, payment })
           }}
         />
       )}

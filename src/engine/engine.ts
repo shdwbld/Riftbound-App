@@ -1878,27 +1878,28 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     }
     // Rumble - Hotheaded: "When I conquer, you may recycle another friendly unit to
     // play a Mech from your trash, reducing its Energy cost by the recycled unit's
-    // Might." Auto-resolved conservatively — only when recycling a spare unit makes a
-    // STRONGER Mech free (net board gain), so it never carelessly sacrifices a unit.
+    // Might." The player board-picks WHICH unit to recycle (the Mech auto-picks
+    // highest Might); a non-free remainder then opens the rune picker. Only spares
+    // whose remainder is affordable are offered (so a pick can't strand the recycle).
     if (ability.event === 'conquer' && srcName === 'Rumble - Hotheaded' && sourceIid) {
       const isMech = (c: EngineCard) => (getCard(c.cardId)?.tags ?? []).includes('Mech')
       const mechs = p.zones.trash.filter((c) => getCard(c.cardId)?.type === 'unit' && isMech(c))
       const mech = mechs.length ? mechs.reduce((a, b) => (mightOf(b) > mightOf(a) ? b : a)) : undefined
       if (mech) {
-        const cost = cardCost(mech) // recycled Might must cover the whole cost (free)
-        const spare = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
-          .filter((x) => isFriendlyTo(s, player, x) && x.iid !== sourceIid && !x.token && getCard(x.cardId)?.supertype !== 'token' && getCard(x.cardId)?.type === 'unit' && mightOf(x) >= cost && mightOf(x) < mightOf(mech))
-          .sort((a, b) => mightOf(a) - mightOf(b))[0]
-        if (spare) {
-          for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === spare.iid); if (i >= 0) bf.units.splice(i, 1) }
-          const bi = p.zones.base.findIndex((x) => x.iid === spare.iid); if (bi >= 0) p.zones.base.splice(bi, 1)
-          p.zones.mainDeck.push({ ...spare, exhausted: false, damage: 0, attached: [] }) // recycle to deck bottom
-          const ti = p.zones.trash.findIndex((x) => x.iid === mech.iid)
-          const [m] = p.zones.trash.splice(ti, 1)
-          p.zones.base.push({ ...m, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn })
-          recomputeControllers(s)
-          s = log(s, player, `${label}: ${srcName} recycled ${getCard(spare.cardId)?.name} to play ${getCard(m.cardId)?.name} from trash (free).`)
+        const md = getCard(mech.cardId) as { energy?: number; power?: Record<string, number> } | undefined
+        const afford = (spare: EngineCard) => {
+          const due = { energy: Math.max(0, (md?.energy ?? 0) - mightOf(spare)), power: md?.power ?? {} }
+          return due.energy + Object.values(due.power).reduce((a, b) => a + (b || 0), 0) === 0 || autoPay(p, due) !== null
         }
+        const spares = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)]
+          .filter((x) => isFriendlyTo(s, player, x) && x.iid !== sourceIid && !x.token && getCard(x.cardId)?.supertype !== 'token' && getCard(x.cardId)?.type === 'unit' && afford(x))
+        s = queueSelectTarget(s, player, {
+          prompt: `${srcName} — recycle a friendly unit to play ${getCard(mech.cardId)?.name} from your trash (its Might reduces the Energy cost)?`,
+          srcName,
+          options: spares.map((x) => ({ iid: x.iid, label: getCard(x.cardId)?.name ?? 'a unit' })),
+          op: { type: 'rumbleConquer', mechIid: mech.iid },
+          optional: true,
+        })
       }
       handled = true
     }
@@ -2378,7 +2379,45 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
       u.exhausted = false
       return log(s, player, `Readied ${getCard(u.cardId)?.name ?? 'a unit'}.`)
     }
+    case 'rumbleConquer': {
+      if (!chosenIid) return s
+      const pl = s.players[player]
+      const mech = pl.zones.trash.find((x) => x.iid === op.mechIid)
+      const spare = findUnitAnywhere(s, chosenIid)
+      if (!mech || !spare) return s
+      const md = getCard(mech.cardId) as { energy?: number; power?: Record<string, number> } | undefined
+      const due = { energy: Math.max(0, (md?.energy ?? 0) - mightOf(spare)), power: md?.power ?? {} }
+      if (due.energy + Object.values(due.power).reduce((a, b) => a + (b || 0), 0) === 0)
+        return rumblePlayMech(s, player, op.mechIid, chosenIid)
+      if (!autoPay(pl, due)) return log(s, player, `Rumble - Hotheaded: can't pay ${costGlyphLabel(due)} — skipped.`)
+      // The recycle waits for the payment, so declining the picker costs nothing.
+      return queuePayCost(s, player, {
+        prompt: `Play ${getCard(mech.cardId)?.name} from trash — pay ${costGlyphLabel(due)} (Energy reduced by ${getCard(spare.cardId)?.name}'s Might).`,
+        srcName: 'Rumble - Hotheaded',
+        resolvedCost: due,
+        op: { type: 'rumbleConquerPlay', mechIid: op.mechIid, spareIid: chosenIid },
+      })
+    }
+    case 'rumbleConquerPlay':
+      return rumblePlayMech(s, player, op.mechIid, op.spareIid)
   }
+}
+
+/** Rumble - Hotheaded, final stage (cost settled): recycle the spare to the
+ *  Main Deck bottom and play the Mech from trash. */
+function rumblePlayMech(s: MatchState, player: PlayerId, mechIid: string, spareIid: string): MatchState {
+  const p = s.players[player]
+  const ti = p.zones.trash.findIndex((x) => x.iid === mechIid)
+  const spare = findUnitAnywhere(s, spareIid)
+  if (ti < 0 || !spare) return s
+  for (const bf of s.battlefields) { const i = bf.units.findIndex((x) => x.iid === spareIid); if (i >= 0) bf.units.splice(i, 1) }
+  const bi = p.zones.base.findIndex((x) => x.iid === spareIid)
+  if (bi >= 0) p.zones.base.splice(bi, 1)
+  p.zones.mainDeck.push({ ...spare, exhausted: false, damage: 0, attached: [] }) // recycle to deck bottom
+  const [m] = p.zones.trash.splice(ti, 1)
+  p.zones.base.push({ ...m, exhausted: !controlsBreacherAura(s, player), damage: 0, attached: [], enteredTurn: s.turn })
+  recomputeControllers(s)
+  return log(s, player, `Rumble - Hotheaded: recycled ${getCard(spare.cardId)?.name} to play ${getCard(m.cardId)?.name} from trash.`)
 }
 
 /** Fire OPPONENTS' "when an opponent plays a unit while I'm at a battlefield"
@@ -4254,6 +4293,7 @@ function moveUnits(
   player: PlayerId,
   iids: string[],
   toBattlefield: number,
+  payment?: Payment,
 ): EngineResult {
   const guard = requireActiveAction(state, player)
   if (guard) return fail(state, guard)
@@ -4266,12 +4306,19 @@ function moveUnits(
   // Mageseeker Investigator: "Opponents must pay :rb_rune_rainbow: for each unit beyond
   // the first to move multiple units to my battlefield at the same time." Each opposing
   // Investigator at the destination stacks the surcharge (1 rainbow per extra unit each).
+  // The surcharge gates the whole move, so it's paid pre-dispatch: an explicit
+  // `payment` (rune picker, 354.1.a) is validated here; absent → auto-pick.
   if (iids.length > 1) {
     const invCount = s.battlefields[toBattlefield].units.filter(
       (u) => isEnemyTo(s, player, u) && (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Mageseeker Investigator',
     ).length
-    if (invCount > 0 && !makeBfApi(s).payPowerAny(player, (iids.length - 1) * invCount))
-      return fail(state, `Mageseeker Investigator: must pay ${(iids.length - 1) * invCount} rainbow Power to move ${iids.length} units there.`)
+    if (invCount > 0) {
+      const due = { energy: 0, power: {}, powerAny: (iids.length - 1) * invCount }
+      const pay = payment ?? autoPay(p, due)
+      const err = pay ? applyPayment(p, due, pay) : 'no runes'
+      if (err)
+        return fail(state, payment ? err : `Mageseeker Investigator: must pay ${due.powerAny} rainbow Power to move ${iids.length} units there.`)
+    }
   }
   const moved: EngineCard[] = []
   const sourceBfs = new Set<number>() // battlefields a moved unit left (Stealthy Pursuer follow)
@@ -7635,7 +7682,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       return moveUnits(state, action.player, [action.iid], action.toBattlefield)
 
     case 'MOVE_UNITS':
-      return moveUnits(state, action.player, action.iids, action.toBattlefield)
+      return moveUnits(state, action.player, action.iids, action.toBattlefield, action.payment)
 
     case 'STUN_UNIT': {
       const guard = requireActiveAction(state, action.player)

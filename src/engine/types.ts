@@ -376,6 +376,12 @@ export type DeferredOp =
   /** Ready a unit after its cost was paid — Fiora - Worthy ("pay <cost> to ready
    *  it"); Mistfall also exhausts the gear itself as part of the cost. */
   | { type: 'readyUnit'; unitIid: string; exhaustGearIid?: string }
+  /** Rumble - Hotheaded conquer: the board-picked friendly unit (selectTarget)
+   *  is the one to recycle; its Might discounts the Mech's Energy cost. A
+   *  non-free remainder chains a payCost with `rumbleConquerPlay`. */
+  | { type: 'rumbleConquer'; mechIid: string }
+  /** Rumble - Hotheaded, paid stage: recycle `spareIid` and play the Mech. */
+  | { type: 'rumbleConquerPlay'; mechIid: string; spareIid: string }
 
 /** A queued player decision (optional cost to pay, or a target to pick) recorded
  *  during synchronous effect resolution and surfaced one at a time AFTER the action
@@ -657,8 +663,10 @@ export type Action =
       iid: string
       toBattlefield: number
     }
-  /** Move several units together (one showdown) — group standard move. */
-  | { type: 'MOVE_UNITS'; player: PlayerId; iids: string[]; toBattlefield: number }
+  /** Move several units together (one showdown) — group standard move.
+   *  `payment` (optional) covers a Mageseeker Investigator rainbow surcharge —
+   *  the player's chosen runes; absent → engine auto-pick. */
+  | { type: 'MOVE_UNITS'; player: PlayerId; iids: string[]; toBattlefield: number; payment?: Payment }
   /** Assign a paused showdown's combat damage across the opposing units
    *  (Tank-first). `allocations` maps receiving unit iid → damage placed on it. */
   | { type: 'ASSIGN_DAMAGE'; player: PlayerId; allocations: Record<string, number> }
