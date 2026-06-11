@@ -1,8 +1,8 @@
 # Rules-Fidelity Campaign: kill auto-payments, fix broken steps & cards
 
-**Status (2026-06-11): Phases A–C DONE — Phases D–G remain.** Shipped: A `86eba83`, B `0616847`, C1 `7f7cded`, C2a `5458c58`, C2b `cb73a59`, C2c `83d2174` (822 tests green). C3 (Altar of Blood / Sett) verified UNSAFE to defer → lands with G3 (see the C3 bullet). Key invariant established in C: **RESOLVE_CHOICE is the single payment site — DeferredOps never re-pay.** Engine.ts line anchors below predate the A–C edits; **re-verify before editing**.
+**Status (2026-06-11): Phases A–D DONE — Phases E–G remain.** Shipped: A `86eba83`, B `0616847`, C1 `7f7cded`, C2a `5458c58`, C2b `cb73a59`, C2c `83d2174`, D `8313755` (825 tests green). C3 (Altar of Blood / Sett) verified UNSAFE to defer → lands with G3 (see the C3 bullet). Key invariant established in C: **RESOLVE_CHOICE is the single payment site — DeferredOps never re-pay.** Engine.ts line anchors below predate the A–D edits; **re-verify before editing**.
 
-**NEXT: Phase D** (user checkpoints at phase boundaries — get a go-ahead before starting each phase).
+**NEXT: Phase E** (user checkpoints at phase boundaries — get a go-ahead before starting each phase).
 
 User decisions locked in: prompt for **every** non-free rune spend when manual pay is on (toggle still bypasses), and **full chain fidelity** (showdown spells AND death/end-of-turn triggers on the chain).
 
@@ -58,11 +58,13 @@ Convert mid-effect auto-pay sites to `queuePayCost`/upgraded `queueOptionalPay` 
 - **C3 – death-adjacent sites**: Altar of Blood (5810), Sett - The Boss death-save (3902). These run inside death/cleanup loops — **verify re-entrancy first**; if a mid-death pause is unsafe today, defer them to Phase G3 (the chain rework gives deaths a safe pause point) rather than hacking it.
   - **VERIFIED UNSAFE (2026-06-11) → deferred to G3.** Both pay inside the combat-finalization death loop / `tryRecallInsteadOfDeath`; a queued decision can't retroactively pull the unit out of `defeated` after Deathknells fire and the conquer math runs (and a late "save" would restore from trash with double-fire risk). They keep their inline auto-pay until G3 gives deaths a chain pause point.
 
-## Phase D — Combat-time payments & forced picks (reuse P5 pre-math pattern) — ⬜ NEXT
+## Phase D — Combat-time payments & forced picks (reuse P5 pre-math pattern) — ✅ DONE (`8313755`)
 
 Queue decisions at move-declaration/showdown-open like engine.ts:7250–7267:
 - Draven - Vanquisher (1529–1535), Sinister Poro (1773–1783), Ava Achiever (1804–1823): `optionalPay` with `resolvedCost` before combat math; effect applied via DeferredOp.
 - Atakhan defender-must-kill (1785–1800): `selectTarget` decision for the **defending** player (currently auto-kills their weakest).
+
+**Implementation notes (D):** `resolveShowdown` gained a Phase D pause — `queueNextCombatDecision(s, bfIndex)` runs FIRST (before the split-damage and P5 target-pick pauses, since these effects remove units from the battlefield). It scans `collectCombatFired` and queues ONE decision at a time through `pendingDecisions`: Draven = `optionalPay` billing the printed fury Power (was `payPowerAny` wildcard); Poro = `selectTarget` the enemy (was auto-weakest) → `payCost` ⚡1 (Rumble's pick-then-pay pattern; the move now also fires Blast Cone "move an enemy" triggers); Ava = `selectGear` list of [Hidden] hand cards (was auto-strongest) → `payCost` 1 mind (old code wrongly demanded a READY mind rune; recycling may use exhausted runes) → `avaPlayHidden`; Atakhan = mandatory `selectTarget` per defending player (decline falls back to their weakest = old auto-pick). New DeferredOps `combatDraven`/`combatPoroPick`/`combatPoroMove`/`combatAvaPick`/`combatAvaPlay`/`combatAtakhanKill` each mark `showdown.combatDone` (key = sourceIid, or `sourceIid:player` for Atakhan) and re-enter `resolveShowdown`; declines route through `combatOpDeclined` in RESOLVE_CHOICE so the showdown ALWAYS resumes; an already-pending combat op dedupes re-entries (PASS spam can't double-queue). Unaffordable/no-target triggers are marked done silently (matches the old silent skip). Fire-time handlers in `fireTriggers` are now no-ops for these four (attack/defend triggers only fire via `collectCombatFired`, verified). No UI changes needed — all four decision kinds render generically since Phase A–C.
 
 ## Phase E — Broken-card fixes (verified inventory)
 
