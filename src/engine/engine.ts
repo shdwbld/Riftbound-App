@@ -2072,7 +2072,7 @@ function fireTokenPlay(s: MatchState, player: PlayerId, count: number): MatchSta
   if (count <= 0) return s
   const tokenUnit = { type: 'unit', supertype: 'token' } as Card
   const fired = collectGlobal(s, player, 'play').filter((f) => playTriggerMatches(f.ability.text, tokenUnit))
-  for (let i = 0; i < count; i++) s = fireTriggers(s, fired)
+  for (let i = 0; i < count; i++) s = pushFiredTriggers(s, fired) // G3: play-trigger family chains
   return s
 }
 
@@ -2113,7 +2113,11 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   // Jhin's payoff lives in his card's 2nd sentence, which the clause parser drops —
   // detect him by the SOURCE card's full text, not the (first-sentence) clause.
   const isJhin = (f: FiredTrigger) => /banished with me/i.test(getCard(f.sourceCardId ?? '')?.text ?? '')
-  s = fireTriggers(s, all.filter((f) => !exhaustMe(f.ability.text) && !payEnergyOpt(f.ability.text) && !isJhin(f)))
+  // G3: the generic play-trigger batch goes on the Chain (rule 376.4 — Play
+  // Effects chain after the permanent enters / the spell is pending; trigger
+  // items sit ABOVE a pending spell and resolve first). Jhin / exhaust-me /
+  // pay-Energy payoffs below keep their bespoke + decision-queue paths.
+  s = pushFiredTriggers(s, all.filter((f) => !exhaustMe(f.ability.text) && !payEnergyOpt(f.ability.text) && !isJhin(f)))
   // Jhin - Virtuoso (bespoke): "When you play a spell, if you spent 4+ Energy, you
   // may banish it. Then, if four spells are banished with me, put each in its trash,
   // channel 4, draw 1." The 4+-Energy gate already filtered `all` (playTriggerMatches);
@@ -7029,10 +7033,20 @@ function onChainEmptied(s: MatchState): MatchState {
  *  (and at the end of beginTurn), so chains resume after RESOLVE_CHOICE. */
 function autoPassTriggers(s: MatchState): MatchState {
   let guard = 0
+  let resolvedAny = false
   while (s.chain.length > 0 && s.winner === null && guard++ < 200) {
     if (s.pendingChoice || s.pendingDecisions?.length) return s // a decision owns the pause
     const top = s.chain[s.chain.length - 1]
-    if (top.kind !== 'trigger') return s
+    if (top.kind !== 'trigger') {
+      // Trigger(s) above this item just resolved → the chain changed, so prior
+      // passes are void: open a fresh response window on the (spell/counter)
+      // top, opponent of its controller first (the engine's push convention).
+      if (resolvedAny) {
+        s.passes = 0
+        s.priority = nextPlayer(s, top.controller)
+      }
+      return s
+    }
     let cur = s.priority ?? s.activePlayer
     let passed = s.passes
     while (passed < aliveCount(s)) {
@@ -7046,6 +7060,7 @@ function autoPassTriggers(s: MatchState): MatchState {
     }
     // Every seat auto-passed → resolve the trigger and keep going.
     s = resolveTopOfChain(s)
+    resolvedAny = true
     s.passes = 0
     s.priority = s.chain.length > 0 ? s.activePlayer : null
     s = onChainEmptied(s) // G2: showdown focus passes when the chain closes out
