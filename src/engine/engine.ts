@@ -750,7 +750,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     if (res.killed && e.goldTokens) lines.push(`Created ${spawnGold(p, e.goldTokens, s.turn, false)} Gold token(s).`)
     // Jayce - Man of Progress: "If you do, you may play a gear (Energy ≤ N) from hand,
     // ignoring its Energy cost (still pay Power)." Auto-plays the highest-Energy eligible
-    // gear; Power is paid from ready runes (approximated via payPowerAny).
+    // gear; a non-free Power cost surfaces the rune picker (354.1.a) before the move.
     if (res.killed && e.playGearFromHand) {
       const cap = e.playGearFromHand.maxEnergy
       const cand = p.zones.hand
@@ -758,11 +758,19 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
         .sort((a, b) => gearEnergyOf(b) - gearEnergyOf(a))[0]
       if (cand) {
         const cardDef = getCard(cand.cardId)
-        const powerPips = cardDef ? Object.values(costOf(cardDef).power).reduce((a, b) => a + (b ?? 0), 0) : 0
-        if (powerPips === 0 || makeBfApi(s).payPowerAny(p.id, powerPips)) {
+        const powerObj = cardDef ? costOf(cardDef).power : {}
+        const powerPips = Object.values(powerObj).reduce((a, b) => a + (b ?? 0), 0)
+        if (powerPips === 0) {
           removeFromZone(p, 'hand', cand.iid)
           p.zones.base.push({ ...cand, exhausted: false, damage: 0, attached: [] })
           lines.push(`Played ${cardDef?.name ?? 'a gear'} from hand (Energy ignored).`)
+        } else if (autoPay(p, { energy: 0, power: powerObj })) {
+          queuePayCost(s, p.id, {
+            prompt: `Play ${cardDef?.name ?? 'a gear'} from hand — pay ${costGlyphLabel({ energy: 0, power: powerObj })} (Energy ignored).`,
+            srcName: cardDef?.name ?? 'a gear',
+            resolvedCost: { energy: 0, power: powerObj },
+            op: { type: 'playFromZone', zone: 'hand', cardIid: cand.iid },
+          })
         }
       }
     }
@@ -882,46 +890,57 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     if (pick) {
       // "ignoring its ENERGY cost" still charges the unit's Power cost (The
       // Harrowing, Soulgorger); the full-cost variant (Last Rites — "you still pay
-      // its costs") pays BOTH Energy and Power from the pool; "ignoring its cost"
-      // is free. Pre-check affordability so we never half-pay; if unaffordable, the
-      // play doesn't happen.
+      // its costs") charges BOTH; "ignoring its cost" is free. The Power due is the
+      // unit's PRINTED (per-domain) cost — a non-free due surfaces the rune picker
+      // (354.1.a) and the move happens when it's paid.
       const st = stats(pick)
+      const d = getCard(pick.cardId) as { power?: Record<string, number> } | undefined
       const energyDue = e.playUnitFromTrash.fullCost ? st.energy : 0
-      const powerDue = e.playUnitFromTrash.fullCost || e.playUnitFromTrash.energyOnly ? st.power : 0
-      const readyRunes = p.zones.runePool.filter((r) => !r.exhausted).length
-      const poolE = p.pool?.energy ?? 0
-      const canPay = powerDue + Math.max(0, energyDue - poolE) <= readyRunes
-      if ((powerDue > 0 || energyDue > 0) && !canPay) {
-        lines.push(`Couldn't play ${getCard(pick.cardId)?.name ?? 'a unit'} from trash — can't pay its cost.`)
-      } else {
-        const api = makeBfApi(s)
-        if (powerDue > 0) api.payPowerAny(p.id, powerDue)
-        if (energyDue > 0) api.payEnergy(p.id, energyDue)
+      const powerObj = e.playUnitFromTrash.fullCost || e.playUnitFromTrash.energyOnly ? (d?.power ?? {}) : {}
+      const due = { energy: energyDue, power: powerObj }
+      const powerDue = Object.values(powerObj).reduce((a, b) => a + (b || 0), 0)
+      const nm = getCard(pick.cardId)?.name ?? 'a unit'
+      if (energyDue === 0 && powerDue === 0) {
         const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
         const [card] = p.zones.trash.splice(i, 1)
         p.zones.base.push({ ...card, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher: non-hand plays enter ready
-        const note = e.playUnitFromTrash.fullCost ? `paid ${energyDue} Energy${powerDue ? ` + ${powerDue} Power` : ''}` : powerDue > 0 ? `ignoring Energy, paid ${powerDue} Power` : 'free'
-        lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from trash (${note}).`)
+        lines.push(`Played ${nm} from trash (free).`)
+      } else if (!autoPay(p, due)) {
+        lines.push(`Couldn't play ${nm} from trash — can't pay its cost.`)
+      } else {
+        queuePayCost(s, p.id, {
+          prompt: `Play ${nm} from trash — pay ${costGlyphLabel(due)}${e.playUnitFromTrash.fullCost ? '' : ' (Energy ignored)'}.`,
+          srcName: nm,
+          resolvedCost: due,
+          op: { type: 'playFromZone', zone: 'trash', cardIid: pick.iid },
+        })
       }
     }
   }
   if (e.playUnitFromHand) {
     // Play the highest-cost unit from your hand, ignoring its (Energy) cost —
-    // Rift Herald's [Deathknell]. "ignoring its ENERGY cost" still charges Power.
-    const powerOf = (c: EngineCard) => {
-      const d = getCard(c.cardId) as { power?: Record<string, number> } | undefined
-      return d?.power ? Object.values(d.power).reduce((a, b) => a + (b || 0), 0) : 0
-    }
+    // Rift Herald's [Deathknell]. "ignoring its ENERGY cost" still charges the
+    // PRINTED Power cost — non-free surfaces the rune picker (354.1.a).
     const pick = p.zones.hand.filter((c) => getCard(c.cardId)?.type === 'unit').sort((a, b) => cardCost(b) - cardCost(a))[0]
     if (pick) {
-      const powerDue = e.playUnitFromHand.energyOnly ? powerOf(pick) : 0
-      if (powerDue > 0 && !makeBfApi(s).payPowerAny(p.id, powerDue)) {
-        lines.push(`Couldn't play ${getCard(pick.cardId)?.name ?? 'a unit'} from hand — can't pay its Power cost.`)
-      } else {
+      const d = getCard(pick.cardId) as { power?: Record<string, number> } | undefined
+      const powerObj = e.playUnitFromHand.energyOnly ? (d?.power ?? {}) : {}
+      const powerDue = Object.values(powerObj).reduce((a, b) => a + (b || 0), 0)
+      const nm = getCard(pick.cardId)?.name ?? 'a unit'
+      if (powerDue === 0) {
         const i = p.zones.hand.findIndex((x) => x.iid === pick.iid)
         const [card] = p.zones.hand.splice(i, 1)
         p.zones.base.push({ ...card, exhausted: !controlsBreacherAura(s, p.id), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher
-        lines.push(`Played ${getCard(card.cardId)?.name ?? 'a unit'} from hand (ignoring ${powerDue > 0 ? 'Energy' : ''} cost${powerDue > 0 ? `, paid ${powerDue} Power` : ''}).`)
+        lines.push(`Played ${nm} from hand (ignoring cost).`)
+      } else if (!autoPay(p, { energy: 0, power: powerObj })) {
+        lines.push(`Couldn't play ${nm} from hand — can't pay its Power cost.`)
+      } else {
+        queuePayCost(s, p.id, {
+          prompt: `Play ${nm} from hand — pay ${costGlyphLabel({ energy: 0, power: powerObj })} (Energy ignored).`,
+          srcName: nm,
+          resolvedCost: { energy: 0, power: powerObj },
+          op: { type: 'playFromZone', zone: 'hand', cardIid: pick.iid },
+        })
       }
     }
   }
@@ -2332,6 +2351,22 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
       if (item?.targets && op.locIndex < item.targets.length) item.targets[op.locIndex] = chosenIid
       return s
     }
+    case 'playFromZone': {
+      const pl = s.players[player]
+      const idx = pl.zones[op.zone].findIndex((c) => c.iid === op.cardIid)
+      if (idx < 0) return s
+      const [card] = pl.zones[op.zone].splice(idx, 1)
+      const d = getCard(card.cardId)
+      if (d?.type === 'gear') pl.zones.base.push({ ...card, exhausted: false, damage: 0, attached: [] })
+      else pl.zones.base.push({ ...card, exhausted: !controlsBreacherAura(s, player), damage: 0, attached: [], enteredTurn: s.turn }) // Rek'Sai - Breacher
+      return log(s, player, `Played ${d?.name ?? 'a card'} from ${op.zone}.`)
+    }
+    case 'drawN': {
+      const drew = drawN(s.players[player], op.n)
+      return log(s, player, `Drew ${drew}.`)
+    }
+    case 'replaySpellFromTrash':
+      return replaySpellNow(s, player, op.spellIid, op.recycleAfter, op.bfIndex)
   }
 }
 
@@ -3104,16 +3139,19 @@ function fireAttachEquip(s: MatchState, player: PlayerId, target: EngineCard): M
   if (controllerOf(target) !== player) return s
   const name = (getCard(target.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim()
   // Generic "When you attach an Equipment to me, you may pay N Energy to draw M"
-  // self-trigger (Jax - Unrelenting). Auto-paid when affordable (pure benefit).
+  // self-trigger (Jax - Unrelenting). Surfaced as a Pay/Decline choice with the
+  // rune picker (354.1.a) instead of auto-paying.
   const tt = (getCard(target.cardId)?.text ?? '').toLowerCase()
   const drawM = tt.match(/when you attach an equipment to me,? you may pay :rb_energy_(\d+): to draw (\d+)/)
   if (drawM) {
-    const cost = { energy: parseInt(drawM[1], 10), power: {} }
-    const pp = s.players[player]
-    const pay = autoPay(pp, cost)
-    if (pay && !applyPayment(pp, cost, pay)) {
-      const drew = drawN(pp, parseInt(drawM[2], 10))
-      s = log(s, player, `${name}: paid ${cost.energy} Energy to draw ${drew} (Equipment attached).`)
+    const n = parseInt(drawM[1], 10)
+    if (canAffordEnergy(s.players[player], n)) {
+      s = queueOptionalPay(s, player, {
+        prompt: `${name} — pay ⚡${n} to draw ${drawM[2]} (Equipment attached)?`,
+        srcName: name,
+        cost: { energy: n },
+        op: { type: 'drawN', n: parseInt(drawM[2], 10) },
+      })
     }
   }
   if (name !== 'Aphelios - Exalted') return s
@@ -6358,18 +6396,34 @@ function replaySpellFromTrash(
   const pick = p.zones.trash.filter(qualifies).sort((a, b) => energyOf(b) - energyOf(a))[0]
   if (!pick) return s // optional ("you may") — nothing to replay
   const card = getCard(pick.cardId)!
-  // The Energy cost is waived; the Power cost is still due. Abort if it can't be paid.
-  const powerDue = spec.energyOnly
-    ? Object.values((card as { power?: Record<string, number> }).power ?? {}).reduce((a, b) => a + (b || 0), 0)
-    : 0
-  if (powerDue > 0 && !makeBfApi(s).payPowerAny(player, powerDue))
+  // The Energy cost is waived; the PRINTED (per-domain) Power cost is still due —
+  // non-free surfaces the rune picker (354.1.a), then the queued op replays it.
+  const powerObj = spec.energyOnly ? ((card as { power?: Record<string, number> }).power ?? {}) : {}
+  const powerDue = Object.values(powerObj).reduce((a, b) => a + (b || 0), 0)
+  if (powerDue === 0) return replaySpellNow(s, player, pick.iid, !!spec.recycleAfter, bfIndex)
+  if (!autoPay(p, { energy: 0, power: powerObj }))
     return log(s, player, `Couldn't replay ${card.name} from trash — can't pay its Power cost.`)
-  const i = p.zones.trash.findIndex((x) => x.iid === pick.iid)
+  return queuePayCost(s, player, {
+    prompt: `Replay ${card.name} from trash — pay ${costGlyphLabel({ energy: 0, power: powerObj })} (Energy ignored).`,
+    srcName: card.name,
+    resolvedCost: { energy: 0, power: powerObj },
+    op: { type: 'replaySpellFromTrash', spellIid: pick.iid, recycleAfter: !!spec.recycleAfter, bfIndex },
+  })
+}
+
+/** The replay itself (cost already settled): resolve the spell's effects with
+ *  auto-picked targets, then recycle it to the Main Deck or send it to trash. */
+function replaySpellNow(s: MatchState, player: PlayerId, spellIid: string, recycleAfter: boolean, bfIndex: number): MatchState {
+  const p = s.players[player]
+  const i = p.zones.trash.findIndex((x) => x.iid === spellIid)
+  if (i < 0) return s
+  const card = getCard(p.zones.trash[i].cardId)
+  if (!card) return s
   const [spell] = p.zones.trash.splice(i, 1)
-  s = log(s, player, `Replayed ${card.name} from trash (Energy ignored${powerDue ? `, paid ${powerDue} Power` : ''}).`)
+  s = log(s, player, `Replayed ${card.name} from trash (Energy ignored).`)
   s = resolveSpellEffects(s, player, card, autoSpellTargets(s, player, card, bfIndex))
   // Recycle it (to the Main Deck) after resolving, per the card text.
-  if (spec.recycleAfter) s.players[player].zones.mainDeck.push({ ...spell, damage: 0, exhausted: false, attached: [] })
+  if (recycleAfter) s.players[player].zones.mainDeck.push({ ...spell, damage: 0, exhausted: false, attached: [] })
   else sendToTrash(s.players[player], spell)
   return s
 }

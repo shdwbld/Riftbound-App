@@ -364,6 +364,15 @@ export type DeferredOp =
   /** Override the elderOnPlay chain trigger's target for one location (selectTarget;
    *  Elder Dragon picks which enemy at each location takes 1 damage). */
   | { type: 'setElderTarget'; locIndex: number }
+  /** Move a card from hand/trash to its owner's base — the queued-payment form of
+   *  the play-from-zone family (Jayce gear, The Harrowing/Last Rites units, Rift
+   *  Herald). The cost was already paid by RESOLVE_CHOICE; this is just the move. */
+  | { type: 'playFromZone'; zone: 'hand' | 'trash'; cardIid: string }
+  /** Draw N (Jax - Unrelenting "pay :rb_energy_N: to draw M" attach trigger). */
+  | { type: 'drawN'; n: number }
+  /** Replay a spell from trash whose Power cost was just paid (Fizz - Trickster /
+   *  Kai'Sa - Evolutionary — Energy waived); resolves it then recycles/trashes. */
+  | { type: 'replaySpellFromTrash'; spellIid: string; recycleAfter: boolean; bfIndex: number }
 
 /** A queued player decision (optional cost to pay, or a target to pick) recorded
  *  during synchronous effect resolution and surfaced one at a time AFTER the action

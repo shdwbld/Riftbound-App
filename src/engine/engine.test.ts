@@ -777,6 +777,9 @@ describe('tokens (Recruit)', () => {
     let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [], payment: emptyPayment() })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    // C2: the Power due surfaces the rune picker (payCost) instead of auto-paying.
+    expect(r.state.pendingChoice?.kind).toBe('payCost')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.players[0].zones.base.some((x) => x.iid === dead.iid)).toBe(true)
     expect(r.state.players[0].zones.runePool.length).toBe(0) // Power rune spent
     // No Power available → the unit is NOT played for free (stays in trash).
@@ -913,8 +916,11 @@ describe('tokens (Recruit)', () => {
     s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0)) // a card to draw
     const g = mk(gear, 0)
     s.players[0].zones.hand.push(g)
-    const r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, targetIid: j.iid, payment: { exhaust: [], recycle: [] } })
+    let r = reduce(s, { type: 'PLAY_GEAR', player: 0, iid: g.iid, targetIid: j.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeUndefined()
+    // C2: surfaced as a Pay/Decline choice instead of auto-paying.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.players[0].zones.hand.length).toBe(1) // gear left hand, drew 1
     expect(r.state.players[0].zones.runePool.every((x) => x.exhausted)).toBe(true) // paid 1 Energy
   })
@@ -1081,8 +1087,11 @@ describe('tokens (Recruit)', () => {
     s.players[0].zones.trash.push(mk(trashUnit, 0))
     const u = mk(src, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeFalsy()
+    // C2: the full cost surfaces the rune picker (payCost) instead of auto-paying.
+    expect(r.state.pendingChoice?.kind).toBe('payCost')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.players[0].zones.base.some((x) => x.cardId === trashUnit)).toBe(true)
     expect(r.state.players[0].pool.energy).toBe(0) // 2 Energy spent
     expect(r.state.players[0].zones.runePool.length).toBe(0) // 1 Power rune spent

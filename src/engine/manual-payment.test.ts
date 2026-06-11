@@ -281,6 +281,32 @@ describe('optionalPay — explicit payment end-to-end (real site)', () => {
     expect(pool.some((x) => x.iid === f1.iid)).toBe(false) // recycled away
   })
 
+  it('playUnitFromTrash (The Harrowing pattern): payCost picker pays the PRINTED domain with the chosen rune', () => {
+    const sid = injectCard('mp-harrow', 'Play a unit from your trash, ignoring its Energy cost.', { type: 'spell', energy: 0, power: {} })
+    const trashUnit = injectCard('mp-harrow-u', 'A unit.', { type: 'unit', might: 3, energy: 5, power: { fury: 1 } })
+    const s = baseState()
+    const dead = mk(trashUnit, 0)
+    s.players[0].zones.trash.push(dead)
+    const f1 = mk(furyRune.id, 0)
+    const f2 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(f1, f2)
+    const sp = mk(sid, 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.pendingChoice?.kind).toBe('payCost')
+    // The cost is the unit's PRINTED power (fury), not a wildcard.
+    const payload = JSON.parse(r.state.pendingChoice?.payload ?? '{}')
+    expect(payload.resolvedCost).toEqual({ energy: 0, power: { fury: 1 } })
+    // Pay with the SECOND rune explicitly.
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay', payment: { exhaust: [], recycle: [f2.iid] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.some((x) => x.iid === dead.iid)).toBe(true)
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === f2.iid)).toBe(false) // recycled
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === f1.iid)?.exhausted).toBe(false) // untouched
+  })
+
   it("Ripper's Bay channel: legacy accept with no payment still auto-pays", () => {
     const s = baseState()
     s.battlefields[0] = { cardId: 'unl-214-219', units: [mk(furyUnit.id, 0)], controller: 0 }
