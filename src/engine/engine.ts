@@ -620,8 +620,9 @@ function applyBuff(s: MatchState, p: PlayerState, e: ParsedEffect, sourceIid?: s
 
 /** Permanent reactions to buffing a friendly unit. Mistfall (gear): "When you
  *  buff a friendly unit, you may pay :rb_rune_body: and exhaust this to ready
- *  it." Auto-paid when the gear is ready, a body rune is available, and the
- *  buffed unit is exhausted (readying it is the whole point — tempo). */
+ *  it." Surfaced as a Pay/Decline choice with the rune picker (354.1.a) —
+ *  recycling may use an exhausted rune, so the old "ready body rune" gate was
+ *  stricter than the rules. */
 function fireBuffReactions(s: MatchState, p: PlayerState, buffedIid: string): string[] {
   const lines: string[] = []
   const buffed = findUnitAnywhere(s, buffedIid)
@@ -630,17 +631,16 @@ function fireBuffReactions(s: MatchState, p: PlayerState, buffedIid: string): st
     (g) => !g.exhausted && /when you buff a friendly unit[^.]*exhaust this to ready it/i.test(def(g)?.text ?? ''),
   )
   if (!mistfall) return lines
-  // Pay 1 body Power: recycle a ready body-producing rune from the pool.
-  const idx = p.zones.runePool.findIndex(
-    (r) => !r.exhausted && ((def(r) as { produces?: Domain[] })?.produces ?? []).includes('body'),
-  )
-  if (idx < 0) return lines
-  const [rune] = p.zones.runePool.splice(idx, 1)
-  p.zones.runeDeck.push({ ...rune, exhausted: false, damage: 0 })
-  mistfall.exhausted = true
-  buffed.exhausted = false
-  emit({ kind: 'buff', iid: buffed.iid, player: p.id })
-  lines.push(`Mistfall: paid a body Power and readied ${getCard(buffed.cardId)?.name}.`)
+  if (!autoPay(p, { energy: 0, power: { body: 1 } })) return lines
+  // Multi-buff in one effect: don't stack a second offer for the same unit.
+  if (s.pendingDecisions?.some((d) => d.op?.type === 'readyUnit' && d.op.unitIid === buffedIid)) return lines
+  queueOptionalPay(s, p.id, {
+    prompt: `Mistfall — pay ${costGlyphLabel({ energy: 0, power: { body: 1 } })} and exhaust it to ready ${getCard(buffed.cardId)?.name}?`,
+    srcName: 'Mistfall',
+    cost: {},
+    resolvedCost: { energy: 0, power: { body: 1 } },
+    op: { type: 'readyUnit', unitIid: buffedIid, exhaustGearIid: mistfall.iid },
+  })
   return lines
 }
 
@@ -2367,6 +2367,17 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
     }
     case 'replaySpellFromTrash':
       return replaySpellNow(s, player, op.spellIid, op.recycleAfter, op.bfIndex)
+    case 'readyUnit': {
+      const u = findUnitAnywhere(s, op.unitIid)
+      if (!u || !u.exhausted) return s
+      if (op.exhaustGearIid) {
+        const g = s.players[player].zones.base.find((x) => x.iid === op.exhaustGearIid)
+        if (!g || g.exhausted) return s // the gear must still be ready to exhaust
+        g.exhausted = true
+      }
+      u.exhausted = false
+      return log(s, player, `Readied ${getCard(u.cardId)?.name ?? 'a unit'}.`)
+    }
   }
 }
 
@@ -2480,17 +2491,18 @@ function fireBecomesState(s: MatchState, owner: PlayerId, becameIid: string, sta
       }
       continue
     }
-    // "pay <cost> to ready it" (Fiora - Worthy) — offer to pay + ready the unit.
+    // "pay <cost> to ready it" (Fiora - Worthy) — Pay/Decline + rune picker (354.1.a).
     const prM = txt.match(/pay ([^.]*?) to ready it/i)
-    if (prM && !s.pendingChoice) {
+    if (prM) {
       const cost = parseCostGlyphs(prM[1])
       const unit = findUnitAnywhere(s, becameIid)
-      if (unit && unit.exhausted && canAffordFixed(s, owner, cost.energy, cost.power)) {
-        offerChoice(s, {
-          player: owner, kind: 'becomesStateReady', bfIndex: -1,
+      if (unit && unit.exhausted && autoPay(s.players[owner], { energy: cost.energy, power: cost.power })) {
+        s = queueOptionalPay(s, owner, {
           prompt: `${srcName} — a unit became [${stateName}]. Pay ${costGlyphLabel(cost)} to ready it?`,
-          options: [{ iid: becameIid, label: `Pay ${costGlyphLabel(cost)} & ready` }],
-          payload: JSON.stringify(cost),
+          srcName,
+          cost: { energy: cost.energy },
+          resolvedCost: { energy: cost.energy, power: cost.power },
+          op: { type: 'readyUnit', unitIid: becameIid },
         })
       }
       continue
@@ -2636,14 +2648,17 @@ function fireDiscard(s: MatchState, player: PlayerId, discarded: EngineCard[] = 
   s = fireTriggers(s, collectGlobal(s, player, 'discard'))
   for (const c of discarded) {
     const cost = discardSelfReplayCost(getCard(c.cardId))
-    if (cost && s.players[player].zones.trash.some((x) => x.iid === c.iid) && canAffordFixed(s, player, cost.energy, cost.power)) {
-      offerChoice(s, {
-        player, kind: 'discardReplay', bfIndex: -1,
+    if (cost && s.players[player].zones.trash.some((x) => x.iid === c.iid) && autoPay(s.players[player], { energy: cost.energy, power: cost.power })) {
+      // Surfaced as a Pay/Decline choice with the rune picker (354.1.a). The
+      // decision QUEUE serializes several discards (no more one-offer limit);
+      // RESOLVE_CHOICE pays, so the playFromTrash op's cost is zeroed.
+      s = queueOptionalPay(s, player, {
         prompt: `${getCard(c.cardId)?.name} — pay ${costGlyphLabel(cost)} to play it from your trash?`,
-        options: [{ iid: c.iid, label: `Pay ${costGlyphLabel(cost)} & play` }],
-        payload: JSON.stringify(cost),
+        srcName: getCard(c.cardId)?.name ?? 'A card',
+        cost: { energy: cost.energy },
+        resolvedCost: { energy: cost.energy, power: cost.power },
+        op: { type: 'playFromTrash', cardIid: c.iid, energy: 0, power: {} },
       })
-      break // only one pendingChoice at a time
     }
   }
   return s
@@ -8131,17 +8146,8 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s)
       }
 
-      // "When you discard me, you may pay X to play me" (Flame Chompers). pc.payload
-      // carries the alternate cost; the chosen iid is the discarded card in trash.
-      if (pc.kind === 'discardReplay') {
-        if (action.iid !== null && pc.payload) {
-          const cost = JSON.parse(pc.payload) as { energy: number; power: Partial<Record<Domain, number>> }
-          s = playFromTrashPayingCost(s, action.player, action.iid, cost)
-        } else {
-          s = log(s, action.player, 'Discard-play — declined.')
-        }
-        return ok(s)
-      }
+      // "When you discard me, pay X to play me" (Flame Chompers) and "pay <cost>
+      // to ready it" (Fiora - Worthy) now flow through queueOptionalPay above.
 
       // Card Sharp: this opponent decides yes/no on a Gold token, then the next opponent.
       if (pc.kind === 'cardSharpGold') {
@@ -8265,22 +8271,6 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           }
         } else {
           s = log(s, action.player, 'Trash-return — declined.')
-        }
-        return ok(s)
-      }
-
-      // "When a unit becomes [Mighty], pay <cost> to ready it" (Fiora - Worthy).
-      // pc.payload carries the cost; the chosen iid is the unit to ready.
-      if (pc.kind === 'becomesStateReady') {
-        if (action.iid !== null && pc.payload) {
-          const cost = JSON.parse(pc.payload) as { energy: number; power: Partial<Record<Domain, number>> }
-          const unit = findUnitAnywhere(s, action.iid)
-          if (unit && payFixedCost(s, action.player, cost.energy, cost.power)) {
-            unit.exhausted = false
-            s = log(s, action.player, `Paid ${costGlyphLabel(cost)} to ready ${getCard(unit.cardId)?.name} (became [Mighty]).`)
-          }
-        } else {
-          s = log(s, action.player, 'Become-[Mighty] ready — declined.')
         }
         return ok(s)
       }

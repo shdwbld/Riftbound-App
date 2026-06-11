@@ -1123,9 +1123,9 @@ describe('tokens (Recruit)', () => {
     let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeFalsy()
     expect(r.state.players[0].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // discarded
-    expect(r.state.pendingChoice?.kind).toBe('discardReplay')
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay') // C2: Pay/Decline + rune picker
     // Accept → pay Fury, play Flame Chompers from trash to base.
-    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: fc.iid })
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.error).toBeFalsy()
     expect(r.state.players[0].zones.base.some((x) => x.iid === fc.iid)).toBe(true)
     expect(r.state.players[0].zones.trash.some((x) => x.iid === fc.iid)).toBe(false)
@@ -1233,10 +1233,10 @@ describe('tokens (Recruit)', () => {
     const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: fc.iid }) // you pick Flame Chompers to discard
     expect(r.state.players[1].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // Flame Chompers force-discarded
     // The cascade fired the victim's own "when you discard me" reaction — offered to the VICTIM (player 1):
-    expect(r.state.pendingChoice?.kind).toBe('discardReplay')
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
     expect(r.state.pendingChoice?.player).toBe(1)
     // Victim accepts → replays Flame Chompers from their trash to their base.
-    const r2 = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: fc.iid })
+    const r2 = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: 'pay' })
     expect(r2.error).toBeFalsy()
     expect(r2.state.players[1].zones.base.some((x) => x.iid === fc.iid)).toBe(true)
   })
@@ -1253,7 +1253,7 @@ describe('tokens (Recruit)', () => {
     const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
     expect(r.error).toBeFalsy()
     expect(r.state.players[1].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // lowest-cost (Flame Chompers) discarded
-    expect(r.state.pendingChoice?.kind).toBe('discardReplay') // cascade fired on the opponentDiscards path too
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay') // cascade fired on the opponentDiscards path too
     expect(r.state.pendingChoice?.player).toBe(1)
   })
 

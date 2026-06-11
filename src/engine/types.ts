@@ -373,6 +373,9 @@ export type DeferredOp =
   /** Replay a spell from trash whose Power cost was just paid (Fizz - Trickster /
    *  Kai'Sa - Evolutionary — Energy waived); resolves it then recycles/trashes. */
   | { type: 'replaySpellFromTrash'; spellIid: string; recycleAfter: boolean; bfIndex: number }
+  /** Ready a unit after its cost was paid — Fiora - Worthy ("pay <cost> to ready
+   *  it"); Mistfall also exhausts the gear itself as part of the cost. */
+  | { type: 'readyUnit'; unitIid: string; exhaustGearIid?: string }
 
 /** A queued player decision (optional cost to pay, or a target to pick) recorded
  *  during synchronous effect resolution and surfaced one at a time AFTER the action
@@ -477,7 +480,7 @@ export interface MatchState {
    *  Emperor's Dais): the player picks a unit to act on, or declines. */
   pendingChoice?: {
     player: PlayerId
-    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'discardReplay' | 'trashConquerReturn' | 'becomesStateReady' | 'counterUnlessPay' | 'shardKill' | 'insightfulInvestigator' | 'nameTag' | 'peekToHand' | 'stealUnit' | 'stealGear'
+    kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'trashConquerReturn' | 'counterUnlessPay' | 'shardKill' | 'insightfulInvestigator' | 'nameTag' | 'peekToHand' | 'stealUnit' | 'stealGear'
       // "An opponent reveals their hand" interactive flow (Bone Skewer + the
       // strip/recycle/banish family): pick the opponent → pick a card from their
       // revealed hand → (Bone Skewer) pick a battlefield.

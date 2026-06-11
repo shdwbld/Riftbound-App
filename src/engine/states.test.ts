@@ -418,8 +418,8 @@ describe('state engine — behavior', () => {
     s.players[0].zones.runePool.push(mk(orderRune.id, 0)) // a ready Order rune to pay
     const r1 = reduce(s, { type: 'OVERRIDE', player: 0, op: 'buff', iid: t.iid }) // base 4 → 5, becomes Mighty
     expect(r1.error).toBeFalsy()
-    expect(r1.state.pendingChoice?.kind).toBe('becomesStateReady')
-    const r2 = reduce(r1.state, { type: 'RESOLVE_CHOICE', player: 0, iid: t.iid })
+    expect(r1.state.pendingChoice?.kind).toBe('optionalPay') // C2: Pay/Decline + rune picker
+    const r2 = reduce(r1.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r2.error).toBeFalsy()
     expect(r2.state.battlefields[0].units.find((x) => x.iid === t.iid)?.exhausted).toBe(false) // readied
     expect(r2.state.players[0].zones.runePool.length).toBe(0) // Order rune spent

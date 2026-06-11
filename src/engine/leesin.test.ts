@@ -184,8 +184,11 @@ describe('Lee Sin — Mistfall readies a buffed unit', () => {
     const mistfall = mk(ID.mistfall, 0)
     s.players[0].zones.base.push(ally, mistfall)
     s.players[0].zones.runePool.push(mk(ID.bodyRune, 0))
-    const r = reduce(s, { type: 'ACTIVATE_LEGEND', player: 0 })
+    let r = reduce(s, { type: 'ACTIVATE_LEGEND', player: 0 })
     expect(r.error).toBeUndefined()
+    // C2: Mistfall surfaces a Pay/Decline choice instead of auto-paying.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     const allyAfter = r.state.players[0].zones.base.find((u) => u.iid === ally.iid)!
     const mistAfter = r.state.players[0].zones.base.find((u) => u.iid === mistfall.iid)!
     expect(allyAfter.buffs).toBe(1) // buffed by the legend
