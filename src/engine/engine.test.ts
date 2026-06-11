@@ -5459,6 +5459,9 @@ describe('Playtest Pass 2 — combat/conquer detection', () => {
     const sp = r.state.players[0].zones.hand.find((c) => c.cardId === bounce)!
     r = reduce(r.state, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [def.iid], payment: emptyPayment() })
     expect(r.error).toBeUndefined()
+    // G2: the spell is on the Chain — both pass to resolve it, then the bounce lands.
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.state.battlefields[0].units.some((u) => u.iid === def.iid)).toBe(false) // defender bounced
     // resolve the now one-sided showdown
     for (let i = 0; i < 4 && r.state.phase === 'showdown'; i++) r = reduce(r.state, { type: 'PASS', player: r.state.showdown!.priority })

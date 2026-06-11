@@ -6910,6 +6910,17 @@ function seatHasLegalReaction(s: MatchState, seat: PlayerId): boolean {
   return s.battlefields.some((bf) => bf.facedown && bf.facedown.owner === seat && (bf.facedown.hiddenTurn ?? -1) < s.turn)
 }
 
+/** G2 (rule 344.3): when the last Chain item resolves during a Showdown, Focus
+ *  passes from its holder (showdown.priority froze while the chain was open) and
+ *  every participant must re-pass before combat resolves. */
+function onChainEmptied(s: MatchState): MatchState {
+  if (s.chain.length === 0 && s.phase === 'showdown' && s.showdown) {
+    s.showdown.passes = 0
+    s.showdown.priority = nextShowdownPriority(s, s.showdown.priority)
+  }
+  return s
+}
+
 /** Phase G smart auto-pass loop: while the TOP of the chain is a trigger item,
  *  seats with no legal reaction auto-pass; when every alive seat would auto-pass,
  *  the trigger resolves. Pauses with priority on the first seat that holds a
@@ -6937,6 +6948,7 @@ function autoPassTriggers(s: MatchState): MatchState {
     s = resolveTopOfChain(s)
     s.passes = 0
     s.priority = s.chain.length > 0 ? s.activePlayer : null
+    s = onChainEmptied(s) // G2: showdown focus passes when the chain closes out
   }
   return s
 }
@@ -7901,22 +7913,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s1)
       }
 
-      // Spell. In a showdown we resolve immediately (legacy path). In the
-      // action phase the spell goes on the Chain and opens a priority window.
-      if (inShowdown) {
-        emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
-        // "When you play a spell" triggers fire as it's played, before it resolves.
-        let s1 = firePlayTriggers(s, action.player, ci.iid, card, effTotal)
-        s1 = fireChemtechCask(s1, action.player)
-        s1 = bfSpellPlayed(s1, action.player, effCost.energy)
-        s1 = resolveSpellEffects(s1, action.player, card, action.targets)
-        if (repeatChosen) {
-          s1 = log(s1, action.player, `${card.name}: Repeat — resolving its effect again.`)
-          s1 = resolveSpellEffects(s1, action.player, card, action.targets)
-        }
-        disposeResolvedSpell(s1.players[action.player], ci, card)
-        return ok(s1)
-      }
+      // Spell. It goes on the Chain and opens a priority window — in the action
+      // phase AND during showdowns (G2, rule 344.3: a spell played with Focus
+      // starts a Chain as normal, so it can be Countered/responded to; the
+      // showdown is Closed until the chain empties, then Focus passes).
       emit({ kind: 'play', iid: ci.iid, player: action.player, cardId: card.id })
       s.players[action.player].nextSpellCostDiscount = 0 // Raging Firebrand: the discount applied to THIS spell's cost; consumed now
       s.chain.push({
@@ -8614,7 +8614,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         // Resume chain resolution for any remaining items.
         s.passes = 0
         s.priority = s.chain.length > 0 ? s.activePlayer : null
-        return ok(s)
+        return ok(onChainEmptied(s)) // G2: showdown focus passes if this emptied the chain
       }
 
       // Decline the optional effect (non-resuming kinds).
@@ -9351,6 +9351,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     case 'PASS': {
       if (state.phase !== 'showdown' || !state.showdown)
         return fail(state, 'Nothing to pass on.')
+      // G2: a Chain during a showdown means the state is Showdown CLOSED —
+      // focus actions (including passing on the showdown) wait for it to empty.
+      if (state.chain.length > 0) return fail(state, 'Resolve the Chain first (PASS_PRIORITY).')
       if (state.showdown.priority !== action.player)
         return fail(state, 'Not your priority.')
       if (state.showdown.assign) return fail(state, 'Assign combat damage first.')
@@ -9380,6 +9383,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         s.passes = 0
         s.priority = s.chain.length > 0 ? s.activePlayer : null
         if (s.winner !== null) return ok(s)
+        s = onChainEmptied(s) // G2: showdown focus passes when the chain closes out
       }
       return ok(s)
     }
