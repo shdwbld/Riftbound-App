@@ -37,6 +37,8 @@ describe('Elder Dragon', () => {
     const healthy = mk(furyUnit.id, 1)
     s.battlefields[0].units.push(hurt)
     s.battlefields[1].units.push(healthy)
+    // The opponent holds an affordable Reaction, so smart auto-pass keeps the window open.
+    s.players[1].zones.hand.push(mk(injectCard('ed-react1', '[Reaction] Draw 1.', { type: 'spell', energy: 0, power: {} }), 1))
     const d = mk(dragon, 0); s.players[0].zones.hand.push(d)
     const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: emptyPayment() })
     expect(r.error).toBeUndefined()
@@ -47,17 +49,30 @@ describe('Elder Dragon', () => {
     expect(r.state.battlefields[1].units.some((u) => u.iid === healthy.iid)).toBe(true) // still alive (trigger unresolved)
   })
 
-  it('on-play opens a reaction window; resolves to kill when both pass', () => {
+  it('smart auto-pass: with no reactions anywhere, the on-play trigger resolves instantly', () => {
+    const dragon = injectCard('ed-dragon-ap', ELDER_TEXT, { name: 'Elder Dragon', might: 10 })
+    const s = baseState()
+    const enemy = mk(furyUnit.id, 1)
+    s.battlefields[0].units.push(enemy)
+    const d = mk(dragon, 0); s.players[0].zones.hand.push(d)
+    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: emptyPayment() })
+    expect(r.error).toBeUndefined()
+    expect(r.state.chain.length).toBe(0) // auto-passed all seats → resolved in the same action
+    expect(r.state.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(false) // 1 = lethal
+  })
+
+  it('on-play opens a reaction window (opponent holds a Reaction); resolves to kill on pass', () => {
     const dragon = injectCard('ed-dragon2', ELDER_TEXT, { name: 'Elder Dragon', might: 10 })
     const s = baseState()
     const enemy = mk(furyUnit.id, 1)
     s.battlefields[0].units.push(enemy)
+    s.players[1].zones.hand.push(mk(injectCard('ed-react2', '[Reaction] Draw 1.', { type: 'spell', energy: 0, power: {} }), 1))
     const d = mk(dragon, 0); s.players[0].zones.hand.push(d)
     let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: emptyPayment() })
     expect(r.state.chain.length).toBe(1) // reaction window open
     expect(r.state.priority).toBe(1) // opponent may respond first
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
-    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    // P1's manual pass + P0's auto-pass (no reaction) → the trigger resolved.
     expect(r.state.battlefields[0].units.some((u) => u.iid === enemy.iid)).toBe(false) // 1 = lethal
   })
 
@@ -67,14 +82,14 @@ describe('Elder Dragon', () => {
     s.sandbox = true
     const enemy = mk(furyUnit.id, 1)
     s.battlefields[0].units.push(enemy)
+    s.players[1].zones.hand.push(mk(injectCard('ed-react3', '[Reaction] Draw 1.', { type: 'spell', energy: 0, power: {} }), 1))
     const d = mk(dragon, 0); s.players[0].zones.hand.push(d)
     let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: d.iid, payment: emptyPayment() })
     expect(r.state.chain.length).toBe(1)
     // The opponent "reacts" by moving the targeted unit to base (simulated via override),
-    // then everyone passes — the trigger's target is no longer valid, so no damage.
+    // then passes — the trigger's target is no longer valid, so no damage.
     r = reduce(r.state, { type: 'OVERRIDE', player: 1, op: 'move', iid: enemy.iid, toZone: 'base' })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
-    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.state.players[1].zones.base.some((u) => u.iid === enemy.iid)).toBe(true) // saved
   })
 

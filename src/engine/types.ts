@@ -1,4 +1,5 @@
 import type { Domain } from '../types/cards'
+import type { FiredTrigger } from './triggers'
 
 // ---------------------------------------------------------------------------
 // Rules-engine state model (authoritative, 2-player).
@@ -432,15 +433,23 @@ export interface PendingDecision {
   op: DeferredOp
 }
 
-/** An item on the Chain (a played spell, or a Counter). Resolves LIFO. */
+/** An item on the Chain (a played spell, a Counter, or a triggered ability).
+ *  Resolves LIFO. */
 export interface ChainItem {
   id: string
   kind: 'spell' | 'counter' | 'trigger'
-  /** For `kind: 'trigger'` — a unit's "when you play me" ability put on the chain so
-   *  opponents get a reaction window (Elder Dragon's on-play 1-damage). `locs` is the
-   *  battlefield index each target was chosen at (-1 = a base); a target that has since
-   *  moved/left that location is no longer valid and takes nothing. */
-  trigger?: { kind: 'elderOnPlay'; locs: number[] }
+  /** For `kind: 'trigger'` — a triggered ability on the chain (rule 376.4), giving
+   *  opponents a reaction window before it resolves.
+   *  - `elderOnPlay`: Elder Dragon's bespoke on-play 1-damage; `locs` is the
+   *    battlefield index each target was chosen at (-1 = a base); a target that
+   *    has since moved/left that location is no longer valid and takes nothing.
+   *  - `fired` (Phase G): a generic fired trigger — resolves through fireTriggers,
+   *    reusing every bespoke handler. `excess`/`wasUncontrolled` carry the conquer
+   *    context fireTriggers expects. The smart auto-pass loop resolves these
+   *    synchronously whenever no seat holds a legal reaction. */
+  trigger?:
+    | { kind: 'elderOnPlay'; locs: number[] }
+    | { kind: 'fired'; fired: FiredTrigger; excess?: number; wasUncontrolled?: boolean }
   controller: PlayerId
   cardId: string
   /** The played card instance (trashed after the item resolves/is countered). */

@@ -4587,8 +4587,13 @@ export function beginTurn(state: MatchState): MatchState {
     bf.units = bf.units.map((u) => (controllerOf(u) === ap && !unitCantBeReadied(u) ? { ...u, exhausted: false } : u))
   s = log(s, ap, `— Turn ${s.turn}: ${p.name} · Awaken —`)
 
-  // Start-of-turn triggered abilities (card text "at the start of your turn â€¦").
-  s = fireTriggers(s, collectGlobal(s, ap, 'startOfTurn'))
+  // Start-of-turn triggered abilities (card text "at the start of your turn …") —
+  // Phase G pilot family: they go on the Chain (rule 376.4) and resolve via the
+  // smart auto-pass loop (synchronously unless an opponent holds a reaction).
+  // beginTurn keeps building the turn either way; a rare paused window resolves
+  // at the start of the Action Phase.
+  s = pushFiredTriggers(s, collectGlobal(s, ap, 'startOfTurn'))
+  s = autoPassTriggers(s) // beginTurn is also called outside reduce() — settle here
 
   // Battlefield "first Beginning Phase" passives (e.g. Obelisk channels 1).
   if (s.turn <= s.players.length) {
@@ -6802,10 +6807,17 @@ function resolveTopOfChain(state: MatchState): MatchState {
     sendToTrash(p, item.instance)
     return s
   }
-  // A triggered ability on the chain (Elder Dragon's on-play). It deals 1 to each
-  // still-valid enemy target — units saved (moved/bounced/countered) during the
-  // reaction window are no longer valid and take nothing. Nothing to trash.
+  // A triggered ability on the chain. Nothing to trash.
   if (item.kind === 'trigger') {
+    // Phase G: a generic fired trigger — resolve through fireTriggers so every
+    // bespoke card handler is reused untouched. Conditions ("intervening if",
+    // source still in play, …) are re-checked at resolution by the handlers.
+    if (item.trigger?.kind === 'fired') {
+      const t = item.trigger
+      return fireTriggers(s, [t.fired], t.fired.bfIndex, t.excess ?? 0, t.wasUncontrolled ?? false)
+    }
+    // Elder Dragon's on-play: deals 1 to each still-valid enemy target — units
+    // saved (moved/bounced) during the reaction window are no longer valid.
     if (item.trigger?.kind === 'elderOnPlay') {
       const dead: EngineCard[] = []
       const tids = item.targets ?? []
@@ -6839,6 +6851,93 @@ function resolveTopOfChain(state: MatchState): MatchState {
     }
   }
   disposeResolvedSpell(p, item.instance, card)
+  return s
+}
+
+/** Phase G: put fired triggered abilities on the Chain (rule 376.4) instead of
+ *  resolving them inline. Pushed in REVERSE of the orderTriggers order so the
+ *  first-ordered trigger sits on top and resolves first (LIFO). The smart
+ *  auto-pass loop (autoPassTriggers) resolves them synchronously whenever no
+ *  seat holds a legal reaction, so reaction-free boards behave exactly like the
+ *  old inline firing. */
+function pushFiredTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, excess = 0, wasUncontrolled = false): MatchState {
+  if (fired.length === 0) return s
+  const ordered = orderTriggers(fired, s.activePlayer, s.players.length)
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    const f = ordered[i]
+    const src = f.sourceIid ? findUnitAnywhere(s, f.sourceIid) : undefined
+    const instance: EngineCard = src
+      ? { ...src }
+      : { iid: f.sourceIid ?? `trig-${s.seq}-${i}`, cardId: f.sourceCardId ?? '', owner: f.player, exhausted: false, damage: 0, attached: [] }
+    s.chain.push({
+      id: makeChainId(),
+      kind: 'trigger',
+      controller: f.player,
+      cardId: f.sourceCardId ?? instance.cardId,
+      instance,
+      payment: { exhaust: [], recycle: [] },
+      trigger: { kind: 'fired', fired: { ...f, bfIndex: f.bfIndex ?? bfIndex }, excess, wasUncontrolled },
+    })
+  }
+  s.passes = 0
+  s.priority = nextPlayer(s, ordered[0].player) // opponents respond to the top item first
+  return s
+}
+
+/** Phase G smart auto-pass: could `seat` legally respond if granted priority while
+ *  the chain is open? True when they hold an affordable Reaction/Action spell, a
+ *  Quick Draw gear, an Ambush unit with a battlefield presence, or a revealable
+ *  Hidden card. Mirrors canPlay's timing branches minus the priority check
+ *  (this decides whether to GIVE them priority at all). */
+function seatHasLegalReaction(s: MatchState, seat: PlayerId): boolean {
+  const p = s.players[seat]
+  if (!p || p.out) return false
+  const candidates = p.champion ? [...p.zones.hand, p.champion] : p.zones.hand
+  for (const c of candidates) {
+    const card = getCard(c.cardId)
+    if (!card) continue
+    const kw = parseKeywords(card)
+    const speedy =
+      (card.type === 'spell' && (kw.reaction || kw.action)) ||
+      (card.type === 'gear' && kw.quickDraw) ||
+      (card.type === 'unit' && kw.ambush && s.battlefields.some((bf) => bf.units.some((u) => controllerOf(u) === seat)))
+    if (!speedy || !autoPayEff(s, seat, card)) continue
+    // A spell with a target requirement and nothing to hit isn't a real response.
+    if (needsTarget(card) && getLegalTargets(s, card, seat).length === 0 && !(card.type === 'spell' && hasUntargetedPart(spellEffect(card)))) continue
+    return true
+  }
+  // A facedown Hidden card can be revealed at Reaction speed (not the turn it was hidden).
+  return s.battlefields.some((bf) => bf.facedown && bf.facedown.owner === seat && (bf.facedown.hiddenTurn ?? -1) < s.turn)
+}
+
+/** Phase G smart auto-pass loop: while the TOP of the chain is a trigger item,
+ *  seats with no legal reaction auto-pass; when every alive seat would auto-pass,
+ *  the trigger resolves. Pauses with priority on the first seat that holds a
+ *  reaction (they respond or PASS_PRIORITY manually). Spells/counters on top
+ *  keep the fully manual flow. Runs centrally after every successful action
+ *  (and at the end of beginTurn), so chains resume after RESOLVE_CHOICE. */
+function autoPassTriggers(s: MatchState): MatchState {
+  let guard = 0
+  while (s.chain.length > 0 && s.winner === null && guard++ < 200) {
+    if (s.pendingChoice || s.pendingDecisions?.length) return s // a decision owns the pause
+    const top = s.chain[s.chain.length - 1]
+    if (top.kind !== 'trigger') return s
+    let cur = s.priority ?? s.activePlayer
+    let passed = s.passes
+    while (passed < aliveCount(s)) {
+      if (seatHasLegalReaction(s, cur)) {
+        s.priority = cur
+        s.passes = passed
+        return s // paused — this seat gets a real reaction window
+      }
+      passed++
+      cur = nextPlayer(s, cur)
+    }
+    // Every seat auto-passed → resolve the trigger and keep going.
+    s = resolveTopOfChain(s)
+    s.passes = 0
+    s.priority = s.chain.length > 0 ? s.activePlayer : null
+  }
   return s
 }
 
@@ -6928,6 +7027,10 @@ export function reduce(state: MatchState, action: Action): EngineResult {
   const result = reduceInner(state, action)
   // State transition pass (becomes-[Mighty] etc.) runs after every successful action.
   if (!result.error) result.state = refreshStates(result.state)
+  // Phase G: smart auto-pass — trigger chain items resolve through here whenever
+  // no seat holds a legal reaction (also resumes a paused chain after a
+  // RESOLVE_CHOICE drains the decision queue).
+  if (!result.error) result.state = autoPassTriggers(result.state)
   // Surface any queued optional-pay / target decision (P0) one at a time.
   if (!result.error) result.state = surfaceNextDecision(result.state)
   // Only attach events on a successful application (no error).
@@ -9284,8 +9387,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
     case 'COUNTER': {
       if (state.chain.length === 0) return fail(state, 'No chain to counter.')
       if (state.priority !== action.player) return fail(state, 'Not your priority.')
-      if (!state.chain.some((c) => c.id === action.targetChainId))
-        return fail(state, 'No such item on the chain.')
+      const counterTarget = state.chain.find((c) => c.id === action.targetChainId)
+      if (!counterTarget) return fail(state, 'No such item on the chain.')
+      // "Counter a spell" can't hit a triggered ability (rule 352 — "spell" refers
+      // to spells on the chain). Trigger items get reaction windows, not counters.
+      if (counterTarget.kind === 'trigger')
+        return fail(state, "Triggered abilities can't be countered — only spells.")
       const sourceCard = state.players[action.player].zones.hand.find((c) => c.iid === action.iid)
       if (!sourceCard) return fail(state, 'Counter card not in hand.')
       const card = getCard(sourceCard.cardId)

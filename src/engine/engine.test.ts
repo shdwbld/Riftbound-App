@@ -6068,9 +6068,9 @@ describe('A2 — Baron Nashor aura + targeting immunity', () => {
     s.players[0].zones.hand.push(dragon)
     let r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: dragon.iid, payment: emptyPayment() })
     expect(r.error).toBeUndefined()
-    expect(r.state.chain.length).toBe(1) // on-play trigger opens a reaction window
-    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
-    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    // Phase G smart auto-pass: no seat holds a reaction → the on-play trigger
+    // resolved synchronously inside PLAY_UNIT (no manual passes needed).
+    expect(r.state.chain.length).toBe(0)
     expect(r.state.battlefields.flatMap((b) => b.units).some((u) => u.iid === enemy.iid)).toBe(false) // resolved → killed
   })
 
