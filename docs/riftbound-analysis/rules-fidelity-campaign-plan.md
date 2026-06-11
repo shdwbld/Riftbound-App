@@ -1,6 +1,10 @@
 # Rules-Fidelity Campaign: kill auto-payments, fix broken steps & cards
 
-**Status: QUEUED (planned 2026-06-10, not started).** User decisions locked in: prompt for **every** non-free rune spend when manual pay is on (toggle still bypasses), and **full chain fidelity** (showdown spells AND death/end-of-turn triggers on the chain).
+**Status (2026-06-11): Phases A–C DONE — Phases D–G remain.** Shipped: A `86eba83`, B `0616847`, C1 `7f7cded`, C2a `5458c58`, C2b `cb73a59`, C2c `83d2174` (822 tests green). C3 (Altar of Blood / Sett) verified UNSAFE to defer → lands with G3 (see the C3 bullet). Key invariant established in C: **RESOLVE_CHOICE is the single payment site — DeferredOps never re-pay.** Engine.ts line anchors below predate the A–C edits; **re-verify before editing**.
+
+**NEXT: Phase D** (user checkpoints at phase boundaries — get a go-ahead before starting each phase).
+
+User decisions locked in: prompt for **every** non-free rune spend when manual pay is on (toggle still bypasses), and **full chain fidelity** (showdown spells AND death/end-of-turn triggers on the chain).
 
 ## Context
 
@@ -23,7 +27,7 @@ Rulebook grounding (`src/data/rulebook.json`, Core Rules v1.2): 354.1.a (player 
 
 ---
 
-## Phase A — Payment foundation (engine + modal plumbing)
+## Phase A — Payment foundation (engine + modal plumbing) — ✅ DONE (86eba83)
 
 1. **Types** (`src/engine/types.ts`): add `'payCost'` to `PendingDecision`/`pendingChoice` kinds; add `resolvedCost?: ResolvedCost & {powerAny?: number}` alongside the legacy `cost` field; add `payment?: Payment` to `RESOLVE_CHOICE`; add `payment?: Payment` to `ACTIVATE_UNIT` and `HIDE` actions.
 2. **PaymentModal powerAny** (`PaymentModal.tsx`): accept `cost: ResolvedCost & {powerAny?}`; recycle-assigned runes that match no remaining specific-domain need fill `powerAny` slots; update tally/validation and auto-fill seed. (Needed for any-domain costs: equip rainbow, hide, optionalPay `powerAny`.)
@@ -34,7 +38,7 @@ Rulebook grounding (`src/data/rulebook.json`, Core Rules v1.2): 354.1.a (player 
 
 Gate: new `manual-payment.test.ts` (explicit payment valid/invalid/declined, powerAny matching, fallback path) + full `npx vitest run`.
 
-## Phase B — Route pre-dispatch payment sites through the modal
+## Phase B — Route pre-dispatch payment sites through the modal — ✅ DONE (0616847)
 
 | Site | Today | Fix |
 |---|---|---|
@@ -43,7 +47,9 @@ Gate: new `manual-payment.test.ts` (explicit payment valid/invalid/declined, pow
 | Weaponmaster rainbow (engine.ts:7694; OnlinePage `wmPay` ~1149) | bypasses modal | same as equip |
 | HIDE (MatchBoard.tsx:667 picks first ready rune) | auto-picks the sacrificed rune | new `onHide` prop → PaymentModal with `{powerAny: 1}` (Teemo - Swift Scout exhaust variant: `{energy: 1}` — check engine HIDE handler); extract rune iid from payment |
 
-## Phase C — Trigger-time payments ("prompt everywhere")
+## Phase C — Trigger-time payments ("prompt everywhere") — ✅ DONE (C1 7f7cded, C2a 5458c58, C2b cb73a59, C2c 83d2174; C3 → G3)
+
+Implementation notes for the record: new DeferredOps `playFromZone`/`drawN`/`replaySpellFromTrash`/`readyUnit`/`rumbleConquer(+Play)`; play-from-zone sites now bill the card's PRINTED per-domain Power (not the payPowerAny wildcard); `discardReplay`/`becomesStateReady` pendingChoice kinds retired in favor of queueOptionalPay; MOVE_UNITS gained `payment?` for the Mageseeker toll (pre-dispatch modal in both pages); Rumble - Hotheaded = selectTarget spare → payCost Energy remainder (reduced by the spare's Might), recycle waits for payment. Affordability gates use autoPay (exhausted runes are recyclable — fixed Mistfall's too-strict ready-rune gate).
 
 Convert mid-effect auto-pay sites to `queuePayCost`/upgraded `queueOptionalPay` with `resolvedCost`. Waves, each vitest-gated:
 
@@ -52,7 +58,7 @@ Convert mid-effect auto-pay sites to `queuePayCost`/upgraded `queueOptionalPay` 
 - **C3 – death-adjacent sites**: Altar of Blood (5810), Sett - The Boss death-save (3902). These run inside death/cleanup loops — **verify re-entrancy first**; if a mid-death pause is unsafe today, defer them to Phase G3 (the chain rework gives deaths a safe pause point) rather than hacking it.
   - **VERIFIED UNSAFE (2026-06-11) → deferred to G3.** Both pay inside the combat-finalization death loop / `tryRecallInsteadOfDeath`; a queued decision can't retroactively pull the unit out of `defeated` after Deathknells fire and the conquer math runs (and a late "save" would restore from trash with double-fire risk). They keep their inline auto-pay until G3 gives deaths a chain pause point.
 
-## Phase D — Combat-time payments & forced picks (reuse P5 pre-math pattern)
+## Phase D — Combat-time payments & forced picks (reuse P5 pre-math pattern) — ⬜ NEXT
 
 Queue decisions at move-declaration/showdown-open like engine.ts:7250–7267:
 - Draven - Vanquisher (1529–1535), Sinister Poro (1773–1783), Ava Achiever (1804–1823): `optionalPay` with `resolvedCost` before combat math; effect applied via DeferredOp.
