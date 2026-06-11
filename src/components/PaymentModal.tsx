@@ -24,6 +24,7 @@ function runeDomains(ci: { cardId: string }): Domain[] {
 export default function PaymentModal({
   player,
   card,
+  title,
   cost,
   onConfirm,
   onCancel,
@@ -31,8 +32,14 @@ export default function PaymentModal({
   confirmLabel = 'Pay & play ▶',
 }: {
   player: PlayerState
-  card: Card
-  cost: ResolvedCost
+  /** The card being paid for (header art + name). Optional — trigger-time
+   *  costs (a unit's "pay ⚡1 to…" ability) have no card; pass `title` instead. */
+  card?: Card
+  /** Header label when no card is shown (e.g. the triggering ability's source name). */
+  title?: string
+  /** `powerAny` = wildcard Power slots (equip rainbow, hide, "pay N Power"
+   *  triggers) — filled by recycling runes of ANY domain. */
+  cost: ResolvedCost & { powerAny?: number }
   onConfirm: (payment: Payment) => void
   onCancel: () => void
   /** Rune iids already committed to a prior payment (e.g. a spell's base cost
@@ -72,6 +79,10 @@ export default function PaymentModal({
     if (rem > 0) needPower[d] = rem
   }
   const totalNeedPower = Object.values(needPower).reduce((a, b) => a + (b ?? 0), 0)
+  // Wildcard Power slots — covered by recycling runes of any domain (pool power
+  // never auto-fills these; mirror applyPayment's validation).
+  const needAny = cost.powerAny ?? 0
+  const recycleNeed = totalNeedPower + needAny
 
   // What you HAVE to spend: Energy = ready runes + pool energy; Power = any rune you
   // can recycle (ready or already-spent) + pool power. Per-domain shows what each rune
@@ -119,9 +130,11 @@ export default function PaymentModal({
   // Tally the current assignment.
   const energyPicked = Object.values(roles).filter(hasEnergy).length
   const recyclePicked = Object.values(roles).filter(hasPower).length
-  // Greedily match each power-assigned rune to a still-needed domain.
+  // Greedily match each power-assigned rune to a still-needed domain; runes
+  // matching no colored need fill the wildcard slots.
   const powerLeft = { ...needPower }
   let powerMatched = 0
+  let anyFilled = 0
   let powerUnmatched = 0
   for (const [iid, role] of Object.entries(roles)) {
     if (!hasPower(role)) continue
@@ -132,12 +145,14 @@ export default function PaymentModal({
     if (d) {
       powerLeft[d] = (powerLeft[d] ?? 0) - 1
       powerMatched++
+    } else if (anyFilled < needAny) {
+      anyFilled++
     } else {
       powerUnmatched++
     }
   }
   const energyOk = energyPicked === needEnergy
-  const powerOk = powerMatched === totalNeedPower && powerUnmatched === 0
+  const powerOk = powerMatched === totalNeedPower && anyFilled === needAny && powerUnmatched === 0
   const valid = energyOk && powerOk
 
   const confirm = () => {
@@ -205,7 +220,7 @@ export default function PaymentModal({
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            {card.imageUrl && (
+            {card?.imageUrl && (
               <img
                 src={card.imageUrl}
                 alt={card.name}
@@ -214,7 +229,7 @@ export default function PaymentModal({
               />
             )}
             <div>
-              <h3 className="text-2xl font-bold">Pay for {card.name}</h3>
+              <h3 className="text-2xl font-bold">Pay for {card?.name ?? title ?? 'this cost'}</h3>
               <p className="text-sm text-white/50">
                 Tap a rune to cycle:{' '}
                 <span className="text-white/70">unused → ⚡ exhaust (Energy) → ♺ recycle (Power) → ⚡♺ both</span>. One
@@ -263,7 +278,7 @@ export default function PaymentModal({
 
           <div
             className={`flex items-center gap-2 rounded-xl border px-4 py-3 ${
-              totalNeedPower === 0
+              recycleNeed === 0
                 ? 'border-white/10 bg-white/5 opacity-50'
                 : powerOk
                   ? 'border-emerald-400/50 bg-emerald-500/10'
@@ -274,15 +289,18 @@ export default function PaymentModal({
             <div>
               <div className="text-xs uppercase tracking-wide text-white/50">Recycle (put back to rune pile)</div>
               <div className={`font-mono text-lg font-bold ${powerOk ? 'text-emerald-200' : 'text-amber-200'}`}>
-                {recyclePicked} / {totalNeedPower} rune{totalNeedPower === 1 ? '' : 's'}
+                {recyclePicked} / {recycleNeed} rune{recycleNeed === 1 ? '' : 's'}
               </div>
-              {totalNeedPower > 0 && (
+              {recycleNeed > 0 && (
                 <div className="mt-0.5 flex flex-wrap gap-1 text-[11px]">
                   {(Object.entries(needPower) as [Domain, number][]).map(([d, n]) => (
                     <span key={d} className="rounded px-1 font-mono" style={{ color: DOMAIN_META[d].color }}>
                       <DomainIcon domain={d} /> {n} {DOMAIN_META[d].label}
                     </span>
                   ))}
+                  {needAny > 0 && (
+                    <span className="rounded px-1 font-mono text-white/70">✦ {needAny} any domain</span>
+                  )}
                 </div>
               )}
             </div>

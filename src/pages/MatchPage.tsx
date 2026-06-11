@@ -10,7 +10,7 @@ import { createMatch } from '../engine/setup'
 import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
-import { optionalPayLabel } from '../lib/optionalPay'
+import { optionalPayLabel, choiceResolvedCost, choiceCostFree } from '../lib/optionalPay'
 import { checkInvariants } from '../engine/invariants'
 import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
@@ -140,6 +140,10 @@ export default function MatchPage() {
   // Rune picker is ON by default — every rune-spending play opens the overlay.
   // Toggle off to auto-pay silently.
   const [manualPay, setManualPay] = useState(true)
+  // True while the rune picker is open for an ACCEPTED optionalPay pendingChoice
+  // (two-step: Pay/Decline prompt → rune picker). Reset whenever the choice changes.
+  const [choicePaying, setChoicePaying] = useState(false)
+  useEffect(() => setChoicePaying(false), [match?.pendingChoice])
   const [paying, setPaying] = useState<{ c: EngineCard; card: Card; type: PlayType; cost: ResolvedCost; accelerate: boolean; counterChainId?: string; repeat?: boolean; payAdditionalCost?: boolean } | null>(null)
   // Animated battle summary after a combat / chain resolution.
   const [summary, setSummary] = useState<{ events: GameEvent[]; token: number } | null>(null)
@@ -207,6 +211,14 @@ export default function MatchPage() {
     if (prev) setMatch(prev)
     else flash('Nothing to undo.')
   }, [flash])
+
+  // Mandatory payCost choices resolve silently (engine auto-picks the runes) when
+  // the rune picker is off or there is nothing to actually pay.
+  useEffect(() => {
+    const pc = match?.pendingChoice
+    if (!pc || pc.kind !== 'payCost') return
+    if (!manualPay || choiceCostFree(pc.payload)) dispatch({ type: 'RESOLVE_CHOICE', player: pc.player, iid: 'pay' })
+  }, [match?.pendingChoice, manualPay, dispatch])
 
   // Capture a bug: the last {pre → action → post → events} step + invariants → Supabase.
   const submitBug = useCallback(async (note: string, severity: 'low' | 'med' | 'high') => {
@@ -895,18 +907,43 @@ export default function MatchPage() {
           onPick={(iid) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind === 'optionalPay' && (
+      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind === 'optionalPay' && !choicePaying && (
         <PromptModal
           title={`✦ ${match.pendingChoice.srcName ?? 'Optional Cost'}`}
           message={match.pendingChoice.prompt}
           options={[
-            { label: optionalPayLabel(match.pendingChoice.payload), onClick: () => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: 'pay' }), variant: 'primary' },
+            { label: optionalPayLabel(match.pendingChoice.payload), onClick: () => {
+                // With the rune picker on, accepting opens the picker (the player
+                // chooses WHICH runes pay — rule 354.1.a); off → engine auto-pays.
+                if (manualPay && !choiceCostFree(match.pendingChoice!.payload)) setChoicePaying(true)
+                else act({ type: 'RESOLVE_CHOICE', player: controlling, iid: 'pay' })
+              }, variant: 'primary' },
             { label: 'Decline', onClick: () => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null }) },
           ]}
           onCancel={() => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'selectTarget' && (
+      {/* Rune picker for an accepted optionalPay, or a mandatory payCost. */}
+      {match.pendingChoice && match.pendingChoice.player === controlling &&
+        ((match.pendingChoice.kind === 'optionalPay' && choicePaying) ||
+          (match.pendingChoice.kind === 'payCost' && manualPay && !choiceCostFree(match.pendingChoice.payload))) && (
+        <PaymentModal
+          player={match.players[controlling]}
+          title={match.pendingChoice.srcName}
+          cost={choiceResolvedCost(match.pendingChoice.payload)}
+          confirmLabel="Pay ▶"
+          onCancel={() => {
+            // payCost is mandatory — cancelling means "I won't pay", aborting the effect.
+            if (match.pendingChoice!.kind === 'payCost') act({ type: 'RESOLVE_CHOICE', player: controlling, iid: null })
+            else setChoicePaying(false) // back to the Pay/Decline prompt
+          }}
+          onConfirm={(payment) => {
+            setChoicePaying(false)
+            act({ type: 'RESOLVE_CHOICE', player: controlling, iid: 'pay', payment })
+          }}
+        />
+      )}
+      {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'payCost' && match.pendingChoice.kind !== 'selectTarget' && (
         <ChoiceModal
           title={
             match.pendingChoice.kind === 'stealUnit'

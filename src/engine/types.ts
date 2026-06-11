@@ -370,11 +370,15 @@ export type DeferredOp =
  *  completes (via surfaceNextDecision in reduce). Avoids pausing mid-trigger-loop. */
 export interface PendingDecision {
   player: PlayerId
-  kind: 'optionalPay' | 'selectTarget' | 'selectGear'
+  kind: 'optionalPay' | 'payCost' | 'selectTarget' | 'selectGear'
   prompt: string
   srcName: string
   /** optionalPay: the cost paid if the player accepts. */
   cost?: { energy?: number; powerAny?: number }
+  /** optionalPay/payCost: the full cost (Energy + per-domain Power + wildcard
+   *  Power), so the UI can open the rune picker with real domains. When present
+   *  it supersedes the legacy `cost` summary. */
+  resolvedCost?: ResolvedCost & { powerAny?: number }
   /** selectTarget: the board-pick candidate units. */
   options?: { iid: string; label: string }[]
   /** selectTarget: false = mandatory (a decline auto-applies `op` to `defaultIid`).
@@ -481,7 +485,9 @@ export interface MatchState {
       // pay (custom Pay/Decline modal), or a target the player board-picks. The
       // deferred effect is carried as a serialized DeferredOp in `payload`.
       // selectGear surfaces as a list modal (gears aren't board-clickable).
-      | 'optionalPay' | 'selectTarget' | 'selectGear'
+      // payCost is a MANDATORY cost (no yes/no step — the rune picker opens
+      // directly); declining aborts the deferred effect.
+      | 'optionalPay' | 'payCost' | 'selectTarget' | 'selectGear'
     bfIndex: number
     prompt: string
     options: { iid: string; label: string }[]
@@ -601,14 +607,15 @@ export type Action =
   /** Ready (un-exhaust) a chosen unit toward a pending "ready a unit" effect. */
   | { type: 'READY_UNIT'; player: PlayerId; iid: string }
   /** Resolve a pending optional battlefield choice — `iid` is the chosen unit,
-   *  or null to decline the "you may" effect. */
-  | { type: 'RESOLVE_CHOICE'; player: PlayerId; iid: string | null }
+   *  or null to decline the "you may" effect. `payment` is the explicit rune
+   *  payment for optionalPay/payCost choices (absent → engine auto-pays). */
+  | { type: 'RESOLVE_CHOICE'; player: PlayerId; iid: string | null; payment?: Payment }
   /** Activate a battlefield-granted activated ability on a unit/legend (Gardens
    *  of Becoming, Forge of the Fluft). */
   | { type: 'ACTIVATE_ABILITY'; player: PlayerId; iid: string }
   /** Activate a unit's own printed activated ability ("cost: effect" — Arena
    *  Kingpin, Xerath, Vi - Hotheaded, …). `targets` for effects that need one. */
-  | { type: 'ACTIVATE_UNIT'; player: PlayerId; iid: string; targets?: string[] }
+  | { type: 'ACTIVATE_UNIT'; player: PlayerId; iid: string; targets?: string[]; payment?: Payment }
   /** Toggle shared manual-override (sandbox) mode for the whole match. */
   | { type: 'SET_SANDBOX'; player: PlayerId; on: boolean }
   /** A manual override op applied in sandbox mode (either player, any card).
@@ -664,7 +671,7 @@ export type Action =
   /** Place a [Hidden] card (unit/spell/gear) from your HAND facedown at a
    *  battlefield you control (cost: 1 Wild Power — recycle 1 rune of any domain).
    *  Max one facedown card per battlefield. */
-  | { type: 'HIDE'; player: PlayerId; iid: string; toBattlefield: number; runeIid: string }
+  | { type: 'HIDE'; player: PlayerId; iid: string; toBattlefield: number; runeIid: string; payment?: Payment }
   /** Reveal your facedown card = play it for 0 (spell resolves, unit enters,
    *  gear attaches). Not on the turn you hid it; Reaction speed thereafter. */
   | { type: 'REVEAL'; player: PlayerId; iid: string }

@@ -26,7 +26,7 @@ import PromptModal from '../components/PromptModal'
 import BugReportModal from '../components/BugReportModal'
 import { submitBugReport, bugCaptureEnabled } from '../lib/bugReport'
 import ChoiceModal from '../components/ChoiceModal'
-import { optionalPayLabel } from '../lib/optionalPay'
+import { optionalPayLabel, choiceResolvedCost, choiceCostFree } from '../lib/optionalPay'
 import RevealHandModal from '../components/RevealHandModal'
 import TagNameModal from '../components/TagNameModal'
 import VisionPrompt from '../components/VisionPrompt'
@@ -112,6 +112,10 @@ export default function OnlinePage() {
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
   // Pending [Weaponmaster] discounted-Equip payment (after the equipment is chosen).
   const [wmPay, setWmPay] = useState<{ unitIid: string; gearIid: string; card: Card; cost: ResolvedCost } | null>(null)
+  // True while the rune picker is open for an ACCEPTED optionalPay pendingChoice
+  // (two-step: Pay/Decline prompt → rune picker). Reset whenever the choice changes.
+  const [choicePaying, setChoicePaying] = useState(false)
+  useEffect(() => setChoicePaying(false), [match?.pendingChoice])
   const [deckId, setDeckId] = useState(decks[0]?.id ?? '')
   // Display name shown to other players (persisted). Falls back to the deck name.
   const [displayName, setDisplayName] = useState(() => localStorage.getItem('riftbound.displayName') ?? '')
@@ -560,6 +564,15 @@ export default function OnlinePage() {
       transportRef.current?.send({ kind: 'action', action })
     }
   }
+
+  // Mandatory payCost choices with nothing to actually pay resolve silently
+  // (online is otherwise always manual). Only the owning seat dispatches.
+  useEffect(() => {
+    const pc = match?.pendingChoice
+    if (!pc || pc.kind !== 'payCost' || pc.player !== seatRef.current) return
+    if (choiceCostFree(pc.payload)) dispatch({ type: 'RESOLVE_CHOICE', player: pc.player, iid: 'pay' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match?.pendingChoice])
 
   // Multi-step undo. Host pops its history + rebroadcasts; a guest asks the host.
   const undo = () => {
@@ -1230,18 +1243,51 @@ export default function OnlinePage() {
           onPick={(iid) => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind === 'optionalPay' && (
+      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind === 'optionalPay' && !choicePaying && (
         <PromptModal
           title={`✦ ${match.pendingChoice.srcName ?? 'Optional Cost'}`}
           message={match.pendingChoice.prompt}
           options={[
-            { label: optionalPayLabel(match.pendingChoice.payload), onClick: () => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: 'pay' }), variant: 'primary' },
+            { label: optionalPayLabel(match.pendingChoice.payload), onClick: () => {
+                // Accepting opens the rune picker (the player chooses WHICH runes
+                // pay — rule 354.1.a); free costs resolve directly.
+                if (!choiceCostFree(match.pendingChoice!.payload)) setChoicePaying(true)
+                else dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: 'pay' })
+              }, variant: 'primary' },
             { label: 'Decline', onClick: () => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null }) },
           ]}
           onCancel={() => dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null })}
         />
       )}
-      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'selectTarget' && (
+      {/* Rune picker for an accepted optionalPay, or a mandatory payCost. */}
+      {match.pendingChoice && match.pendingChoice.player === seat &&
+        ((match.pendingChoice.kind === 'optionalPay' && choicePaying) ||
+          (match.pendingChoice.kind === 'payCost' && !choiceCostFree(match.pendingChoice.payload))) && (
+        <PaymentModal
+          player={match.players[seat]}
+          title={match.pendingChoice.srcName}
+          cost={choiceResolvedCost(match.pendingChoice.payload)}
+          confirmLabel="Pay ▶"
+          onCancel={() => {
+            // payCost is mandatory — cancelling means "I won't pay", aborting the effect.
+            if (match.pendingChoice!.kind === 'payCost') dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: null })
+            else setChoicePaying(false) // back to the Pay/Decline prompt
+          }}
+          onConfirm={(payment) => {
+            setChoicePaying(false)
+            dispatch({ type: 'RESOLVE_CHOICE', player: seat, iid: 'pay', payment })
+          }}
+        />
+      )}
+      {/* The other seat is picking runes for a pending cost — show a wait notice. */}
+      {match.pendingChoice && match.pendingChoice.player !== seat &&
+        (match.pendingChoice.kind === 'optionalPay' || match.pendingChoice.kind === 'payCost') && (
+        <div className="fixed bottom-16 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-amber-400/30 bg-black/80 px-4 py-2 text-sm text-amber-100 shadow-lg">
+          ⏳ Waiting for {match.players[match.pendingChoice.player]?.name?.replace(/\s*\([^)]*\)\s*$/, '') ?? 'opponent'} to pay
+          {match.pendingChoice.srcName ? ` (${match.pendingChoice.srcName})` : ''}…
+        </div>
+      )}
+      {match.pendingChoice && match.pendingChoice.player === seat && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'payCost' && match.pendingChoice.kind !== 'selectTarget' && (
         <ChoiceModal
           title={
             match.pendingChoice.kind === 'selectGear' ? '⚙ Choose a Gear'

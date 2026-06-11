@@ -267,8 +267,10 @@ function produces(rune: EngineCard): Domain[] {
 
 /** Greedy auto-pay. Pool resources (Energy + colored Power) are spent first,
  *  then colored power is matched from runes (most-constrained first), then
- *  energy is taken from whatever ready runes remain. */
-export function autoPay(player: PlayerState, cost: ResolvedCost): Payment | null {
+ *  energy is taken from whatever ready runes remain. `powerAny` (wildcard
+ *  Power — equip rainbow, hide, "pay N Power" triggers) recycles any rune left
+ *  over after the colored matching. */
+export function autoPay(player: PlayerState, cost: ResolvedCost & { powerAny?: number }): Payment | null {
   const pool = player.pool ?? { energy: 0, power: {} }
   const ready = player.zones.runePool.filter((r) => !r.exhausted)
   const used = new Set<string>()
@@ -298,6 +300,21 @@ export function autoPay(player: PlayerState, cost: ResolvedCost): Payment | null
       used.add(pick.iid)
       recycle.push(pick.iid)
     }
+  }
+
+  // Wildcard Power: recycle any rune not already committed to a colored need.
+  // Mirror the colored picker's preference (ready first, mono-domain first) —
+  // a READY recycled rune can still double as Energy via the both-role reuse below.
+  for (let i = 0; i < (cost.powerAny ?? 0); i++) {
+    const candidates = player.zones.runePool
+      .filter((r) => !used.has(r.iid))
+      .sort((a, b) =>
+        (a.exhausted ? 1 : 0) - (b.exhausted ? 1 : 0) || produces(a).length - produces(b).length,
+      )
+    const pick = candidates[0]
+    if (!pick) return null
+    used.add(pick.iid)
+    recycle.push(pick.iid)
   }
 
   // Spend pooled energy, then exhaust ready runes for the remainder.

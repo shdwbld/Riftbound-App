@@ -145,12 +145,14 @@ function removeFromZone(p: PlayerState, zone: ZoneId, iid: string): EngineCard |
 /**
  * Validate and apply a payment for a cost. Energy is paid by exhausting that
  * many ready runes; power by recycling ready runes whose produced domains
- * cover the colored requirement. Returns an error string or null (and mutates
- * the given player clone).
+ * cover the colored requirement. `powerAny` (wildcard Power — equip rainbow,
+ * hide, "pay N Power" triggers) is covered by recycled runes left over after
+ * the colored matching. Returns an error string or null (and mutates the
+ * given player clone).
  */
 function applyPayment(
   p: PlayerState,
-  cost: ResolvedCost,
+  cost: ResolvedCost & { powerAny?: number },
   payment: Payment,
 ): string | null {
   if (!p.pool) p.pool = { energy: 0, power: {} }
@@ -171,7 +173,8 @@ function applyPayment(
   const requiredPower: Partial<Record<Domain, number>> = { ...cost.power }
   for (const [d, n] of Object.entries(poolPower) as [Domain, number][])
     requiredPower[d] = (requiredPower[d] ?? 0) - (n ?? 0)
-  const powerTotal = Object.values(requiredPower).reduce((a, b) => a + (b ?? 0), 0)
+  const powerAnyNeed = cost.powerAny ?? 0
+  const powerTotal = Object.values(requiredPower).reduce((a, b) => a + (b ?? 0), 0) + powerAnyNeed
 
   if (payment.exhaust.length !== requiredEnergy)
     return `Need to exhaust exactly ${requiredEnergy} rune(s) for energy.`
@@ -200,17 +203,20 @@ function applyPayment(
     recycleSet.add(iid)
     recycled.push(rune)
   }
-  // Greedy assignment of recycled runes to needed domains.
+  // Greedy assignment of recycled runes to needed domains; runes matching no
+  // remaining colored need fill the wildcard (`powerAny`) slots.
   const need = { ...requiredPower }
+  let anyLeft = powerAnyNeed
   for (const rune of recycled) {
     const produces = def(rune)?.type === 'rune' ? (def(rune) as { produces: Domain[] }).produces : []
     const match = (Object.keys(need) as Domain[]).find(
       (d) => (need[d] ?? 0) > 0 && produces.includes(d),
     )
-    if (!match) return 'Recycled runes do not match the power cost.'
-    need[match] = (need[match] ?? 0) - 1
+    if (match) need[match] = (need[match] ?? 0) - 1
+    else if (anyLeft > 0) anyLeft--
+    else return 'Recycled runes do not match the power cost.'
   }
-  if (Object.values(need).some((n) => (n ?? 0) > 0))
+  if (Object.values(need).some((n) => (n ?? 0) > 0) || anyLeft > 0)
     return 'Power cost not fully paid.'
 
   // Apply: exhaust energy runes; recycle power runes to bottom of rune deck.
@@ -229,7 +235,7 @@ function applyPayment(
     if ((pool.power[d] ?? 0) <= 0) delete pool.power[d]
   }
   // Track total colored Power spent this turn (Sivir - Mercenary's ≥2 gate).
-  const totalPowerPaid = Object.values(cost.power).reduce((a, b) => a + (b ?? 0), 0)
+  const totalPowerPaid = Object.values(cost.power).reduce((a, b) => a + (b ?? 0), 0) + powerAnyNeed
   if (totalPowerPaid > 0) p.powerSpentThisTurn = (p.powerSpentThisTurn ?? 0) + totalPowerPaid
   return null
 }
@@ -2194,20 +2200,6 @@ function firePlayTriggers(s: MatchState, player: PlayerId, exceptIid: string, pl
   return s
 }
 
-/** Auto-pay N Energy from a player's pool first, then by exhausting ready runes.
- *  Returns false (and pays nothing) if N Energy isn't affordable. */
-function payEnergyAuto(pl: PlayerState, n: number): boolean {
-  if (!pl.pool) pl.pool = { energy: 0, power: {} }
-  const ready = pl.zones.runePool.filter((r) => !r.exhausted)
-  if (pl.pool.energy + ready.length < n) return false
-  let need = n
-  const fromPool = Math.min(need, pl.pool.energy)
-  pl.pool.energy -= fromPool
-  need -= fromPool
-  for (let i = 0; i < need; i++) ready[i].exhausted = true
-  return true
-}
-
 /** True if `pl` could pay N Energy (pool + ready runes) WITHOUT paying it. */
 function canAffordEnergy(pl: PlayerState, n: number): boolean {
   return (pl.pool?.energy ?? 0) + pl.zones.runePool.filter((r) => !r.exhausted).length >= n
@@ -2218,9 +2210,20 @@ function canAffordEnergy(pl: PlayerState, n: number): boolean {
 // QUEUE a decision here and keep going; reduce() surfaces them one at a time after
 // the action finishes (surfaceNextDecision), so we never pause mid-trigger-loop.
 
-/** Queue an OPTIONAL cost the player may pay (surfaced as a Pay/Decline modal). */
-function queueOptionalPay(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; cost: { energy?: number; powerAny?: number }; op: DeferredOp }): MatchState {
-  ;(s.pendingDecisions ??= []).push({ player, kind: 'optionalPay', prompt: d.prompt, srcName: d.srcName, cost: d.cost, op: d.op })
+/** Queue an OPTIONAL cost the player may pay (surfaced as a Pay/Decline modal;
+ *  accepting opens the rune picker when `resolvedCost` is present). */
+function queueOptionalPay(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; cost: { energy?: number; powerAny?: number }; resolvedCost?: ResolvedCost & { powerAny?: number }; op: DeferredOp }): MatchState {
+  const resolvedCost = d.resolvedCost ?? { energy: d.cost.energy ?? 0, power: {}, powerAny: d.cost.powerAny }
+  ;(s.pendingDecisions ??= []).push({ player, kind: 'optionalPay', prompt: d.prompt, srcName: d.srcName, cost: d.cost, resolvedCost, op: d.op })
+  return s
+}
+
+/** Queue a MANDATORY cost (rule 354.1.a — the player picks WHICH runes pay it).
+ *  Surfaces the rune picker directly (no Pay/Decline step); declining aborts
+ *  the deferred op (the player simply fails to pay). Exported for the Phase C
+ *  trigger-time conversions (no external callers yet). */
+export function queuePayCost(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; resolvedCost: ResolvedCost & { powerAny?: number }; op: DeferredOp }): MatchState {
+  ;(s.pendingDecisions ??= []).push({ player, kind: 'payCost', prompt: d.prompt, srcName: d.srcName, resolvedCost: d.resolvedCost, op: d.op })
   return s
 }
 
@@ -2266,7 +2269,7 @@ function surfaceNextDecision(s: MatchState): MatchState {
     prompt: head.prompt,
     srcName: head.srcName,
     options: head.options ?? [{ iid: 'pay', label: 'Pay' }],
-    payload: JSON.stringify({ cost: head.cost, op: head.op, optional: head.optional, defaultIid: head.defaultIid }),
+    payload: JSON.stringify({ cost: head.cost, resolvedCost: head.resolvedCost, op: head.op, optional: head.optional, defaultIid: head.defaultIid }),
   }
   return s
 }
@@ -8007,21 +8010,33 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(s)
       }
 
-      // P0 optional-pay (Vayne, Ripper's Bay, …): accept ('pay') or decline (null).
-      // Pay the cost; if affordable, apply the deferred op. Surfaced as a custom modal.
-      if (pc.kind === 'optionalPay') {
-        let parsed: { cost?: { energy?: number; powerAny?: number }; op: DeferredOp }
+      // P0 optional-pay (Vayne, Ripper's Bay, …) and mandatory payCost: accept
+      // ('pay') or decline (null). With an explicit `payment` (rune picker), the
+      // player chose WHICH runes pay (rule 354.1.a) — validate via applyPayment;
+      // an invalid pick keeps the choice open. Without one (rune picker off /
+      // older client), auto-pick the runes.
+      if (pc.kind === 'optionalPay' || pc.kind === 'payCost') {
+        let parsed: { cost?: { energy?: number; powerAny?: number }; resolvedCost?: ResolvedCost & { powerAny?: number }; op: DeferredOp }
         try { parsed = JSON.parse(pc.payload ?? '{}') } catch { return ok(s) }
-        if (action.iid === null) return ok(log(s, action.player, `${pc.srcName}: declined.`))
-        const cost = parsed.cost ?? {}
+        if (action.iid === null) return ok(log(s, action.player, `${pc.srcName}: ${pc.kind === 'payCost' ? "couldn't pay — skipped." : 'declined.'}`))
+        const legacy = parsed.cost ?? {}
+        const rc: ResolvedCost & { powerAny?: number } = parsed.resolvedCost ?? { energy: legacy.energy ?? 0, power: {}, powerAny: legacy.powerAny }
         const pl = s.players[action.player]
-        // Energy is purely checkable; power we PAY first (payPowerAny is atomic — it
-        // pays only if affordable), so a failure costs nothing before we touch energy.
-        if (cost.energy && !canAffordEnergy(pl, cost.energy)) return ok(log(s, action.player, `${pc.srcName}: couldn't pay the cost.`))
-        if (cost.powerAny && !makeBfApi(s).payPowerAny(action.player, cost.powerAny)) return ok(log(s, action.player, `${pc.srcName}: couldn't pay the cost.`))
-        if (cost.energy) payEnergyAuto(pl, cost.energy)
+        const parts: string[] = []
+        if (rc.energy) parts.push(`⚡${rc.energy}`)
+        for (const [d, n] of Object.entries(rc.power) as [Domain, number][]) if (n) parts.push(`${n} ${d}`)
+        if (rc.powerAny) parts.push(`♺${rc.powerAny}`)
+        const paidLabel = parts.join(' ') || 'nothing'
+        if (action.payment) {
+          const err = applyPayment(pl, rc, action.payment)
+          if (err) return fail(state, err) // choice stays open — fix the rune pick
+        } else {
+          const auto = autoPay(pl, rc)
+          if (!auto || applyPayment(pl, rc, auto) !== null)
+            return ok(log(s, action.player, `${pc.srcName}: couldn't pay the cost.`))
+        }
         s = applyDeferredOp(s, action.player, parsed.op, null)
-        return ok(log(s, action.player, `${pc.srcName}: paid${cost.energy ? ` ⚡${cost.energy}` : ''}${cost.powerAny ? ` ♺${cost.powerAny}` : ''}.`))
+        return ok(log(s, action.player, `${pc.srcName}: paid ${paidLabel}.`))
       }
 
       // P0 select-target (Windsinger, Beast Below, …) + select-gear (kill/steal a gear).
