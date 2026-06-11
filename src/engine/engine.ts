@@ -7628,8 +7628,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (!state.sandbox) {
         const ec = parseKeywords(getCard(s.players[gearPlayer].zones.base[gIdx!].cardId)).equipCost
         if (ec && (ec.energy > 0 || ec.anyPower > 0 || Object.keys(ec.power).length > 0)) {
-          if (action.payment && ec.anyPower === 0) {
-            const err = applyPayment(s.players[action.player], { energy: ec.energy, power: ec.power }, action.payment)
+          if (action.payment) {
+            // Rainbow Power (anyPower) maps to the wildcard powerAny slots.
+            const err = applyPayment(s.players[action.player], { energy: ec.energy, power: ec.power, powerAny: ec.anyPower }, action.payment)
             if (err) return fail(state, err)
           } else if (!payEquipCost(s, action.player, ec)) {
             return fail(state, 'Not enough resources to pay the Equip cost.')
@@ -7691,8 +7692,9 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Power remains; else auto-pay from ready runes/pool.
       const disc = weaponmasterCost(getCard(gearCardId))
       if (disc && (disc.energy > 0 || disc.anyPower > 0 || Object.keys(disc.power).length > 0)) {
-        if (action.payment && disc.anyPower === 0) {
-          const err = applyPayment(s.players[action.player], { energy: disc.energy, power: disc.power }, action.payment)
+        if (action.payment) {
+          // Rainbow Power (anyPower) maps to the wildcard powerAny slots.
+          const err = applyPayment(s.players[action.player], { energy: disc.energy, power: disc.power, powerAny: disc.anyPower }, action.payment)
           if (err) return fail(state, err)
         } else if (!payEquipCost(s, action.player, disc)) {
           return fail(state, 'Not enough resources to pay the Equip cost.')
@@ -7771,18 +7773,26 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       const card = p.zones.hand.find((c) => c.iid === action.iid)
       if (!card) return fail(state, 'Card not in your hand.')
       if (!parseKeywords(getCard(card.cardId)).hidden) return fail(state, 'Only a card with [Hidden] can be hidden.')
-      const rune = p.zones.runePool.find((r) => r.iid === action.runeIid && !r.exhausted)
-      if (!rune) return fail(state, 'Need a ready rune to pay the Hide cost.')
-      removeFromZone(p, 'hand', action.iid)
       // Teemo - Swift Scout: "pay :rb_energy_1: to hide instead of :rb_rune_rainbow:"
       // → exhaust the rune (Energy) and KEEP it, rather than recycling it.
       const legendName = getCard(p.legend?.cardId ?? '')?.name?.replace(/\s*\([^)]*\)\s*$/, '').trim()
-      if (legendName === 'Teemo - Swift Scout') {
-        rune.exhausted = true
+      if (action.payment) {
+        // Explicit rune payment from the UI's picker (rule 354.1.a): 1 wildcard
+        // Power normally, 1 Energy under Teemo. Validated before any mutation.
+        const hideCost = legendName === 'Teemo - Swift Scout' ? { energy: 1, power: {} } : { energy: 0, power: {}, powerAny: 1 }
+        const err = applyPayment(p, hideCost, action.payment)
+        if (err) return fail(state, err)
       } else {
-        const recycled = removeFromZone(p, 'runePool', action.runeIid)!
-        p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
+        const rune = p.zones.runePool.find((r) => r.iid === action.runeIid && !r.exhausted)
+        if (!rune) return fail(state, 'Need a ready rune to pay the Hide cost.')
+        if (legendName === 'Teemo - Swift Scout') {
+          rune.exhausted = true
+        } else {
+          const recycled = removeFromZone(p, 'runePool', action.runeIid)!
+          p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
+        }
       }
+      removeFromZone(p, 'hand', action.iid)
       s.battlefields[bfi].facedown = { ...card, facedown: true, hiddenTurn: s.turn }
       let sh = log(s, action.player, `Hid a card facedown at ${getCard(s.battlefields[bfi].cardId)?.name ?? 'a battlefield'}${legendName === 'Teemo - Swift Scout' ? ' (Teemo: paid 1 Energy)' : ''}.`)
       // "When you hide a card, …" (Katarina - Reckless: ready me).
@@ -8417,11 +8427,15 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(log(s, action.player, `${name}: choose a friendly [Exhaust] ability to borrow.`))
       }
       const mightNow = statMight(u) // for "double my Might" before any change
-      // Pay the cost: energy/runes, recycle-from-trash, exhaust, kill-this.
+      // Pay the cost: energy/runes, recycle-from-trash, exhaust, kill-this. An
+      // explicit `payment` (the UI rune picker — rule 354.1.a) is validated as
+      // given; otherwise auto-pick (rune picker off / older online clients).
       const cost = { energy: ab.energy, power: ab.power }
       if (!costIsFree(cost)) {
-        const pay = autoPay(p, cost)
-        if (!pay || applyPayment(p, cost, pay)) return fail(state, 'Not enough resources.')
+        const pay = action.payment ?? autoPay(p, cost)
+        if (!pay) return fail(state, 'Not enough resources.')
+        const payErr = applyPayment(p, cost, pay)
+        if (payErr) return fail(state, action.payment ? payErr : 'Not enough resources.')
       }
       for (let i = 0; i < ab.recycleTrash && p.zones.trash.length > 0; i++) p.zones.mainDeck.push(p.zones.trash.shift()!)
       // Discard cost (Gutter Palace) — auto-discards from the front of hand.

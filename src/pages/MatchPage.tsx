@@ -158,9 +158,13 @@ export default function MatchPage() {
   // Pending "Equip to a unit" choice for an unattached gear in base.
   const [attachPick, setAttachPick] = useState<{ gearIid: string } | null>(null)
   // Pending [Equip] cost payment (rune picker) once the target unit is chosen.
-  const [equipPay, setEquipPay] = useState<{ gearIid: string; unitIid: string; card: Card; cost: ResolvedCost } | null>(null)
+  const [equipPay, setEquipPay] = useState<{ gearIid: string; unitIid: string; card: Card; cost: ResolvedCost & { powerAny?: number } } | null>(null)
   // Pending [Weaponmaster] discounted-Equip payment (after the equipment is chosen).
-  const [wmPay, setWmPay] = useState<{ unitIid: string; gearIid: string; card: Card; cost: ResolvedCost } | null>(null)
+  const [wmPay, setWmPay] = useState<{ unitIid: string; gearIid: string; card: Card; cost: ResolvedCost & { powerAny?: number } } | null>(null)
+  // Pending unit-ability activation payment (rune picker before ACTIVATE_UNIT).
+  const [activatePay, setActivatePay] = useState<{ iid: string; card: Card | null; cost: ResolvedCost; ab: NonNullable<ReturnType<typeof canActivateUnit>> } | null>(null)
+  // Pending Hide payment (rune picker before HIDE — 1 wild Power, Teemo: 1 Energy).
+  const [hidePay, setHidePay] = useState<{ iid: string; toBattlefield: number; runeIid: string; card: Card | null; cost: ResolvedCost & { powerAny?: number } } | null>(null)
   // Pending "Move equipment to another unit" choice (sandbox).
   const [movePick, setMovePick] = useState<{ gearIid: string; fromUnitIid: string; owner: PlayerId } | null>(null)
   // Pending play destination for a unit whose rules let it enter a battlefield.
@@ -524,11 +528,25 @@ export default function MatchPage() {
     act({ type: 'PLAY_SPELL', player: t.player, iid: t.iid, payment: t.payment, targets, repeat: t.repeat })
   }
 
-  // Activate a unit's own printed ability: dispatch directly when it needs no
-  // target, else open the picker (damage → enemies, +Might → friendlies).
+  // Activate a unit's own printed ability. With the rune picker on, the ability's
+  // printed cost is paid explicitly FIRST (rule 354.1.a) via PaymentModal.
   const activateUnit = (iid: string) => {
     const ab = canActivateUnit(match, controlling, iid)
     if (!ab) return
+    const cost: ResolvedCost = { energy: ab.energy, power: ab.power }
+    if (manualPay && !costIsFree(cost)) {
+      const me = match.players[controlling]
+      const inst = [...me.zones.base, ...match.battlefields.flatMap((b) => b.units), ...(me.legend ? [me.legend] : [])].find((x) => x.iid === iid)
+      setActivatePay({ iid, card: inst ? getCard(inst.cardId) ?? null : null, cost, ab })
+      return
+    }
+    proceedActivate(iid, ab)
+  }
+
+  /** Continue an activation once payment is settled (explicit picker or engine
+   *  auto-pay): dispatch directly when it needs no target, else open the picker
+   *  (damage → enemies, +Might → friendlies). */
+  const proceedActivate = (iid: string, ab: NonNullable<ReturnType<typeof canActivateUnit>>, payment?: Payment) => {
     // Deck-dig / play-from-zone abilities (Baited Hook: "Kill a friendly unit. Look
     // at the top 5 → play it") auto-resolve in the engine — activate with no target
     // prompt even though the first sentence ("kill a friendly unit") looks targeted.
@@ -539,11 +557,11 @@ export default function MatchPage() {
     const dealMightSelf = ab.effect.dealMight?.dealer === 'self'
     const needsTgt = !autoResolves && (dealMightSelf || ab.effect.damage > 0 || ab.effect.buff > 0 || ab.effect.stun > 0 || ab.effect.kill > 0 || ab.effect.grantAssault > 0 || ab.effect.grantGanking || ab.effect.readyUnits > 0 || /\bmove\b/i.test(ab.effectText) || /(return|put|bounce)[^.]*\bhand\b/i.test(ab.effectText) || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf))
     if (!needsTgt) {
-      act({ type: 'ACTIVATE_UNIT', player: controlling, iid })
+      act({ type: 'ACTIVATE_UNIT', player: controlling, iid, payment })
       return
     }
     const scope: 'enemy' | 'friendly' = (dealMightSelf || ab.effect.damage > 0 || ab.effect.stun > 0 || ab.effect.kill > 0) ? 'enemy' : 'friendly'
-    setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, player: controlling, kind: 'activateUnit', count: 1, picked: [], targetScope: scope, battlefieldOnly: dealMightSelf })
+    setTargeting({ iid, cardId: '', payment: payment ?? { exhaust: [], recycle: [] }, player: controlling, kind: 'activateUnit', count: 1, picked: [], targetScope: scope, battlefieldOnly: dealMightSelf })
     flash(scope === 'enemy' ? 'Pick an enemy unit.' : 'Pick a unit to buff.')
   }
 
@@ -555,7 +573,10 @@ export default function MatchPage() {
       return
     }
     if (targeting.kind === 'activateUnit') {
-      act({ type: 'ACTIVATE_UNIT', player: targeting.player, iid: targeting.iid, targets: [targetIid] })
+      // Forward the explicit rune payment when one was picked (empty = engine auto-pays).
+      const pm = targeting.payment
+      const hasPay = pm.exhaust.length > 0 || pm.recycle.length > 0 || (pm.poolEnergy ?? 0) > 0 || Object.keys(pm.poolPower ?? {}).length > 0
+      act({ type: 'ACTIVATE_UNIT', player: targeting.player, iid: targeting.iid, targets: [targetIid], payment: hasPay ? pm : undefined })
       setTargeting(null)
       return
     }
@@ -604,7 +625,23 @@ export default function MatchPage() {
         onCounter={counterWith}
         onEndTurn={() => act({ type: 'END_TURN', player: controlling })}
         onConcede={() => act({ type: 'CONCEDE', player: controlling })}
-        onCardAction={(a) => act(a)}
+        onCardAction={(a) => {
+          // HIDE spends a rune (1 wild Power / Teemo: 1 Energy) — route it through
+          // the rune picker when manual pay is on; the menu pre-picked a rune as
+          // the legacy fallback.
+          if (a.type === 'HIDE' && manualPay) {
+            const me = match.players[controlling]
+            const handCard = me.zones.hand.find((c) => c.iid === a.iid)
+            const teemo = getCard(me.legend?.cardId ?? '')?.name?.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Teemo - Swift Scout'
+            setHidePay({
+              iid: a.iid, toBattlefield: a.toBattlefield, runeIid: a.runeIid,
+              card: handCard ? getCard(handCard.cardId) ?? null : null,
+              cost: teemo ? { energy: 1, power: {} } : { energy: 0, power: {}, powerAny: 1 },
+            })
+            return
+          }
+          act(a)
+        }}
         onActivateUnit={activateUnit}
         onAttachGear={(gearIid) => setAttachPick({ gearIid })}
         onMoveGear={(gearIid, fromUnitIid, owner) => setMovePick({ gearIid, fromUnitIid, owner })}
@@ -773,8 +810,8 @@ export default function MatchPage() {
               const d = weaponmasterCost(getCard(ch.cardId))
               const free = !d || (d.energy === 0 && d.anyPower === 0 && Object.keys(d.power).length === 0)
               if (free) return act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid, gearIid: ch.gearIid })
-              if (manualPay && d!.anyPower === 0)
-                setWmPay({ unitIid, gearIid: ch.gearIid, card: getCard(ch.cardId)!, cost: { energy: d!.energy, power: d!.power } })
+              if (manualPay)
+                setWmPay({ unitIid, gearIid: ch.gearIid, card: getCard(ch.cardId)!, cost: { energy: d!.energy, power: d!.power, powerAny: d!.anyPower } })
               else act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid, gearIid: ch.gearIid })
             }}
             onCancel={() => act({ type: 'WEAPONMASTER_RESOLVE', player: controlling, unitIid, gearIid: null })}
@@ -822,14 +859,14 @@ export default function MatchPage() {
               const a = attachPick
               setAttachPick(null)
               // Outside sandbox, the [Equip] ability has a cost. With the rune picker
-              // on and a non-rainbow cost, open PaymentModal so the player pays it
-              // explicitly; otherwise dispatch and let the engine auto-pay.
+              // on, open PaymentModal so the player pays it explicitly (rainbow Power
+              // = wildcard slots); otherwise dispatch and let the engine auto-pay.
               const gear = match.players[controlling].zones.base.find((g) => g.iid === a.gearIid)
               const gc = gear ? getCard(gear.cardId) : null
               const ec = gc ? parseKeywords(gc).equipCost : null
               const hasCost = !!ec && (ec.energy > 0 || ec.anyPower > 0 || Object.keys(ec.power).length > 0)
-              if (!match.sandbox && manualPay && hasCost && ec!.anyPower === 0) {
-                setEquipPay({ gearIid: a.gearIid, unitIid: String(uid), card: gc!, cost: { energy: ec!.energy, power: ec!.power } })
+              if (!match.sandbox && manualPay && hasCost) {
+                setEquipPay({ gearIid: a.gearIid, unitIid: String(uid), card: gc!, cost: { energy: ec!.energy, power: ec!.power, powerAny: ec!.anyPower } })
               } else {
                 act({ type: 'ATTACH', player: controlling, unitIid: String(uid), gearIid: a.gearIid })
               }
@@ -849,6 +886,36 @@ export default function MatchPage() {
             const e = equipPay
             setEquipPay(null)
             act({ type: 'ATTACH', player: controlling, unitIid: e.unitIid, gearIid: e.gearIid, payment })
+          }}
+        />
+      )}
+      {activatePay && (
+        <PaymentModal
+          player={match.players[controlling]}
+          card={activatePay.card ?? undefined}
+          title={activatePay.card?.name}
+          cost={activatePay.cost}
+          confirmLabel="Pay & activate ▶"
+          onCancel={() => setActivatePay(null)}
+          onConfirm={(payment) => {
+            const a = activatePay
+            setActivatePay(null)
+            proceedActivate(a.iid, a.ab, payment)
+          }}
+        />
+      )}
+      {hidePay && (
+        <PaymentModal
+          player={match.players[controlling]}
+          card={hidePay.card ?? undefined}
+          title="Hide facedown"
+          cost={hidePay.cost}
+          confirmLabel="Pay & hide ▶"
+          onCancel={() => setHidePay(null)}
+          onConfirm={(payment) => {
+            const h = hidePay
+            setHidePay(null)
+            act({ type: 'HIDE', player: controlling, iid: h.iid, toBattlefield: h.toBattlefield, runeIid: h.runeIid, payment })
           }}
         />
       )}

@@ -111,7 +111,13 @@ export default function OnlinePage() {
   const [repeatPrompt, setRepeatPrompt] = useState<{ c: EngineCard; card: Card } | null>(null)
   const [deflectPay, setDeflectPay] = useState<{ iid: string; card: Card; base: Payment; targets: string[]; surcharge: number; repeat?: boolean } | null>(null)
   // Pending [Weaponmaster] discounted-Equip payment (after the equipment is chosen).
-  const [wmPay, setWmPay] = useState<{ unitIid: string; gearIid: string; card: Card; cost: ResolvedCost } | null>(null)
+  const [wmPay, setWmPay] = useState<{ unitIid: string; gearIid: string; card: Card; cost: ResolvedCost & { powerAny?: number } } | null>(null)
+  // Pending [Equip] cost payment (rune picker) once the target unit is chosen.
+  const [equipPay, setEquipPay] = useState<{ gearIid: string; unitIid: string; card: Card; cost: ResolvedCost & { powerAny?: number } } | null>(null)
+  // Pending unit-ability activation payment (rune picker before ACTIVATE_UNIT).
+  const [activatePay, setActivatePay] = useState<{ iid: string; card: Card | null; cost: ResolvedCost; ab: NonNullable<ReturnType<typeof canActivateUnit>> } | null>(null)
+  // Pending Hide payment (rune picker before HIDE — 1 wild Power, Teemo: 1 Energy).
+  const [hidePay, setHidePay] = useState<{ iid: string; toBattlefield: number; runeIid: string; card: Card | null; cost: ResolvedCost & { powerAny?: number } } | null>(null)
   // True while the rune picker is open for an ACCEPTED optionalPay pendingChoice
   // (two-step: Pay/Decline prompt → rune picker). Reset whenever the choice changes.
   const [choicePaying, setChoicePaying] = useState(false)
@@ -871,17 +877,31 @@ export default function OnlinePage() {
     dispatch({ type: 'PLAY_SPELL', player: seat, iid: t.iid, payment: t.payment, targets, repeat: t.repeat })
   }
 
+  // Activate a unit's own printed ability. Online is always manual — the
+  // ability's printed cost is paid explicitly FIRST (rule 354.1.a).
   const activateUnit = (iid: string) => {
     const ab = canActivateUnit(match, seat, iid)
     if (!ab) return
+    const cost: ResolvedCost = { energy: ab.energy, power: ab.power }
+    if (!costIsFree(cost)) {
+      const me = match.players[seat]
+      const inst = [...me.zones.base, ...match.battlefields.flatMap((b) => b.units), ...(me.legend ? [me.legend] : [])].find((x) => x.iid === iid)
+      setActivatePay({ iid, card: inst ? getCard(inst.cardId) ?? null : null, cost, ab })
+      return
+    }
+    proceedActivate(iid, ab)
+  }
+
+  /** Continue an activation once payment is settled. */
+  const proceedActivate = (iid: string, ab: NonNullable<ReturnType<typeof canActivateUnit>>, payment?: Payment) => {
     // Deck-dig / play-from-zone abilities (Baited Hook: "Kill a friendly unit. Look
     // at the top 5 → play it") auto-resolve in the engine — activate with no target
     // prompt even though the first sentence ("kill a friendly unit") looks targeted.
     const autoResolves = !!(ab.effect.peekBanishPlay || ab.effect.playUnitFromTrash || ab.effect.playUnitFromHand || ab.effect.revealPlayFromDeck || ab.effect.peekDraw || ab.effect.peekToHand || ab.effect.returnFromTrash)
     const needsTgt = !autoResolves && (ab.effect.damage > 0 || ab.effect.buff > 0 || ab.effect.stun > 0 || ab.effect.kill > 0 || ab.effect.grantAssault > 0 || ab.effect.grantGanking || ab.effect.readyUnits > 0 || /\bmove\b/i.test(ab.effectText) || /(return|put|bounce)[^.]*\bhand\b/i.test(ab.effectText) || (ab.effect.tempMight !== 0 && !ab.doubleMight && !ab.effect.tempMightSelf))
-    if (!needsTgt) { dispatch({ type: 'ACTIVATE_UNIT', player: seat, iid }); return }
+    if (!needsTgt) { dispatch({ type: 'ACTIVATE_UNIT', player: seat, iid, payment }); return }
     const scope: 'enemy' | 'friendly' = (ab.effect.damage > 0 || ab.effect.stun > 0 || ab.effect.kill > 0) ? 'enemy' : 'friendly'
-    setTargeting({ iid, cardId: '', payment: { exhaust: [], recycle: [] }, kind: 'activateUnit', count: 1, picked: [], targetScope: scope })
+    setTargeting({ iid, cardId: '', payment: payment ?? { exhaust: [], recycle: [] }, kind: 'activateUnit', count: 1, picked: [], targetScope: scope })
     flash(scope === 'enemy' ? 'Pick an enemy unit.' : 'Pick a unit to buff.')
   }
   const activeLegalTargets = (): string[] => {
@@ -902,7 +922,10 @@ export default function OnlinePage() {
       return
     }
     if (targeting.kind === 'activateUnit') {
-      dispatch({ type: 'ACTIVATE_UNIT', player: seat, iid: targeting.iid, targets: [targetIid] })
+      // Forward the explicit rune payment when one was picked (empty = engine auto-pays).
+      const pm = targeting.payment
+      const hasPay = pm.exhaust.length > 0 || pm.recycle.length > 0 || (pm.poolEnergy ?? 0) > 0 || Object.keys(pm.poolPower ?? {}).length > 0
+      dispatch({ type: 'ACTIVATE_UNIT', player: seat, iid: targeting.iid, targets: [targetIid], payment: hasPay ? pm : undefined })
       setTargeting(null)
       return
     }
@@ -999,7 +1022,23 @@ export default function OnlinePage() {
         onCounter={counterWith}
         onEndTurn={() => dispatch({ type: 'END_TURN', player: seat })}
         onConcede={() => dispatch({ type: 'CONCEDE', player: seat })}
-        onCardAction={(a) => dispatch(a)}
+        onCardAction={(a) => {
+          // HIDE spends a rune (1 wild Power / Teemo: 1 Energy) — online is always
+          // manual, so route it through the rune picker; the menu pre-picked a
+          // rune as the legacy fallback.
+          if (a.type === 'HIDE') {
+            const me = match.players[seat]
+            const handCard = me.zones.hand.find((c) => c.iid === a.iid)
+            const teemo = getCard(me.legend?.cardId ?? '')?.name?.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Teemo - Swift Scout'
+            setHidePay({
+              iid: a.iid, toBattlefield: a.toBattlefield, runeIid: a.runeIid,
+              card: handCard ? getCard(handCard.cardId) ?? null : null,
+              cost: teemo ? { energy: 1, power: {} } : { energy: 0, power: {}, powerAny: 1 },
+            })
+            return
+          }
+          dispatch(a)
+        }}
         onActivateUnit={activateUnit}
         onAttachGear={(gearIid) => setAttachPick({ gearIid })}
         onUndo={undo}
@@ -1159,9 +1198,7 @@ export default function OnlinePage() {
               const d = weaponmasterCost(getCard(ch.cardId))
               const free = !d || (d.energy === 0 && d.anyPower === 0 && Object.keys(d.power).length === 0)
               if (free) return dispatch({ type: 'WEAPONMASTER_RESOLVE', player: seat, unitIid, gearIid: ch.gearIid })
-              if (d!.anyPower === 0)
-                setWmPay({ unitIid, gearIid: ch.gearIid, card: getCard(ch.cardId)!, cost: { energy: d!.energy, power: d!.power } })
-              else dispatch({ type: 'WEAPONMASTER_RESOLVE', player: seat, unitIid, gearIid: ch.gearIid })
+              setWmPay({ unitIid, gearIid: ch.gearIid, card: getCard(ch.cardId)!, cost: { energy: d!.energy, power: d!.power, powerAny: d!.anyPower } })
             }}
             onCancel={() => dispatch({ type: 'WEAPONMASTER_RESOLVE', player: seat, unitIid, gearIid: null })}
           />
@@ -1178,6 +1215,50 @@ export default function OnlinePage() {
             const w = wmPay
             setWmPay(null)
             dispatch({ type: 'WEAPONMASTER_RESOLVE', player: seat, unitIid: w.unitIid, gearIid: w.gearIid, payment })
+          }}
+        />
+      )}
+      {equipPay && (
+        <PaymentModal
+          player={match.players[seat]}
+          card={equipPay.card}
+          cost={equipPay.cost}
+          confirmLabel="Pay & equip ▶"
+          onCancel={() => setEquipPay(null)}
+          onConfirm={(payment) => {
+            const e = equipPay
+            setEquipPay(null)
+            dispatch({ type: 'ATTACH', player: seat, unitIid: e.unitIid, gearIid: e.gearIid, payment })
+          }}
+        />
+      )}
+      {activatePay && (
+        <PaymentModal
+          player={match.players[seat]}
+          card={activatePay.card ?? undefined}
+          title={activatePay.card?.name}
+          cost={activatePay.cost}
+          confirmLabel="Pay & activate ▶"
+          onCancel={() => setActivatePay(null)}
+          onConfirm={(payment) => {
+            const a = activatePay
+            setActivatePay(null)
+            proceedActivate(a.iid, a.ab, payment)
+          }}
+        />
+      )}
+      {hidePay && (
+        <PaymentModal
+          player={match.players[seat]}
+          card={hidePay.card ?? undefined}
+          title="Hide facedown"
+          cost={hidePay.cost}
+          confirmLabel="Pay & hide ▶"
+          onCancel={() => setHidePay(null)}
+          onConfirm={(payment) => {
+            const h = hidePay
+            setHidePay(null)
+            dispatch({ type: 'HIDE', player: seat, iid: h.iid, toBattlefield: h.toBattlefield, runeIid: h.runeIid, payment })
           }}
         />
       )}
@@ -1207,7 +1288,17 @@ export default function OnlinePage() {
             onPick={(uid) => {
               const a = attachPick
               setAttachPick(null)
-              dispatch({ type: 'ATTACH', player: seat, unitIid: String(uid), gearIid: a.gearIid })
+              // Online is always manual: a costed [Equip] opens the rune picker
+              // (rainbow Power = wildcard slots); free equips dispatch directly.
+              const gear = match.players[seat].zones.base.find((g) => g.iid === a.gearIid)
+              const gc = gear ? getCard(gear.cardId) : null
+              const ec = gc ? parseKeywords(gc).equipCost : null
+              const hasCost = !!ec && (ec.energy > 0 || ec.anyPower > 0 || Object.keys(ec.power).length > 0)
+              if (!match.sandbox && hasCost) {
+                setEquipPay({ gearIid: a.gearIid, unitIid: String(uid), card: gc!, cost: { energy: ec!.energy, power: ec!.power, powerAny: ec!.anyPower } })
+              } else {
+                dispatch({ type: 'ATTACH', player: seat, unitIid: String(uid), gearIid: a.gearIid })
+              }
             }}
             onCancel={() => setAttachPick(null)}
           />

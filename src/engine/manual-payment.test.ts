@@ -150,6 +150,88 @@ describe('payCost — explicit payment via RESOLVE_CHOICE', () => {
   })
 })
 
+describe('Phase B — pre-dispatch explicit payments', () => {
+  it('ACTIVATE_UNIT honors the CHOSEN rune (not the auto-pick)', () => {
+    const aid = injectCard('mp-act-unit', ':rb_energy_1:: Draw 1.', { type: 'unit', might: 2 })
+    const s = baseState()
+    const u = mk(aid, 0)
+    s.players[0].zones.base.push(u)
+    const r1 = mk(furyRune.id, 0)
+    const r2 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(r1, r2)
+    const handBefore = s.players[0].zones.hand.length
+    // Pay with the SECOND rune explicitly (auto-pay would take the first).
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: u.iid, payment: { exhaust: [r2.iid], recycle: [] } })
+    expect(r.error).toBeUndefined()
+    expect(r.state.players[0].zones.hand.length).toBe(handBefore + 1) // drew 1
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === r2.iid)?.exhausted).toBe(true)
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === r1.iid)?.exhausted).toBe(false)
+  })
+
+  it('ACTIVATE_UNIT rejects an invalid explicit payment (nothing spent)', () => {
+    const aid = injectCard('mp-act-unit2', ':rb_energy_1:: Draw 1.', { type: 'unit', might: 2 })
+    const s = baseState()
+    const u = mk(aid, 0)
+    s.players[0].zones.base.push(u)
+    const r1 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(r1)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [r1.iid] } })
+    expect(r.error).toBeTruthy()
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === r1.iid)?.exhausted).toBe(false)
+    expect(r.state.players[0].zones.hand.length).toBe(0) // no draw
+  })
+
+  it('HIDE honors an explicit recycle payment (1 wildcard Power, chosen rune)', () => {
+    const hid = mk(injectCard('mp-hid', '[Hidden] A trap.', { type: 'unit', energy: 4, might: 4 }), 0)
+    const s = baseState()
+    s.battlefields[0].units.push(mk(furyUnit.id, 0))
+    s.battlefields[0].controller = 0
+    s.players[0].zones.hand.push(hid)
+    const r1 = mk(furyRune.id, 0)
+    const r2 = mk(calmRune.id, 0)
+    s.players[0].zones.runePool.push(r1, r2)
+    // Recycle the SECOND (calm) rune explicitly — the legacy path would take r1.
+    const r = reduce(s, { type: 'HIDE', player: 0, iid: hid.iid, toBattlefield: 0, runeIid: r1.iid, payment: { exhaust: [], recycle: [r2.iid] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.battlefields[0].facedown?.iid).toBe(hid.iid)
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === r2.iid)).toBe(false) // recycled
+    expect(r.state.players[0].zones.runeDeck.some((x) => x.iid === r2.iid)).toBe(true)
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === r1.iid)?.exhausted).toBe(false) // untouched
+  })
+
+  it('ATTACH validates a rainbow [Equip] cost via powerAny', () => {
+    const gid = injectCard('mp-gear-rb', '[Equip] :rb_rune_rainbow:', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const unit = mk(furyUnit.id, 0)
+    const gear = mk(gid, 0)
+    s.players[0].zones.base.push(unit, gear)
+    const r1 = mk(furyRune.id, 0)
+    const r2 = mk(calmRune.id, 0)
+    s.players[0].zones.runePool.push(r1, r2)
+    // Any-domain rune covers the rainbow slot — recycle the calm one explicitly.
+    const r = reduce(s, { type: 'ATTACH', player: 0, unitIid: unit.iid, gearIid: gear.iid, payment: { exhaust: [], recycle: [r2.iid] } })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === unit.iid)?.attached).toContain(`${gid}|${gear.iid}`)
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === r2.iid)).toBe(false) // recycled
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === r1.iid)).toBe(true) // untouched
+  })
+
+  it('ATTACH rejects a short rainbow payment', () => {
+    const gid = injectCard('mp-gear-rb2', '[Equip] :rb_energy_1::rb_rune_rainbow:', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    const unit = mk(furyUnit.id, 0)
+    const gear = mk(gid, 0)
+    s.players[0].zones.base.push(unit, gear)
+    const r1 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(r1)
+    // Pays the Energy but not the rainbow Power → invalid, nothing attached.
+    const r = reduce(s, { type: 'ATTACH', player: 0, unitIid: unit.iid, gearIid: gear.iid, payment: { exhaust: [r1.iid], recycle: [] } })
+    expect(r.error).toBeTruthy()
+    expect(r.state.players[0].zones.base.find((x) => x.iid === unit.iid)?.attached).toEqual([])
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === r1.iid)?.exhausted).toBe(false)
+  })
+})
+
 describe('optionalPay — explicit payment end-to-end (real site)', () => {
   it("Ripper's Bay channel: accept with an explicit rune payment", () => {
     const s = baseState()
