@@ -388,3 +388,78 @@ describe('optionalPay — explicit payment end-to-end (real site)', () => {
     expect(r.state.players[0].zones.runePool.some((x) => x.exhausted)).toBe(true) // channeled a rune exhausted
   })
 })
+
+describe('Phase D — pre-math combat-time payments & forced picks', () => {
+  const dravenId = injectCard('mp-draven', 'When I attack or defend, you may pay :rb_rune_fury:. If you do, give me +2 :rb_might: this turn.', { name: 'Draven - Vanquisher', type: 'unit', might: 4, domains: ['fury'] })
+  /** Open a showdown: `attacker` (P0, from base) moves onto bf0 held by P1's units. */
+  function intoShowdown(s: MatchState, attackerIid: string) {
+    let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [attackerIid], toBattlefield: 0 })
+    expect(r.error).toBeFalsy()
+    r = reduce(r.state, { type: 'PASS', player: 1 })
+    r = reduce(r.state, { type: 'PASS', player: 0 })
+    expect(r.error).toBeFalsy()
+    return r
+  }
+
+  it('Draven - Vanquisher: optionalPay carries the printed fury cost; explicit payment honored', () => {
+    const s = baseState()
+    const dr = mk(dravenId, 0)
+    s.players[0].zones.base.push(dr)
+    const f1 = mk(furyRune.id, 0)
+    const f2 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(f1, f2)
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    let r = intoShowdown(s, dr.iid)
+    // Paused BEFORE the combat math on an optionalPay with the real fury cost.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    const payload = JSON.parse(r.state.pendingChoice?.payload ?? '{}')
+    expect(payload.resolvedCost?.power?.fury).toBe(1)
+    // Pay with the CHOSEN rune (f2) — f1 must stay untouched.
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay', payment: { exhaust: [], recycle: [f2.iid] } })
+    expect(r.error).toBeFalsy()
+    const drNow = [...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[0].zones.base].find((u) => u.iid === dr.iid)
+    expect(drNow?.tempMight).toBe(2)
+    expect(r.state.players[0].zones.runePool.some((x) => x.iid === f2.iid)).toBe(false) // chosen rune recycled
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === f1.iid)?.exhausted).toBe(false) // other untouched
+    expect(r.state.pendingChoice).toBeFalsy() // showdown resumed and finished
+  })
+
+  it('Draven - Vanquisher: DECLINING still resumes the showdown (combat resolves, nothing spent)', () => {
+    const s = baseState()
+    const dr = mk(dravenId, 0)
+    s.players[0].zones.base.push(dr)
+    const f1 = mk(furyRune.id, 0)
+    s.players[0].zones.runePool.push(f1)
+    const enemy = mk(furyUnit.id, 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
+    let r = intoShowdown(s, dr.iid)
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: null })
+    expect(r.error).toBeFalsy()
+    expect(r.state.pendingChoice).toBeFalsy() // not stuck — the decline marked the trigger done
+    expect(r.state.phase).not.toBe('showdown') // combat math ran and the showdown closed
+    const drNow = [...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[0].zones.base].find((u) => u.iid === dr.iid)
+    expect(drNow?.tempMight ?? 0).toBe(0) // no bonus
+    expect(r.state.players[0].zones.runePool.find((x) => x.iid === f1.iid)?.exhausted).toBe(false) // nothing spent
+  })
+
+  it('Atakhan: the DEFENDER picks which unit dies (not the auto-weakest)', () => {
+    const atakhanId = injectCard('mp-atakhan', 'When I attack, the defender must kill one of their units here.', { name: 'Atakhan', type: 'unit', might: 7 })
+    const s = baseState()
+    const atk = mk(atakhanId, 0)
+    s.players[0].zones.base.push(atk)
+    const weak = mk(injectCard('mp-atak-weak', 'x', { type: 'unit', might: 2 }), 1, { exhausted: true })
+    const strong = mk(injectCard('mp-atak-strong', 'x', { type: 'unit', might: 9 }), 1, { exhausted: true })
+    s.battlefields[0] = { cardId: battlefield.id, units: [weak, strong], controller: 1 }
+    let r = intoShowdown(s, atk.iid)
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    expect(r.state.pendingChoice?.player).toBe(1) // the defender's choice
+    // The defender sacrifices the STRONG one (the old auto-pick always culled the weakest).
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: strong.iid })
+    expect(r.error).toBeFalsy()
+    const everywhere = [...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[1].zones.base]
+    expect(everywhere.some((u) => u.iid === strong.iid)).toBe(false) // killed by choice
+    expect(r.state.players[1].zones.trash.some((u) => u.iid === strong.iid)).toBe(true)
+  })
+})

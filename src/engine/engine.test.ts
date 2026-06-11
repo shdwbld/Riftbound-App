@@ -6411,7 +6411,7 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     expect(r.state.battlefields[1].units.some((u) => u.iid === weak.iid)).toBe(true) // moved to the empty one
   })
 
-  it('Sinister Poro: when it attacks, pays 1 to send the weakest enemy here to base', () => {
+  it('Sinister Poro: when it attacks, may pay 1 to send a chosen enemy here to base (Phase D)', () => {
     const id = injectCard('a3-poro', 'When I attack, you may pay :rb_energy_1: to move an enemy unit here to its base.', { name: 'Sinister Poro', might: 1 })
     const s = baseState()
     s.players[0].pool = { energy: 1, power: {} }
@@ -6423,7 +6423,13 @@ describe('A3 — movement restrictions (Minotaur Reckoner / Determined Sentry)',
     let r = reduce(s, { type: 'MOVE_UNIT', player: 0, iid: poro.iid, toBattlefield: 0 }) // attack into the showdown
     r = reduce(r.state, { type: 'PASS', player: 1 })
     r = reduce(r.state, { type: 'PASS', player: 0 })
-    expect(r.state.players[1].zones.base.some((u) => u.iid === weak.iid)).toBe(true) // weakest enemy pushed to base
+    // Phase D: the attacker picks WHICH enemy (was auto-weakest), then pays ⚡1.
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    expect(r.state.pendingChoice?.player).toBe(0)
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: weak.iid })
+    expect(r.state.pendingChoice?.kind).toBe('payCost')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
+    expect(r.state.players[1].zones.base.some((u) => u.iid === weak.iid)).toBe(true) // chosen enemy pushed to base
     expect(r.state.players[0].pool?.energy ?? 0).toBe(0) // paid 1
   })
 
@@ -7187,18 +7193,23 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect(r.state.players[0].zones.runePool.filter((x) => x.exhausted).length).toBe(2) // channeled 2 exhausted
   })
 
-  it('Draven - Vanquisher: pays 1 Power on attack for +2 Might this turn', () => {
+  it('Draven - Vanquisher: may pay 1 fury on attack for +2 Might this turn (Phase D)', () => {
     const s = baseState()
     const dr = mk('sfd-020-221', 0)
     s.players[0].zones.base.push(dr)
-    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 ready Power to auto-pay
+    s.players[0].zones.runePool.push(mk(furyRune.id, 0)) // 1 fury Power to pay
     const enemy = mk(injectCard('b-dr-enemy', 'x', { type: 'unit', might: 1 }), 1, { exhausted: true })
     s.battlefields[0] = { cardId: battlefield.id, units: [enemy], controller: 1 }
     let r = reduce(s, { type: 'MOVE_UNITS', player: 0, iids: [dr.iid], toBattlefield: 0 }) // attack
     r = reduce(r.state, { type: 'PASS', player: 1 })
     r = reduce(r.state, { type: 'PASS', player: 0 })
     expect(r.error).toBeFalsy()
+    // Phase D: surfaced as an optional pay BEFORE the combat math, not auto-paid.
+    expect(r.state.pendingChoice?.kind).toBe('optionalPay')
+    expect(r.state.battlefields[0].units.find((u) => u.iid === dr.iid)?.tempMight ?? 0).toBe(0) // not yet
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.battlefields[0].units.find((u) => u.iid === dr.iid)?.tempMight).toBe(2)
+    expect(r.state.players[0].zones.runePool.length).toBe(0) // the fury rune was recycled
   })
 
   it('Vayne - Hunter: may pay 1 to return to hand when she conquers (P0 optional-pay)', () => {
@@ -7394,6 +7405,10 @@ describe('Phase B — card wiring (conditional Might)', () => {
     r = reduce(r.state, { type: 'PASS', player: 1 })
     r = reduce(r.state, { type: 'PASS', player: 0 })
     expect(r.error).toBeFalsy()
+    // Phase D: the DEFENDER picks which of their units dies (mandatory selectTarget).
+    expect(r.state.pendingChoice?.kind).toBe('selectTarget')
+    expect(r.state.pendingChoice?.player).toBe(1)
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 1, iid: d.iid })
     expect([...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[1].zones.base].some((u) => u.iid === d.iid)).toBe(false) // forced kill
   })
 
@@ -7481,6 +7496,11 @@ describe('Phase B — card wiring (conditional Might)', () => {
     r = reduce(r.state, { type: 'PASS', player: 1 })
     r = reduce(r.state, { type: 'PASS', player: 0 })
     expect(r.error).toBeFalsy()
+    // Phase D: pick WHICH [Hidden] card (list modal), then pay the mind Power.
+    expect(r.state.pendingChoice?.kind).toBe('selectGear')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: hiddenCard.iid })
+    expect(r.state.pendingChoice?.kind).toBe('payCost')
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.state.players[0].zones.hand.some((c) => c.iid === hiddenCard.iid)).toBe(false) // played from hand
     expect([...r.state.battlefields.flatMap((b) => b.units)].some((u) => u.iid === hiddenCard.iid)).toBe(true) // entered play here (free)
     expect(r.state.players[0].zones.runePool.length).toBe(0) // 1 Mind Power paid

@@ -321,6 +321,11 @@ export interface ShowdownState {
   /** P5: champion combat trigger sourceIid → chosen enemy iid, read by the trigger
    *  handlers (preChosenCombatEnemy) instead of auto-picking the strongest. */
   combatPicks?: Record<string, string>
+  /** Phase D: pre-math combat decisions already resolved or declined this showdown
+   *  (pay-gated triggers / Atakhan forced kills), so resolveShowdown doesn't
+   *  re-queue them when it re-enters. Key = sourceIid (`${sourceIid}:${player}`
+   *  for Atakhan's per-defender picks). */
+  combatDone?: string[]
   /** A pending invitation: a combatant has asked `to` to join and help, awaiting
    *  their accept/decline. */
   invite?: { from: PlayerId; to: PlayerId }
@@ -382,6 +387,25 @@ export type DeferredOp =
   | { type: 'rumbleConquer'; mechIid: string }
   /** Rumble - Hotheaded, paid stage: recycle `spareIid` and play the Mech. */
   | { type: 'rumbleConquerPlay'; mechIid: string; spareIid: string }
+  /** Phase D pre-math combat ops — queued by queueNextCombatDecision while the
+   *  showdown is paused; each marks its trigger done in showdown.combatDone and
+   *  re-enters resolveShowdown when it finishes (accept OR decline). */
+  /** Draven - Vanquisher: the fury Power was just paid → +2 Might this turn. */
+  | { type: 'combatDraven'; sourceIid: string; bfIndex: number }
+  /** Sinister Poro, pick stage: chosenIid (selectTarget) = the enemy to send to
+   *  base; chains the ⚡1 payCost with `combatPoroMove`. */
+  | { type: 'combatPoroPick'; sourceIid: string; bfIndex: number }
+  /** Sinister Poro, paid stage: send `victimIid` to its owner's base. */
+  | { type: 'combatPoroMove'; sourceIid: string; victimIid: string; bfIndex: number }
+  /** Ava Achiever, pick stage: chosenIid (selectGear list) = the [Hidden] hand
+   *  card to play free; chains the mind payCost with `combatAvaPlay`. */
+  | { type: 'combatAvaPick'; sourceIid: string; bfIndex: number }
+  /** Ava Achiever, paid stage: play `cardIid` from hand ignoring its cost
+   *  (units enter at Ava's battlefield). */
+  | { type: 'combatAvaPlay'; sourceIid: string; cardIid: string; bfIndex: number }
+  /** Atakhan: `defender` must kill one of their units here — chosenIid
+   *  (selectTarget, mandatory) is the unit they picked. */
+  | { type: 'combatAtakhanKill'; sourceIid: string; defender: PlayerId; bfIndex: number }
 
 /** A queued player decision (optional cost to pay, or a target to pick) recorded
  *  during synchronous effect resolution and surfaced one at a time AFTER the action

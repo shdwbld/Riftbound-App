@@ -1553,12 +1553,8 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
     }
     if ((ability.event === 'attack' || ability.event === 'defend') && sourceIid && srcName === 'Draven - Vanquisher') {
       // "When I attack or defend, you may pay :rb_rune_fury:. If you do, give me +2
-      // Might this turn." Auto-pay 1 Power if affordable (per the auto-resolve preference).
-      if (makeBfApi(s).payPowerAny(player, 1)) {
-        const self = findUnitAnywhere(s, sourceIid)
-        if (self) { self.tempMight = (self.tempMight ?? 0) + 2; emit({ kind: 'buff', iid: self.iid, player }) }
-        s = log(s, player, `${label}: ${srcName} paid 1 Power for +2 Might this turn.`)
-      }
+      // Might this turn." Asked & applied pre-math via queueNextCombatDecision
+      // (Phase D) — nothing to do at fire time.
       handled = true
     }
     if (ability.event === 'attack' && srcName === 'Azir - Sovereign' && sourceIid) {
@@ -1793,74 +1789,22 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       handled = true
     }
     // Sinister Poro: "When I attack, you may pay 1 to move an enemy unit here to its
-    // base." Auto-paid + auto-targets the weakest enemy at Poro's battlefield. Fires in
-    // the attack step (before damage), so the removed defender drops out of combat.
+    // base." Asked pre-math via queueNextCombatDecision (Phase D — pick the enemy,
+    // then pay ⚡1), so the removed defender drops out of combat. Nothing here.
     if (ability.event === 'attack' && srcName === 'Sinister Poro' && sourceIid) {
-      const bi = battlefieldOf(s, sourceIid)
-      if (bi >= 0) {
-        const enemies = s.battlefields[bi].units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit')
-        if (enemies.length && makeBfApi(s).payEnergy(player, 1)) {
-          const victim = enemies.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
-          if (sendUnitToBase(s, victim.iid))
-            s = log(s, player, `${label}: Sinister Poro paid 1 to send ${getCard(victim.cardId)?.name} to its base.`)
-        }
-      }
       handled = true
     }
     // Atakhan: "When I attack, the defender must kill one of their units here." Each
-    // opposing player with units at Atakhan's battlefield culls their weakest one there
-    // (auto-resolve; the forced choice is the defender's, lowest-Might per the policy).
+    // opposing player with units at Atakhan's battlefield picks WHICH pre-math via
+    // queueNextCombatDecision (Phase D, mandatory selectTarget). Nothing here.
     if (ability.event === 'attack' && srcName === 'Atakhan' && sourceIid) {
-      const bi = battlefieldOf(s, sourceIid)
-      if (bi >= 0) {
-        const dead: EngineCard[] = []
-        const defenders = new Set(s.battlefields[bi].units.filter((u) => isEnemyTo(s, player, u) && getCard(u.cardId)?.type === 'unit').map((u) => controllerOf(u)))
-        for (const owner of defenders) {
-          const theirs = s.battlefields[bi].units.filter((u) => controllerOf(u) === owner && getCard(u.cardId)?.type === 'unit')
-          if (!theirs.length) continue
-          const victim = theirs.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
-          s = log(s, player, `${label}: Atakhan forces ${s.players[owner].name} to kill ${getCard(victim.cardId)?.name ?? 'a unit'}.`)
-          dead.push(...killTarget(s, victim.iid))
-        }
-        if (dead.length) s = fireDeaths(s, dead, player)
-      }
       handled = true
     }
     // Ava Achiever: "When I attack, you may pay :rb_rune_mind: to play a card with
-    // [Hidden] from your hand, ignoring its cost. If it's a unit, play it here." Auto-pays
-    // 1 Mind Power when available and a [Hidden] card is in hand; auto-picks the strongest
-    // [Hidden] unit (else the first [Hidden] card). Plays from hand directly (not hidden).
+    // [Hidden] from your hand, ignoring its cost. If it's a unit, play it here."
+    // Asked pre-math via queueNextCombatDecision (Phase D — pick the card from a
+    // list, then pay 1 mind; avaPlayHidden plays it). Nothing here.
     if (ability.event === 'attack' && srcName === 'Ava Achiever' && sourceIid) {
-      const bi = battlefieldOf(s, sourceIid)
-      const hidden = p.zones.hand.filter((c) => parseKeywords(getCard(c.cardId)).hidden)
-      const mindRune = p.zones.runePool.find((r) => !r.exhausted && (def(r) as { produces?: string[] } | undefined)?.produces?.includes('mind'))
-      if (bi >= 0 && hidden.length && mindRune) {
-        const ri = p.zones.runePool.findIndex((r) => r.iid === mindRune.iid)
-        const [recycled] = p.zones.runePool.splice(ri, 1)
-        p.zones.runeDeck.push({ ...recycled, exhausted: false, damage: 0 })
-        const units = hidden.filter((c) => getCard(c.cardId)?.type === 'unit')
-        const pick = units.length ? units.reduce((hi, c) => (mightOf(c) >= mightOf(hi) ? c : hi)) : hidden[0]
-        const pickDef = getCard(pick.cardId)
-        removeFromZone(p, 'hand', pick.iid)
-        const newCi: EngineCard = { ...pick, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn }
-        emit({ kind: 'play', iid: newCi.iid, player, cardId: newCi.cardId })
-        if (pickDef?.type === 'unit') {
-          s.battlefields[bi].units.push(newCi)
-          recomputeControllers(s)
-          s = log(s, player, `${label}: Ava played ${pickDef.name} from hand (free, here).`)
-          for (const line of applyParsed(s, p, onPlayEffect(pickDef), bi, newCi.iid)) s = log(s, player, line)
-          s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
-        } else if (pickDef?.type === 'gear') {
-          p.zones.base.push({ ...newCi, exhausted: false })
-          s = log(s, player, `${label}: Ava played ${pickDef.name} from hand (free).`)
-          s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
-        } else if (pickDef) {
-          s = log(s, player, `${label}: Ava played ${pickDef.name} from hand (free).`)
-          s = resolveSpellEffects(s, player, pickDef, [])
-          s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
-          sendToTrash(p, newCi)
-        }
-      }
       handled = true
     }
     // Yuumi - Magical Cat: "When I attack or defend, give one of your other units here
@@ -2400,7 +2344,124 @@ function applyDeferredOp(s: MatchState, player: PlayerId, op: DeferredOp, chosen
     }
     case 'rumbleConquerPlay':
       return rumblePlayMech(s, player, op.mechIid, op.spareIid)
+    case 'combatDraven': {
+      const self = findUnitAnywhere(s, op.sourceIid)
+      if (self) {
+        self.tempMight = (self.tempMight ?? 0) + 2
+        emit({ kind: 'buff', iid: self.iid, player })
+        s = log(s, player, `Draven - Vanquisher: +2 Might this turn.`)
+      }
+      return combatOpDone(s, op.sourceIid, op.bfIndex)
+    }
+    case 'combatPoroPick': {
+      if (!chosenIid) return combatOpDone(s, op.sourceIid, op.bfIndex)
+      const victim = findUnitAnywhere(s, chosenIid)
+      return queuePayCost(s, player, {
+        prompt: `Sinister Poro — pay ${costGlyphLabel({ energy: 1, power: {} })} to send ${getCard(victim?.cardId ?? '')?.name ?? 'the enemy'} to its base.`,
+        srcName: 'Sinister Poro',
+        resolvedCost: { energy: 1, power: {} },
+        op: { type: 'combatPoroMove', sourceIid: op.sourceIid, victimIid: chosenIid, bfIndex: op.bfIndex },
+      })
+    }
+    case 'combatPoroMove': {
+      const nm = getCard(findUnitAnywhere(s, op.victimIid)?.cardId ?? '')?.name ?? 'an enemy unit'
+      if (sendUnitToBase(s, op.victimIid)) {
+        s = blastConeOnEnemyMove(s, player, op.victimIid) // "when you move an enemy unit" triggers
+        s = log(s, player, `Sinister Poro: sent ${nm} to its base.`)
+      }
+      return combatOpDone(s, op.sourceIid, op.bfIndex)
+    }
+    case 'combatAvaPick': {
+      if (!chosenIid) return combatOpDone(s, op.sourceIid, op.bfIndex)
+      const pick = s.players[player].zones.hand.find((c) => c.iid === chosenIid)
+      return queuePayCost(s, player, {
+        prompt: `Ava Achiever — pay ${costGlyphLabel({ energy: 0, power: { mind: 1 } })} to play ${getCard(pick?.cardId ?? '')?.name ?? 'the card'} from hand (ignoring its cost).`,
+        srcName: 'Ava Achiever',
+        resolvedCost: { energy: 0, power: { mind: 1 } },
+        op: { type: 'combatAvaPlay', sourceIid: op.sourceIid, cardIid: chosenIid, bfIndex: op.bfIndex },
+      })
+    }
+    case 'combatAvaPlay':
+      s = avaPlayHidden(s, player, op.cardIid, op.bfIndex)
+      return combatOpDone(s, op.sourceIid, op.bfIndex)
+    case 'combatAtakhanKill': {
+      const key = `${op.sourceIid}:${op.defender}`
+      if (chosenIid) {
+        const atk = findUnitAnywhere(s, op.sourceIid)
+        const killer = atk ? controllerOf(atk) : player
+        const nm = getCard(findUnitAnywhere(s, chosenIid)?.cardId ?? '')?.name ?? 'a unit'
+        s = log(s, killer, `Atakhan forces ${s.players[op.defender].name} to kill ${nm}.`)
+        s = fireDeaths(s, killTarget(s, chosenIid), killer)
+      }
+      return combatOpDone(s, key, op.bfIndex)
+    }
   }
+}
+
+/** Phase D: the showdown.combatDone key of a pre-math combat op (null for every
+ *  other DeferredOp). Pick-stage ops share their paid-stage key — the trigger only
+ *  counts as decided when the chain finishes (accept or decline). */
+function combatOpKey(op: DeferredOp): string | null {
+  switch (op.type) {
+    case 'combatDraven':
+    case 'combatPoroPick':
+    case 'combatPoroMove':
+    case 'combatAvaPick':
+    case 'combatAvaPlay':
+      return op.sourceIid
+    case 'combatAtakhanKill':
+      return `${op.sourceIid}:${op.defender}`
+    default:
+      return null
+  }
+}
+
+/** Phase D: mark a pre-math combat decision resolved and resume the paused
+ *  showdown (resolveShowdown re-enters and queues the next decision, if any). */
+function combatOpDone(s: MatchState, key: string, bfIndex: number): MatchState {
+  if (s.showdown) s.showdown.combatDone = [...(s.showdown.combatDone ?? []), key]
+  if (s.phase === 'showdown' && s.showdown?.battlefield === bfIndex) return resolveShowdown(s, bfIndex)
+  return s
+}
+
+/** Phase D: a DECLINED decision whose op is a combat op still counts as decided —
+ *  mark it done and resume the showdown (else resolveShowdown re-queues it). */
+function combatOpDeclined(s: MatchState, op: DeferredOp | undefined): MatchState {
+  if (!op) return s
+  const key = combatOpKey(op)
+  if (key === null) return s
+  return combatOpDone(s, key, (op as { bfIndex: number }).bfIndex) // every combat op carries bfIndex
+}
+
+/** Ava Achiever, paid stage: play the chosen [Hidden] card from hand ignoring its
+ *  cost — units enter (exhausted) at Ava's battlefield, gear goes to base, spells
+ *  resolve and trash. (Extracted from the old auto-resolve fire-time handler.) */
+function avaPlayHidden(s: MatchState, player: PlayerId, cardIid: string, bfIndex: number): MatchState {
+  const p = s.players[player]
+  const pick = p.zones.hand.find((c) => c.iid === cardIid)
+  const pickDef = pick ? getCard(pick.cardId) : undefined
+  if (!pick || !pickDef) return s
+  removeFromZone(p, 'hand', pick.iid)
+  const newCi: EngineCard = { ...pick, exhausted: true, damage: 0, attached: [], enteredTurn: s.turn }
+  emit({ kind: 'play', iid: newCi.iid, player, cardId: newCi.cardId })
+  if (pickDef.type === 'unit') {
+    if (bfIndex >= 0) s.battlefields[bfIndex].units.push(newCi)
+    else p.zones.base.push(newCi)
+    recomputeControllers(s)
+    s = log(s, player, `Ava Achiever: played ${pickDef.name} from hand (free, here).`)
+    for (const line of applyParsed(s, p, onPlayEffect(pickDef), bfIndex >= 0 ? bfIndex : undefined, newCi.iid)) s = log(s, player, line)
+    s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
+  } else if (pickDef.type === 'gear') {
+    p.zones.base.push({ ...newCi, exhausted: false })
+    s = log(s, player, `Ava Achiever: played ${pickDef.name} from hand (free).`)
+    s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
+  } else {
+    s = log(s, player, `Ava Achiever: played ${pickDef.name} from hand (free).`)
+    s = resolveSpellEffects(s, player, pickDef, [])
+    s = firePlayTriggers(s, player, newCi.iid, pickDef, 0, false)
+    sendToTrash(p, newCi)
+  }
+  return s
 }
 
 /** Rumble - Hotheaded, final stage (cost settled): recycle the spare to the
@@ -5820,8 +5881,107 @@ function nextSplitTrigger(s: MatchState, bfIndex: number): { sourceIid: string; 
   return null
 }
 
+/** Phase D: queue the next pre-math combat-time decision this showdown — pay-gated
+ *  attack/defend triggers (Draven - Vanquisher fury → +2 Might, Sinister Poro ⚡1 →
+ *  send an enemy to base, Ava Achiever mind → play a [Hidden] card free) and
+ *  Atakhan's defender-must-kill — through pendingDecisions (PaymentModal / board
+ *  picks / list modal). Effects apply in the DeferredOp BEFORE the combat math;
+ *  each resolution (or decline) marks showdown.combatDone and re-enters
+ *  resolveShowdown. Returns true while a decision is pending (showdown paused).
+ *  Unaffordable / no-valid-effect triggers are marked done silently, matching the
+ *  old auto-resolve's silent skip. */
+function queueNextCombatDecision(s: MatchState, bfIndex: number): boolean {
+  // Already paused on one of ours (a PASS re-entry must not double-queue)?
+  const pendingOps: (DeferredOp | undefined)[] = (s.pendingDecisions ?? []).map((d) => d.op)
+  try { pendingOps.push((JSON.parse(s.pendingChoice?.payload ?? 'null') as { op?: DeferredOp } | null)?.op) } catch { /* not a decision payload */ }
+  if (pendingOps.some((op) => op && combatOpKey(op) !== null)) return true
+  const done = new Set(s.showdown?.combatDone ?? [])
+  const mark = (key: string) => { s.showdown!.combatDone = [...(s.showdown!.combatDone ?? []), key]; done.add(key) }
+  const pause = (player: PlayerId) => { s.showdown!.priority = player }
+  for (const f of collectCombatFired(s, bfIndex)) {
+    if (!f.sourceIid) continue
+    const srcName = (getCard(f.sourceCardId ?? '')?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '')
+    const p = s.players[f.player]
+    // Draven - Vanquisher: "When I attack or defend, you may pay :rb_rune_fury:.
+    // If you do, give me +2 Might this turn."
+    if (srcName === 'Draven - Vanquisher' && (f.ability.event === 'attack' || f.ability.event === 'defend') && !done.has(f.sourceIid)) {
+      const rc = { energy: 0, power: { fury: 1 } }
+      if (!autoPay(p, rc)) { mark(f.sourceIid); continue }
+      queueOptionalPay(s, f.player, {
+        prompt: `Draven - Vanquisher — pay ${costGlyphLabel(rc)} for +2 Might this turn?`,
+        srcName: 'Draven - Vanquisher',
+        cost: {},
+        resolvedCost: rc,
+        op: { type: 'combatDraven', sourceIid: f.sourceIid, bfIndex },
+      })
+      pause(f.player)
+      return true
+    }
+    // Sinister Poro: "When I attack, you may pay :rb_energy_1: to move an enemy
+    // unit here to its base." Pick the enemy first (declining costs nothing),
+    // then pay — the Rumble pick-then-pay pattern.
+    if (srcName === 'Sinister Poro' && f.ability.event === 'attack' && !done.has(f.sourceIid)) {
+      const enemies = s.battlefields[bfIndex].units.filter((u) => isEnemyTo(s, f.player, u) && getCard(u.cardId)?.type === 'unit')
+      if (!enemies.length || !autoPay(p, { energy: 1, power: {} })) { mark(f.sourceIid); continue }
+      queueSelectTarget(s, f.player, {
+        prompt: `Sinister Poro — pay ${costGlyphLabel({ energy: 1, power: {} })} to send an enemy unit here to its base? Pick the enemy (or decline).`,
+        srcName: 'Sinister Poro',
+        options: enemies.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+        op: { type: 'combatPoroPick', sourceIid: f.sourceIid, bfIndex },
+        optional: true,
+      })
+      pause(f.player)
+      return true
+    }
+    // Ava Achiever: "When I attack, you may pay :rb_rune_mind: to play a card with
+    // [Hidden] from your hand, ignoring its cost. If it's a unit, play it here."
+    // Pick the card first (list modal), then pay.
+    if (srcName === 'Ava Achiever' && f.ability.event === 'attack' && !done.has(f.sourceIid)) {
+      const hidden = p.zones.hand.filter((c) => parseKeywords(getCard(c.cardId)).hidden)
+      if (!hidden.length || !autoPay(p, { energy: 0, power: { mind: 1 } })) { mark(f.sourceIid); continue }
+      queueSelectGear(s, f.player, {
+        prompt: `Ava Achiever — pay ${costGlyphLabel({ energy: 0, power: { mind: 1 } })} to play a [Hidden] card from your hand, ignoring its cost? Pick the card (or decline).`,
+        srcName: 'Ava Achiever',
+        options: hidden.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
+        op: { type: 'combatAvaPick', sourceIid: f.sourceIid, bfIndex },
+        optional: true,
+      })
+      pause(f.player)
+      return true
+    }
+    // Atakhan: "When I attack, the defender must kill one of their units here."
+    // Each opposing player with units here picks WHICH (mandatory — a decline
+    // falls back to their weakest, the old auto-pick).
+    if (srcName === 'Atakhan' && f.ability.event === 'attack') {
+      const defenders = new Set(s.battlefields[bfIndex].units.filter((u) => isEnemyTo(s, f.player, u) && getCard(u.cardId)?.type === 'unit').map((u) => controllerOf(u)))
+      for (const owner of defenders) {
+        const key = `${f.sourceIid}:${owner}`
+        if (done.has(key)) continue
+        const theirs = s.battlefields[bfIndex].units.filter((u) => controllerOf(u) === owner && getCard(u.cardId)?.type === 'unit')
+        if (!theirs.length) { mark(key); continue }
+        const weakest = theirs.reduce((lo, u) => (mightOf(u) < mightOf(lo) ? u : lo))
+        queueSelectTarget(s, owner, {
+          prompt: `Atakhan — you must kill one of your units here. Pick which.`,
+          srcName: 'Atakhan',
+          options: theirs.map((u) => ({ iid: u.iid, label: getCard(u.cardId)?.name ?? 'a unit' })),
+          op: { type: 'combatAtakhanKill', sourceIid: f.sourceIid, defender: owner, bfIndex },
+          optional: false,
+          defaultIid: weakest.iid,
+        })
+        pause(owner)
+        return true
+      }
+    }
+  }
+  return false
+}
+
 function resolveShowdown(state: MatchState, bfIndex: number): MatchState {
   let s = clone(state)
+  // Phase D: pay-gated combat triggers & Atakhan's forced kill — player decisions
+  // queued BEFORE the combat math, and before the split/target-pick pauses (these
+  // can remove units, so later picks should see the post-removal board).
+  if (queueNextCombatDecision(s, bfIndex)) return s // paused — wait for RESOLVE_CHOICE
   // FREE split-damage attack triggers (Volibear - Furious) resolve first — one manual
   // prompt each, BEFORE the combat math, placed by the dealer with no lethal-first rule.
   const split = nextSplitTrigger(s, bfIndex)
@@ -8146,7 +8306,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       if (pc.kind === 'optionalPay' || pc.kind === 'payCost') {
         let parsed: { cost?: { energy?: number; powerAny?: number }; resolvedCost?: ResolvedCost & { powerAny?: number }; op: DeferredOp }
         try { parsed = JSON.parse(pc.payload ?? '{}') } catch { return ok(s) }
-        if (action.iid === null) return ok(log(s, action.player, `${pc.srcName}: ${pc.kind === 'payCost' ? "couldn't pay — skipped." : 'declined.'}`))
+        if (action.iid === null) {
+          s = log(s, action.player, `${pc.srcName}: ${pc.kind === 'payCost' ? "couldn't pay — skipped." : 'declined.'}`)
+          return ok(combatOpDeclined(s, parsed.op)) // Phase D: a declined combat op still resumes the showdown
+        }
         const legacy = parsed.cost ?? {}
         const rc: ResolvedCost & { powerAny?: number } = parsed.resolvedCost ?? { energy: legacy.energy ?? 0, power: {}, powerAny: legacy.powerAny }
         const pl = s.players[action.player]
@@ -8175,7 +8338,10 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         try { parsed = JSON.parse(pc.payload ?? '{}') } catch { return ok(s) }
         let pick = action.iid
         if (pick === null) {
-          if (parsed.optional !== false) return ok(log(s, action.player, `${pc.srcName}: declined.`))
+          if (parsed.optional !== false) {
+            s = log(s, action.player, `${pc.srcName}: declined.`)
+            return ok(combatOpDeclined(s, parsed.op)) // Phase D: a declined combat op still resumes the showdown
+          }
           pick = parsed.defaultIid ?? pc.options[0]?.iid ?? null // mandatory → auto-pick
         }
         if (!pick) return ok(s)
