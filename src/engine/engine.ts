@@ -1006,17 +1006,24 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     // on resolve. With ≤1 card to look at (or a choice already pending) auto-take it.
     const deck = p.zones.mainDeck
     const n = Math.min(e.peekToHand.n, deck.length)
-    if (n <= 1 || s.pendingChoice) {
+    if (n <= 1) {
       const drawn = n >= 1 ? deck.shift() : undefined
       if (drawn) { p.zones.hand.push(drawn); lines.push('Looked at the top card and put it in hand.') }
     } else {
       const cand = deck.slice(0, n)
-      offerChoice(s, {
+      const choice: NonNullable<MatchState['pendingChoice']> = {
         player: p.id, kind: 'peekToHand', bfIndex: -1,
         prompt: `Look at the top ${n} cards — put 1 into your hand, recycle the rest.`,
         options: cand.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
         payload: JSON.stringify({ candIids: cand.map((c) => c.iid) }),
-      })
+      }
+      // When a choice is already open, DEFER through pendingDecisions instead of
+      // silently auto-taking the top card (the old `|| s.pendingChoice` shortcut).
+      if (s.pendingChoice) {
+        s.pendingDecisions = [...(s.pendingDecisions ?? []), { player: p.id, kind: 'choice', prompt: choice.prompt, srcName: 'Look at the top cards', raw: choice }]
+      } else {
+        offerChoice(s, choice)
+      }
       lines.push(`Looking at the top ${n} cards — choose one to keep.`)
     }
   }
@@ -1996,8 +2003,11 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
   // RESOLVE_CHOICE pays `resolvedCost` (rune picker), so the op's cost is zeroed —
   // playFromTrashPayingCost only handles the trash→base move.
   if (caster != null && defeated.some((u) => u.killedBySpell)) {
-    const phoenix = s.players[caster].zones.trash.find((c) => c.cardId === 'ogn-037-298')
-    if (phoenix && autoPay(s.players[caster], { energy: 1, power: { fury: 1 } })) {
+    // Each copy in the trash is its own "when you kill a unit with a spell" trigger —
+    // offer a separate pay/decline for every Immortal Phoenix (was `.find()` = one only).
+    const phoenixes = s.players[caster].zones.trash.filter((c) => c.cardId === 'ogn-037-298')
+    for (const phoenix of phoenixes) {
+      if (!autoPay(s.players[caster], { energy: 1, power: { fury: 1 } })) continue
       s = queueOptionalPay(s, caster, {
         prompt: 'Immortal Phoenix — pay ⚡1 + 🔥 to play it from your trash?',
         srcName: 'Immortal Phoenix',
@@ -2236,9 +2246,12 @@ function surfaceNextDecision(s: MatchState): MatchState {
   s.pendingDecisions = s.pendingDecisions.slice(1)
   if (!s.pendingDecisions.length) s.pendingDecisions = undefined
   if (!head) return s
+  // A deferred bespoke choice carries its full pendingChoice spec — promote it verbatim.
+  if (head.raw) { s.pendingChoice = head.raw; return s }
   s.pendingChoice = {
     player: head.player,
-    kind: head.kind,
+    kind: head.kind as 'optionalPay' | 'payCost' | 'selectTarget' | 'selectGear', // 'choice' returned above via raw
+
     bfIndex: -1,
     prompt: head.prompt,
     srcName: head.srcName,
@@ -4470,6 +4483,7 @@ function moveUnits(
     }
   }
   recomputeControllers(s)
+  cleanupUnsupportedHidden(s) // moving away can drop control of a vacated battlefield (rule 322.7)
   const bf = s.battlefields[toBattlefield]
   const bfName = getCard(bf.cardId)?.name ?? 'battlefield'
   let s2 = log(s, player, `Moved ${moved.length} unit(s) to ${bfName}.`)
@@ -5161,7 +5175,24 @@ function mightOf(ci: EngineCard, role: CombatRole = null, xp = 0): number {
 /** Combat damage a unit DEALS — its full stat Might (marked damage never lowers it),
  *  0 if Stunned (it still keeps Might to survive). */
 function damageOutput(ci: EngineCard, role: CombatRole, xp = 0): number {
-  return ci.stunned ? 0 : statMight(ci, role, xp)
+  if (ci.stunned) return 0
+  // Ezreal - Dashing / Galio - Indefatigable: "I don't deal combat damage."
+  if (/\bI don't deal combat damage\b/i.test(getCard(ci.cardId)?.text ?? '')) return 0
+  return statMight(ci, role, xp)
+}
+
+/** Whether a unit's combat damage is fully suppressed this combat. Two sources:
+ *  its own "I don't deal combat damage" (Ezreal - Dashing, Galio - Indefatigable),
+ *  or an enemy at the same battlefield reading "Enemy units here with less Might
+ *  than me don't deal combat damage" (Vilemaw) that out-Mights it. `myMight` /
+ *  `enemyMightOf` are the caller's role-aware combat-Might fns. */
+function combatDamageSuppressed(
+  u: EngineCard, myMight: number, enemies: EngineCard[], enemyMightOf: (v: EngineCard) => number,
+): boolean {
+  if (/\bI don't deal combat damage\b/i.test(getCard(u.cardId)?.text ?? '')) return true
+  return enemies.some((v) =>
+    /less Might than me don't deal combat damage/i.test(getCard(v.cardId)?.text ?? '') &&
+    enemyMightOf(v) > myMight)
 }
 
 /** Mighty: a unit with effective Might >= 5. (xp-agnostic quick check; the
@@ -5782,8 +5813,15 @@ function showdownSteps(s: MatchState, bfIndex: number): { moverOwner: PlayerId; 
   const defenders = bf.units.filter((u) => controllerOf(u) !== moverOwner)
   const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
   const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
-  const dealt = (u: EngineCard, role: CombatRole) =>
-    u.stunned ? 0 : Math.max(0, statMight(u, role, xpOf(u)) + bonusOf(u, role))
+  const dealt = (u: EngineCard, role: CombatRole) => {
+    if (u.stunned) return 0
+    const my = Math.max(0, statMight(u, role, xpOf(u)) + bonusOf(u, role))
+    const eRole: CombatRole = role === 'attacker' ? 'defender' : 'attacker'
+    const enemies = role === 'attacker' ? defenders : attackers
+    // Ezreal/Galio "I don't deal combat damage" + Vilemaw's "enemy here with less Might".
+    if (combatDamageSuppressed(u, my, enemies, (v) => Math.max(0, statMight(v, eRole, xpOf(v)) + bonusOf(v, eRole)))) return 0
+    return my
+  }
   const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
   const defendMight = defenders.reduce((a, u) => a + dealt(u, 'defender'), 0)
   // Mover's damage hits the defenders; the defending side's damage hits attackers.
@@ -6078,8 +6116,15 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   const defenders = bf.units.filter((u) => controllerOf(u) !== moverOwner)
   const bfBonus = bfCombatBonus(s, bfIndex, attackers.length === 1, defenders.length === 1)
   const bonusOf = (u: EngineCard, role: CombatRole) => bfBonus(u, role) + auraMightBonus(s, u)
-  const dealt = (u: EngineCard, role: CombatRole) =>
-    u.stunned ? 0 : Math.max(0, statMight(u, role, xpOf(u)) + bonusOf(u, role))
+  const dealt = (u: EngineCard, role: CombatRole) => {
+    if (u.stunned) return 0
+    const my = Math.max(0, statMight(u, role, xpOf(u)) + bonusOf(u, role))
+    const eRole: CombatRole = role === 'attacker' ? 'defender' : 'attacker'
+    const enemies = role === 'attacker' ? defenders : attackers
+    // Ezreal/Galio "I don't deal combat damage" + Vilemaw's "enemy here with less Might".
+    if (combatDamageSuppressed(u, my, enemies, (v) => Math.max(0, statMight(v, eRole, xpOf(v)) + bonusOf(v, eRole)))) return 0
+    return my
+  }
   const attackMight = attackers.reduce((a, u) => a + dealt(u, 'attacker'), 0)
   const defendMight = defenders.reduce((a, u) => a + dealt(u, 'defender'), 0)
 
@@ -6768,11 +6813,12 @@ function killTarget(s: MatchState, iid: string, spellKill = false): EngineCard[]
     if (idx >= 0) {
       const [u] = bf.units.splice(idx, 1)
       u.diedAtBf = bi // for location-scoped death triggers (Kog'Maw)
-      if (tryRecallInsteadOfDeath(s, u, bi)) { recallToBase(s, u); recomputeControllers(s); return [] }
-      if (trashOrBanish(s, u)) { recomputeControllers(s); return [] }
+      if (tryRecallInsteadOfDeath(s, u, bi)) { recallToBase(s, u); recomputeControllers(s); cleanupUnsupportedHidden(s); return [] }
+      if (trashOrBanish(s, u)) { recomputeControllers(s); cleanupUnsupportedHidden(s); return [] }
       if (spellKill) u.killedBySpell = true
       emit({ kind: 'defeat', iid, cardId: u.cardId })
       recomputeControllers(s)
+      cleanupUnsupportedHidden(s) // a mid-turn kill that flips control strands the loser's Hidden card (rule 322.7)
       return [u]
     }
   }
@@ -6807,6 +6853,7 @@ function applyTempMight(s: MatchState, iid: string, delta: number, floor = 0): E
         sendToTrash(s.players[u.owner], u)
         emit({ kind: 'defeat', iid, cardId: u.cardId })
         recomputeControllers(s)
+        cleanupUnsupportedHidden(s) // Might-drop death can flip control mid-turn (rule 322.7)
         return [u]
       }
     }

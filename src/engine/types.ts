@@ -426,7 +426,7 @@ export type DeferredOp =
  *  completes (via surfaceNextDecision in reduce). Avoids pausing mid-trigger-loop. */
 export interface PendingDecision {
   player: PlayerId
-  kind: 'optionalPay' | 'payCost' | 'selectTarget' | 'selectGear'
+  kind: 'optionalPay' | 'payCost' | 'selectTarget' | 'selectGear' | 'choice'
   prompt: string
   srcName: string
   /** optionalPay: the cost paid if the player accepts. */
@@ -443,7 +443,11 @@ export interface PendingDecision {
   /** selectTarget: the iid auto-picked when a mandatory pick is declined. */
   defaultIid?: string
   /** The effect applied once accepted (optionalPay) or a unit is picked (selectTarget). */
-  op: DeferredOp
+  op?: DeferredOp
+  /** kind: 'choice' — a pre-built pendingChoice spec promoted verbatim. Used to
+   *  DEFER a bespoke interactive choice (e.g. peekToHand) behind an already-open
+   *  pendingChoice instead of silently auto-resolving it. */
+  raw?: NonNullable<MatchState['pendingChoice']>
 }
 
 /** An item on the Chain (a played spell, a Counter, or a triggered ability).
