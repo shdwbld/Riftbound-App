@@ -1086,3 +1086,372 @@ body {
     display: none;
   }
 }
+
+/* ---- Home (landing) — League-client "Play" screen ------------------------
+   Scoped entirely to `.home-*`; the display font (Cinzel) is loaded via a
+   <link> in index.html and applied only here, so nothing else regresses. */
+.home-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  min-height: clamp(340px, 48vh, 460px);
+  border-radius: 20px;
+  border: 1px solid rgba(200, 155, 60, 0.18);
+  background: var(--bg-base);
+  box-shadow: 0 30px 70px -42px #000, inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.home-hero-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: url(/img/champions/darius/original.jpg);
+  background-size: cover;
+  background-position: center 20%;
+  transform: scale(1.05);
+  animation: heroDrift 26s ease-in-out infinite alternate;
+}
+.home-hero-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(90deg, var(--bg) 3%, rgba(1, 10, 19, 0.78) 42%, rgba(1, 10, 19, 0.12) 100%),
+    linear-gradient(0deg, rgba(1, 10, 19, 0.82) 0%, transparent 44%);
+}
+.home-hero-content {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 640px;
+  padding: clamp(20px, 4vw, 46px);
+}
+.home-eyebrow {
+  font-family: 'Cinzel', Georgia, serif;
+  text-transform: uppercase;
+  letter-spacing: 0.26em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold-hi);
+  opacity: 0.92;
+}
+.home-title {
+  margin-top: 10px;
+  font-family: 'Cinzel', Georgia, serif;
+  line-height: 0.98;
+  text-transform: uppercase;
+}
+.home-title-sub {
+  display: block;
+  font-size: clamp(15px, 2.4vw, 22px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--gold-bright);
+  opacity: 0.8;
+}
+.home-title-main {
+  /* inline-block + padding so background-clip:text doesn't crop the last glyph's
+     (the "D") right-side bearing, and the drop-shadow has room to render. */
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 2px;
+  padding-right: 0.16em;
+  padding-bottom: 0.1em;
+  font-size: clamp(42px, 8.4vw, 84px);
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  background: linear-gradient(180deg, var(--gold-bright) 10%, var(--gold-hi) 52%, var(--gold) 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.55));
+}
+.home-blurb {
+  margin-top: 14px;
+  max-width: 40ch;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-body);
+}
+.home-cta {
+  margin-top: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 12px;
+}
+.home-btn {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  border-radius: 10px;
+  padding: 11px 20px;
+  font-size: 14px;
+  font-weight: 700;
+  transition: transform 0.14s ease, box-shadow 0.18s ease, filter 0.18s ease,
+    background 0.18s ease, border-color 0.18s ease;
+}
+.home-btn:hover {
+  transform: translateY(-2px);
+}
+.home-btn:active {
+  transform: translateY(0);
+}
+.home-btn-primary {
+  color: #00231f;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-mid) 100%);
+  box-shadow: 0 10px 26px -12px rgba(10, 200, 185, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.home-btn-primary:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 14px 34px -10px rgba(10, 200, 185, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+.home-btn-primary::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(110deg, transparent 28%, rgba(255, 255, 255, 0.5) 50%, transparent 72%);
+  background-size: 250% 100%;
+  background-position: -150% 0;
+}
+.home-btn-primary:hover::before {
+  opacity: 1;
+  animation: homeSheen 0.7s ease-out;
+}
+.home-btn-title {
+  font-size: 14px;
+  font-weight: 800;
+}
+.home-btn-sub {
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+.home-btn-gold {
+  color: var(--gold-bright);
+  border: 1px solid rgba(200, 155, 60, 0.55);
+  background: rgba(200, 155, 60, 0.07);
+}
+.home-btn-gold:hover {
+  border-color: var(--gold-hi);
+  background: rgba(200, 155, 60, 0.16);
+  box-shadow: 0 10px 26px -14px rgba(200, 155, 60, 0.8);
+}
+.home-btn-ghost {
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+}
+.home-btn-ghost:hover {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.08);
+}
+.home-stats {
+  margin-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.home-pill {
+  min-width: 84px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 20, 40, 0.55);
+  backdrop-filter: blur(4px);
+  text-align: center;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+.home-pill:hover {
+  transform: translateY(-2px);
+  border-color: rgba(200, 155, 60, 0.5);
+  box-shadow: 0 0 18px -6px rgba(200, 155, 60, 0.55);
+}
+.home-pill-value {
+  display: block;
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--gold-bright);
+}
+.home-pill-label {
+  display: block;
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.home-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+}
+.home-section-label {
+  font-family: 'Cinzel', Georgia, serif;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-gold);
+}
+.home-section-hint {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.home-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .home-tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 520px) {
+  .home-tiles {
+    grid-template-columns: 1fr;
+  }
+}
+.home-tile {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  aspect-ratio: 3 / 4;
+  min-height: 188px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  /* Entrance moves via the `translate` property so the :hover `transform`
+     (lift) is never pinned by this filling animation. */
+  animation: homeRise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: transform 0.16s ease, border-color 0.18s ease, box-shadow 0.2s ease;
+}
+.home-tile-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center 16%;
+  transform: scale(1.02);
+  filter: saturate(0.92) brightness(0.8);
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease;
+}
+.home-tile-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(0deg, rgba(1, 10, 19, 0.96) 6%, rgba(1, 10, 19, 0.55) 42%, rgba(1, 10, 19, 0.04) 80%);
+}
+.home-tile-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(115deg, transparent 32%, rgba(200, 170, 110, 0.32) 50%, transparent 68%);
+  background-size: 250% 100%;
+  background-position: -150% 0;
+}
+.home-tile-body {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  padding: 14px;
+  transform: translateY(8px);
+  transition: transform 0.2s ease;
+}
+.home-tile-icon {
+  font-size: 18px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6));
+}
+.home-tile-title {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--gold-bright);
+}
+.home-tile-desc {
+  margin-top: 3px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-body);
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+}
+.home-tile:hover {
+  transform: translateY(-6px);
+  border-color: rgba(200, 155, 60, 0.6);
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9), 0 0 24px -6px rgba(200, 155, 60, 0.45);
+}
+.home-tile:hover .home-tile-splash {
+  transform: scale(1.09);
+  filter: saturate(1.05) brightness(0.94);
+}
+.home-tile:hover .home-tile-body {
+  transform: translateY(0);
+}
+.home-tile:hover .home-tile-desc {
+  max-height: 64px;
+  opacity: 1;
+}
+.home-tile:hover .home-tile-sheen {
+  opacity: 1;
+  animation: homeSheen 0.85s ease-out;
+}
+@keyframes homeSheen {
+  0% {
+    background-position: -150% 0;
+  }
+  100% {
+    background-position: 250% 0;
+  }
+}
+@keyframes homeRise {
+  0% {
+    opacity: 0;
+    translate: 0 16px;
+  }
+  100% {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@keyframes heroDrift {
+  0% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1.12);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-hero-splash,
+  .home-tile,
+  .home-tile-sheen,
+  .home-btn-primary::before {
+    animation: none;
+  }
+  .home-tile {
+    opacity: 1;
+    translate: none;
+  }
+}

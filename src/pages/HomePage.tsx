@@ -1,87 +1,129 @@
+import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
+import { CARDS } from '../data/cards'
 
-const features = [
+/** Landing destinations, each fronted by a champion splash already in the repo
+ *  (public/img/champions/<key>/original.jpg). Splashes are purely cosmetic and
+ *  freely swappable. */
+const destinations = [
   {
     to: '/cards',
     title: 'Card Database',
-    desc: '1,000+ cards with official art — search by domain, cost, and type.',
+    desc: 'Search 1,000+ cards by domain, cost, and type — with official art.',
     icon: '🃏',
-    status: 'Live',
+    splash: '/img/champions/ahri/original.jpg',
   },
   {
     to: '/decks',
     title: 'Deck Builder',
-    desc: 'Build legal decks with a champion legend, runes, and battlefields.',
+    desc: 'Forge legal decks — a champion legend, runes, and battlefields.',
     icon: '🛠️',
-    status: 'Live',
+    splash: '/img/champions/azir/original.jpg',
   },
   {
     to: '/match',
     title: 'Ruled Match',
-    desc: 'Hotseat 2-player with full auto-enforced rules — turns, costs, combat, scoring.',
+    desc: 'Hotseat 2-player with fully auto-enforced rules and scoring.',
     icon: '⚔️',
-    status: 'Live',
+    splash: '/img/champions/darius/original.jpg',
   },
   {
     to: '/online',
     title: 'Play Online',
-    desc: 'Room-code multiplayer. Same-device out of the box; cross-device with Supabase.',
+    desc: 'Room-code multiplayer — same device, or cross-device via Supabase.',
     icon: '🌐',
-    status: 'Live',
+    splash: '/img/champions/ashe/original.jpg',
   },
   {
     to: '/play',
     title: 'Solo Goldfish',
-    desc: 'A free-form manual board to test draws and sequencing — undo included.',
+    desc: 'A free-form board to test draws and sequencing — undo included.',
     icon: '🎴',
-    status: 'Live',
+    splash: '/img/champions/ezreal/original.jpg',
   },
+] as const
+
+const cardCount = CARDS.length
+
+/** Truthful catalog stats (no fake player progression). */
+const stats: { value: string; label: string }[] = [
+  { value: cardCount >= 1000 ? '1000+' : String(cardCount), label: 'Cards' },
+  { value: '6', label: 'Domains' },
+  { value: '5', label: 'Modes' },
+  { value: 'v1.2', label: 'Ruleset' },
 ]
 
 export default function HomePage() {
   return (
-    <div className="space-y-10">
-      <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-sky-950/40 to-amber-950/30 p-8">
-        <h1 className="text-3xl font-bold sm:text-4xl">
-          The open Riftbound simulator
-        </h1>
-        <p className="mt-3 max-w-2xl text-white/60">
-          A fan-made platform to build decks and play Riftbound online — with a
-          full, auto-enforcing rules engine. Currently in active development.
-        </p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Link
-            to="/cards"
-            className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-sky-400"
-          >
-            Browse cards
-          </Link>
-          <Link
-            to="/play"
-            className="rounded-lg border border-white/15 px-4 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/5"
-          >
-            Open the board
-          </Link>
+    <div className="space-y-8">
+      {/* ---- Hero: champion splash + scrim + title + CTAs + stats ---------- */}
+      <section className="home-hero">
+        <div className="home-hero-splash" />
+        <div className="home-hero-scrim" />
+        <div className="home-hero-content">
+          <p className="home-eyebrow">⚔ Unofficial Client · The Climb Begins</p>
+          <h1 className="home-title">
+            <span className="home-title-sub">The open</span>
+            <span className="home-title-main">Riftbound</span>
+          </h1>
+          <p className="home-blurb">
+            A fan-made platform to build decks and play Riftbound online — backed by a
+            full, auto-enforcing rules engine.
+          </p>
+
+          <div className="home-cta">
+            <Link to="/match" className="home-btn home-btn-primary">
+              <span className="home-btn-title">Open the board</span>
+              <span className="home-btn-sub">Ruled 2-player hotseat</span>
+            </Link>
+            <Link to="/cards" className="home-btn home-btn-gold">
+              Browse cards
+            </Link>
+            <Link to="/online" className="home-btn home-btn-ghost">
+              Play online
+            </Link>
+          </div>
+
+          <div className="home-stats">
+            {stats.map((s) => (
+              <div key={s.label} className="home-pill" data-hover-sfx>
+                <span className="home-pill-value">{s.value}</span>
+                <span className="home-pill-label">{s.label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-3">
-        {features.map((f) => (
-          <Link
-            key={f.to}
-            to={f.to}
-            className="group rounded-xl border border-white/10 bg-[#0a1428] p-5 transition hover:border-white/25 hover:bg-[#0a1e33]"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-2xl">{f.icon}</span>
-              <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
-                {f.status}
-              </span>
-            </div>
-            <h3 className="mt-3 font-semibold">{f.title}</h3>
-            <p className="mt-1 text-sm text-white/55">{f.desc}</p>
-          </Link>
-        ))}
+      {/* ---- Choose your path: splash tiles ------------------------------- */}
+      <section className="space-y-3">
+        <div className="home-section-head">
+          <h2 className="home-section-label">Choose your path</h2>
+          <span className="home-section-hint">5 ways to play</span>
+        </div>
+
+        <div className="home-tiles">
+          {destinations.map((d, i) => (
+            <Link
+              key={d.to}
+              to={d.to}
+              className="home-tile"
+              style={{ animationDelay: `${i * 70}ms` } as CSSProperties}
+            >
+              <div
+                className="home-tile-splash"
+                style={{ backgroundImage: `url(${d.splash})` }}
+              />
+              <div className="home-tile-scrim" />
+              <div className="home-tile-sheen" />
+              <div className="home-tile-body">
+                <span className="home-tile-icon">{d.icon}</span>
+                <h3 className="home-tile-title">{d.title}</h3>
+                <p className="home-tile-desc">{d.desc}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
       </section>
     </div>
   )

@@ -45,6 +45,33 @@ export default function Layout() {
     return () => document.removeEventListener('click', onClick)
   }, [])
 
+  // Hover SFX — a subtle tick when the pointer enters an interactive tile, only
+  // on the browsable pages (Home / Cards / Decks). The in-match boards (Match /
+  // Online) are intentionally excluded. Needs a prior click to unlock audio
+  // (autoplay policy), which navigating here always provides.
+  const hoverSfxRoutes =
+    pathname === '/' || pathname.startsWith('/cards') || pathname.startsWith('/decks')
+  useEffect(() => {
+    if (!hoverSfxRoutes) return
+    let last: Element | null = null
+    const onOver = (e: PointerEvent) => {
+      if (!(e.target instanceof Element)) return
+      const el = e.target.closest('a[href], button, [role="button"], [data-hover-sfx]')
+      // Reset when over empty space / non-interactive area so re-entering the
+      // same tile chimes again; skip the header/footer (content area only).
+      if (!el || !el.closest('main') || el.closest('[data-no-sfx], [data-no-hover-sfx]')) {
+        last = null
+        return
+      }
+      if (el === last) return
+      last = el
+      if (!audio.ready) return // don't try to init on hover — it can't unlock
+      void audio.play('uiClick', { volume: 0.16, rate: 1.6 })
+    }
+    document.addEventListener('pointerover', onOver)
+    return () => document.removeEventListener('pointerover', onOver)
+  }, [hoverSfxRoutes])
+
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b border-amber-500/15 bg-[#0a1428]/85 backdrop-blur">
