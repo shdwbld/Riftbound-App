@@ -80,6 +80,9 @@ export interface EngineCard {
   /** Stamped when this unit is killed by a spell during resolution — lets
    *  "when you kill a unit with a spell" triggers fire (Immortal Phoenix). */
   killedBySpell?: boolean
+  /** Stamped when this unit dies as part of combat (the showdown death loop) —
+   *  gates "when I die in combat" triggers (Draven - Audacious). */
+  diedInCombat?: boolean
   /** State names active at the last refreshStates pass — for becomes-<state>
    *  transition detection. */
   stateSnapshot?: string[]
@@ -541,6 +544,13 @@ export interface MatchState {
   pendingChoice?: {
     player: PlayerId
     kind: 'moveHereToBase' | 'moveAnyToBase' | 'daisReturn' | 'duskRoseSacrifice' | 'leblancCopy' | 'forgePickEquip' | 'forgePickTarget' | 'orbMinusMight' | 'moveToBf' | 'heimerBorrow' | 'trashConquerReturn' | 'counterUnlessPay' | 'shardKill' | 'insightfulInvestigator' | 'nameTag' | 'peekToHand' | 'stealUnit' | 'stealGear'
+      // Phase E interactive pickers (replacing engine auto-picks):
+      // peekDrawPick = "look at top N, draw a qualifying card" (Ornn, Ivern, Rift Herald…);
+      // opponentDiscardPick = the DISCARDING player chooses which card(s) to discard;
+      // insightfulPick = Insightful Investigator chooser picks the stripped card;
+      // predict2 = Dramatic Visionary's [Predict 2] (recycle one / reorder);
+      // dravenAudaciousScore = choose an opponent to score when Draven dies in combat.
+      | 'peekDrawPick' | 'opponentDiscardPick' | 'insightfulPick' | 'predict2' | 'dravenAudaciousScore'
       // "An opponent reveals their hand" interactive flow (Bone Skewer + the
       // strip/recycle/banish family): pick the opponent → pick a card from their
       // revealed hand → (Bone Skewer) pick a battlefield.

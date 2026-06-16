@@ -859,20 +859,15 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     if (s.pendingChoice) lines.push('An opponent reveals their hand.')
   }
   if (e.opponentDiscards) {
-    // "They discard N" — the opponent loses N cards of their choice (auto: lowest-cost).
+    // "They discard N" — the DISCARDING player chooses which cards (rule: the
+    // affected player decides). Was an engine auto lowest-cost pick.
     const foe = s.players
       .filter((pl) => pl.id !== p.id && !pl.out && pl.zones.hand.length > 0)
       .sort((a, b) => b.zones.hand.length - a.zones.hand.length)[0]
     if (foe) {
       const n = Math.min(e.opponentDiscards, foe.zones.hand.length)
-      const discardedCards: EngineCard[] = []
-      for (let k = 0; k < n; k++) {
-        const lowest = [...foe.zones.hand].sort((a, b) => cardCost(a) - cardCost(b))[0]
-        const [d] = foe.zones.hand.splice(foe.zones.hand.findIndex((x) => x.iid === lowest.iid), 1)
-        sendToTrash(foe, d)
-        discardedCards.push(d)
-      }
-      if (n > 0) { foe.discardedThisTurn = true; lines.push(`Opponent discarded ${n}.`); fireDiscard(s, foe.id, discardedCards) }
+      offerOpponentDiscard(s, foe.id, n, [])
+      lines.push(`Opponent must discard ${n} (their choice).`)
     }
   }
   if (e.playUnitFromTrash) {
@@ -963,13 +958,13 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
     }
   }
   if (e.peekDraw) {
-    // "Look at the top N; (you may) draw a <type>; recycle the rest." Auto-draws the
-    // highest-cost matching card to hand and recycles the rest to the bottom (Ornn,
-    // Ivern, Rift Herald, Fate Weaver, Apprentice Smith).
+    // "Look at the top N; (you may) draw a <type>; recycle the rest." With 2+
+    // qualifiers the player CHOOSES which to draw (was auto highest-cost); with 0/1
+    // it resolves immediately (Ornn, Ivern, Rift Herald, Fate Weaver, Apprentice Smith).
     const { n, type, energyMin, thenBuffIfTribe } = e.peekDraw
     const deck = p.zones.mainDeck
     for (const l of hatchlingPrePeek(s, p.id, deck, type !== 'card' ? type : undefined)) lines.push(l) // Void Hatchling
-    const top = deck.splice(0, Math.min(n, deck.length))
+    const top = deck.slice(0, Math.min(n, deck.length)) // looked-at set stays on the deck until resolve
     const matches = top.filter((c) => {
       const d = getCard(c.cardId)
       if (!d) return false
@@ -977,25 +972,21 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       if (energyMin != null && ((d as { energy?: number }).energy ?? 0) < energyMin) return false
       return true
     })
-    let drawn: EngineCard | undefined
-    if (matches.length) {
-      drawn = matches.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b))
-      p.zones.hand.push(drawn)
-    }
-    for (const c of top) if (c !== drawn) deck.push(c) // recycle the rest to the bottom
-    if (drawn) lines.push(`Looked at top ${top.length}; drew ${getCard(drawn.cardId)?.name}; recycled ${top.length - 1}.`)
-    else if (top.length) lines.push(`Looked at top ${top.length}; no ${type} to draw; recycled ${top.length}.`)
-    // Ivern - Nurturer: "if you revealed a Bird/Cat/Dog/Poro, [Buff] a friendly unit."
-    if (thenBuffIfTribe && top.some((c) => (getCard(c.cardId)?.tags ?? []).some((tg) => thenBuffIfTribe.includes(tg)))) {
-      const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
-        (u) => isFriendlyTo(s, p.id, u) && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
-      )
-      if (friendly.length) {
-        const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
-        addBuff(tgt)
-        emit({ kind: 'buff', iid: tgt.iid, player: p.id })
-        lines.push(`Revealed a Bird/Cat/Dog/Poro — buffed ${getCard(tgt.cardId)?.name} (+1 Might).`)
+    if (matches.length >= 2) {
+      const choice: NonNullable<MatchState['pendingChoice']> = {
+        player: p.id, kind: 'peekDrawPick', bfIndex: -1,
+        prompt: `Look at the top ${top.length} — draw one, recycle the rest.`,
+        options: matches.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
+        payload: JSON.stringify({ topIids: top.map((c) => c.iid), thenBuffIfTribe }), srcName: 'Look',
       }
+      if (s.pendingChoice) {
+        s.pendingDecisions = [...(s.pendingDecisions ?? []), { player: p.id, kind: 'choice', prompt: choice.prompt, srcName: 'Look', raw: choice }]
+      } else {
+        offerChoice(s, choice)
+      }
+      lines.push(`Looking at the top ${top.length} — choose one to draw.`)
+    } else {
+      for (const l of resolvePeekDraw(s, p.id, top.map((c) => c.iid), matches[0]?.iid ?? null, thenBuffIfTribe)) lines.push(l)
     }
   }
   if (e.peekToHand) {
@@ -1410,6 +1401,17 @@ function collectSelf(s: MatchState, player: PlayerId, event: TriggerEvent, iids?
   return out
 }
 
+/** E14 — conquer/hold/win-combat trigger collection that also covers the acting
+ *  player's TEAMMATE in 2v2: their "when you conquer/hold/win a combat" globals AND
+ *  the "when I …" self-triggers on their units among `selfIids`. `teammateOf` is
+ *  null outside team mode, so this collapses to the old single-player set there.
+ *  Pass `selfIids` already filtered to BOTH teammates' units at the battlefield. */
+function collectTeamTriggers(s: MatchState, player: PlayerId, event: TriggerEvent, selfIids: string[]): FiredTrigger[] {
+  const mate = teammateOf(s, player)
+  const seats = mate != null ? [player, mate] : [player]
+  return seats.flatMap((seat) => [...collectGlobal(s, seat, event), ...collectSelf(s, seat, event, selfIids)])
+}
+
 /** Apply fired triggers' auto-resolvable effects (ordered turn-player first,
  *  rule 4.6); log the remainder for manual resolution. */
 function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, excess = 0, wasUncontrolled = false): MatchState {
@@ -1444,6 +1446,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
       || (srcName === 'Atakhan' && ability.event === 'attack') // defender-must-kill, handled bespoke
       || (srcName === 'Ava Achiever' && ability.event === 'attack') // pay-Mind play-Hidden, handled bespoke
       || (srcName === 'Dramatic Visionary' && ability.event === 'death') // [Predict 2] Deathknell, handled bespoke
+      || (srcName === 'Draven - Audacious' && ability.event === 'death') // opponent-scores-on-combat-death, handled bespoke
       // "When I attack, deal N damage split among any number of enemy units here"
       // (Volibear - Furious, et al.) — resolved as a FREE manual split-damage pause
       // BEFORE the combat math (resolveShowdown → nextSplitTrigger), never auto-applied.
@@ -1902,18 +1905,51 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         s = log(s, player, `${label}: recycled ${baseName} and readied ${readied} rune(s).`)
         handled = true
       } else if (baseName === 'Dramatic Visionary') {
-        // "[Deathknell] [Predict 2]: look at the top two cards of your Main Deck. Recycle
-        // any of them and put the rest back in any order." Auto-resolved per the
-        // auto-resolve preference: keep both and order the higher-cost card on top (a
-        // faithful no-recycle Predict). Full player-chosen recycle/reorder is deferred
-        // (a mid-death pendingChoice would risk re-entrancy during combat resolution).
+        // "[Deathknell] [Predict 2]: look at the top two cards of your Main Deck.
+        // Recycle any of them and put the rest back in any order." E8 — the player
+        // now CHOOSES (was an auto cost-sort). To avoid a mid-death-loop pause, the
+        // pick is DEFERRED through pendingDecisions (surfaces after this resolves);
+        // the two cards are tracked by iid so the deck may safely change meanwhile.
         const deck = p.zones.mainDeck
         if (deck.length >= 2) {
-          const costOfTop = (c: EngineCard) => (getCard(c.cardId) as { energy?: number } | undefined)?.energy ?? 0
-          if (costOfTop(deck[1]) > costOfTop(deck[0])) { const tmp = deck[0]; deck[0] = deck[1]; deck[1] = tmp }
-          s = log(s, player, `${label}: Predict 2 — looked at the top two cards and set the order.`)
+          const a = deck[0], b = deck[1]
+          const nm = (c: EngineCard) => getCard(c.cardId)?.name ?? 'a card'
+          const choice: NonNullable<MatchState['pendingChoice']> = {
+            player, kind: 'predict2', bfIndex: -1,
+            prompt: `[Predict 2] — recycle any, order the rest. Top two: ${nm(a)}, ${nm(b)}.`,
+            options: [
+              { iid: 'keepA', label: `Keep both — ${nm(a)} on top` },
+              { iid: 'keepB', label: `Keep both — ${nm(b)} on top` },
+              { iid: 'recA', label: `Recycle ${nm(a)} — keep ${nm(b)}` },
+              { iid: 'recB', label: `Recycle ${nm(b)} — keep ${nm(a)}` },
+              { iid: 'recBoth', label: 'Recycle both' },
+            ],
+            payload: JSON.stringify({ aIid: a.iid, bIid: b.iid }), srcName: 'Predict 2',
+          }
+          s.pendingDecisions = [...(s.pendingDecisions ?? []), { player, kind: 'choice', prompt: choice.prompt, srcName: 'Predict 2', raw: choice }]
+          s = log(s, player, `${label}: [Predict 2] — look at the top two cards.`)
         } else {
           s = log(s, player, `${label}: Predict 2 — too few cards in deck.`)
+        }
+        handled = true
+      } else if (baseName === 'Draven - Audacious') {
+        // "When I die in combat, choose an opponent. They score 1 point." Gate on the
+        // combat-death stamp (a spell/ability kill does NOT trigger it). The opponent
+        // pick is DEFERRED through pendingDecisions in 3-4p (avoids a mid-loop pause).
+        const dyer = s.players.flatMap((pl) => pl.zones.trash).find((c) => c.iid === sourceIid)
+        if (dyer?.diedInCombat) {
+          const foes = s.players.filter((pl) => !pl.out && !sameTeam(s, player, pl.id))
+          if (foes.length === 1) {
+            s = scoreSimple(s, foes[0].id, 1, `scored from ${baseName} dying in combat`)
+          } else if (foes.length > 1) {
+            const choice: NonNullable<MatchState['pendingChoice']> = {
+              player, kind: 'dravenAudaciousScore', bfIndex: -1,
+              prompt: `${baseName} died in combat — choose an opponent to score 1 point.`,
+              options: foes.map((f) => ({ iid: `opp:${f.id}`, label: f.name })), srcName: baseName,
+            }
+            s.pendingDecisions = [...(s.pendingDecisions ?? []), { player, kind: 'choice', prompt: choice.prompt, srcName: baseName, raw: choice }]
+            s = log(s, player, `${label}: choose an opponent to score 1 point.`)
+          }
         }
         handled = true
       }
@@ -1971,20 +2007,24 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
       if (ck === 'diedNotAlone' && aloneAtDeath(u)) continue
       for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex: u.diedAtBf })
     }
-    // Global "when a unit you control dies" triggers (Viktor - Leader), on the
-    // dead unit's controller's other permanents.
-    for (const perm of controlledPermanents(s, u.owner)) {
-      if (perm.iid === u.iid) continue // "another" — not the dying unit itself
-      for (const ab of triggersFor(def(perm), 'death')) {
-        if (ab.scope !== 'global') continue
-        // "non-Recruit" / "buffed" gates (the qualifier sits in the trigger phrase,
-        // so check the source card's full text, not the parsed clause).
-        const srcText = getCard(perm.cardId)?.text ?? ''
-        if (/non-recruit/i.test(srcText) && isRecruit(u)) continue
-        if (/buffed [^.]*?units?[^.]*?(?:dies|defeated)/i.test(srcText) && !(u.buffs ?? 0)) continue // Vanguard Helm
-        fired.push({ player: u.owner, ability: ab, sourceIid: perm.iid })
+    // Global "when a friendly unit dies" triggers (Viktor - Leader), on the dead
+    // unit's controller's other permanents — and (E14) the teammate's too in 2v2,
+    // since a teammate's units are friendly (the trigger resolves for that seat).
+    const deathMate = teammateOf(s, u.owner)
+    const deathWatchers = deathMate != null ? [u.owner, deathMate] : [u.owner]
+    for (const watcher of deathWatchers)
+      for (const perm of controlledPermanents(s, watcher)) {
+        if (perm.iid === u.iid) continue // "another" — not the dying unit itself
+        for (const ab of triggersFor(def(perm), 'death')) {
+          if (ab.scope !== 'global') continue
+          // "non-Recruit" / "buffed" gates (the qualifier sits in the trigger phrase,
+          // so check the source card's full text, not the parsed clause).
+          const srcText = getCard(perm.cardId)?.text ?? ''
+          if (/non-recruit/i.test(srcText) && isRecruit(u)) continue
+          if (/buffed [^.]*?units?[^.]*?(?:dies|defeated)/i.test(srcText) && !(u.buffs ?? 0)) continue // Vanguard Helm
+          fired.push({ player: watcher, ability: ab, sourceIid: perm.iid })
+        }
       }
-    }
     // Enemy-death triggers: OTHER players reacting to this unit dying (Pyke -
     // Returned, Sivir - Battle Mistress). "while I'm at a battlefield" gates the
     // source to a battlefield (Pyke).
@@ -2818,6 +2858,64 @@ function fireDiscard(s: MatchState, player: PlayerId, discarded: EngineCard[] = 
     }
   }
   return s
+}
+
+/** Phase E — "an opponent discards N" lets the DISCARDING player choose WHICH cards
+ *  (was an engine auto lowest-cost pick). Offers one pick at a time to `foeId`;
+ *  `discarded` accumulates the binned iids so the final pick fires their discard
+ *  cascade. Mutates s in place AND returns it (works inside applyParsed and in
+ *  RESOLVE_CHOICE). Defers behind an already-open choice via the 'choice' queue. */
+function offerOpponentDiscard(s: MatchState, foeId: PlayerId, remaining: number, discarded: string[]): MatchState {
+  const foe = s.players[foeId]
+  if (remaining <= 0 || !foe || foe.zones.hand.length === 0) return finishOpponentDiscard(s, foeId, discarded)
+  const choice: NonNullable<MatchState['pendingChoice']> = {
+    player: foeId, kind: 'opponentDiscardPick', bfIndex: -1,
+    prompt: `Discard a card${remaining > 1 ? ` (${remaining} to discard)` : ''}.`,
+    options: foe.zones.hand.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
+    payload: JSON.stringify({ remaining, discarded }),
+  }
+  if (s.pendingChoice) {
+    s.pendingDecisions = [...(s.pendingDecisions ?? []), { player: foeId, kind: 'choice', prompt: choice.prompt, srcName: 'Discard', raw: choice }]
+  } else {
+    offerChoice(s, choice)
+  }
+  return s
+}
+
+function finishOpponentDiscard(s: MatchState, foeId: PlayerId, discarded: string[]): MatchState {
+  if (!discarded.length) return s
+  const foe = s.players[foeId]
+  foe.discardedThisTurn = true
+  const cards = discarded.map((iid) => foe.zones.trash.find((c) => c.iid === iid)).filter((c): c is EngineCard => !!c)
+  return fireDiscard(s, foeId, cards)
+}
+
+/** Phase E peekDraw resolution (look at top N → draw one → recycle the rest →
+ *  Ivern tribe-buff). The looked-at set is identified by `topIids` (still on the
+ *  deck); `drawnIid` is the chosen card (null = draw none). Mutates s in place and
+ *  returns log lines, so it works inside applyParsed AND in RESOLVE_CHOICE. */
+function resolvePeekDraw(s: MatchState, playerId: PlayerId, topIids: string[], drawnIid: string | null, thenBuffIfTribe?: string[]): string[] {
+  const out: string[] = []
+  const p = s.players[playerId]
+  const top = topIids.map((iid) => p.zones.mainDeck.find((c) => c.iid === iid)).filter((c): c is EngineCard => !!c)
+  p.zones.mainDeck = p.zones.mainDeck.filter((c) => !topIids.includes(c.iid)) // pull the looked-at set off the top
+  let drawn: EngineCard | undefined
+  if (drawnIid) { drawn = top.find((c) => c.iid === drawnIid); if (drawn) p.zones.hand.push(drawn) }
+  for (const c of top) if (c.iid !== drawnIid) p.zones.mainDeck.push(c) // recycle the rest to the bottom
+  out.push(drawn ? `Looked at top ${top.length}; drew ${getCard(drawn.cardId)?.name}; recycled ${top.length - 1}.` : `Looked at top ${top.length}; recycled ${top.length}.`)
+  // Ivern - Nurturer: "if you revealed a Bird/Cat/Dog/Poro, [Buff] a friendly unit."
+  if (thenBuffIfTribe && top.some((c) => (getCard(c.cardId)?.tags ?? []).some((tg) => thenBuffIfTribe.includes(tg)))) {
+    const friendly = [...p.zones.base, ...s.battlefields.flatMap((b) => b.units)].filter(
+      (u) => isFriendlyTo(s, playerId, u) && getCard(u.cardId)?.type === 'unit' && !(u.buffs ?? 0),
+    )
+    if (friendly.length) {
+      const tgt = friendly.reduce((b, u) => (mightOf(u) > mightOf(b) ? u : b))
+      addBuff(tgt)
+      emit({ kind: 'buff', iid: tgt.iid, player: playerId })
+      out.push(`Revealed a Bird/Cat/Dog/Poro — buffed ${getCard(tgt.cardId)?.name} (+1 Might).`)
+    }
+  }
+  return out
 }
 
 /** "When you conquer, you may discard 1 to return this from your trash to your
@@ -3744,6 +3842,9 @@ export interface UnitAbility {
   requiresBattlefield: boolean
   /** "Double my Might this turn" — a state-dependent self pump (Vi - Hotheaded). */
   doubleMight: boolean
+  /** [Reaction]-speed ability — usable off-turn / while a chain or showdown is open
+   *  (Seals, Energy Conduit: "[Reaction] — [Add] <resource>"). */
+  reaction: boolean
   effect: ParsedEffect
   effectText: string
   label: string
@@ -3813,6 +3914,7 @@ export function unitActivatedAbility(card: Card | undefined): UnitAbility | null
     killThis: /\bkill this\b/.test(cl),
     requiresBattlefield: /only while (?:i'm|i am) at a battlefield/i.test(text),
     doubleMight: /double my might/i.test(effectText),
+    reaction: /\[reaction\]/i.test(text),
     effect,
     effectText,
     label: effectText.replace(/\s*:rb_[a-z_0-9]+:\s*/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40),
@@ -3846,7 +3948,7 @@ export function canActivateUnit(s: MatchState, player: PlayerId, iid: string): U
     if (!canActivateHeimer(s, player, iid)) return null
     return {
       exhaust: true, energy: 0, power: {}, recycleTrash: 0, discard: 0,
-      killThis: false, requiresBattlefield: false, doubleMight: false,
+      killThis: false, requiresBattlefield: false, doubleMight: false, reaction: false,
       effect: parseEffectText(''), effectText: 'borrow an ability', label: 'Borrow an ability',
     }
   }
@@ -4515,8 +4617,8 @@ function moveUnits(
     s2 = applyConquerPassive(s2, player, toBattlefield)
     // G3: conquer triggers go on the Chain (rule 376.4 — chained after control +
     // the Victory Point); smart auto-pass keeps reaction-free boards synchronous.
-    const here = s2.battlefields[toBattlefield].units.filter((u) => controllerOf(u) === player).map((u) => u.iid)
-    s2 = pushFiredTriggers(s2, [...collectGlobal(s2, player, 'conquer'), ...collectSelf(s2, player, 'conquer', here)], toBattlefield, 0, prevController == null)
+    const here = s2.battlefields[toBattlefield].units.filter((u) => sameTeam(s2, player, controllerOf(u))).map((u) => u.iid)
+    s2 = pushFiredTriggers(s2, collectTeamTriggers(s2, player, 'conquer', here), toBattlefield, 0, prevController == null)
     offerLeblanc(s2, player, toBattlefield) // LeBlanc - Deceiver: copy a unit here
     s2 = offerTrashConquerReturn(s2, player) // Super Mega Death Rocket!
   }
@@ -4552,9 +4654,9 @@ function showdownOrConquerAfterEffectMove(s: MatchState, bfIndex: number, movedI
     markConquered(s, movedOwner, bfIndex)
     s = grantHunt(s, movedOwner, bfIndex)
     s = applyConquerPassive(s, movedOwner, bfIndex)
-    const here = bf.units.filter((u) => controllerOf(u) === movedOwner).map((u) => u.iid)
+    const here = bf.units.filter((u) => sameTeam(s, movedOwner, controllerOf(u))).map((u) => u.iid)
     // G3: conquer triggers chain (see moveUnits).
-    s = pushFiredTriggers(s, [...collectGlobal(s, movedOwner, 'conquer'), ...collectSelf(s, movedOwner, 'conquer', here)], bfIndex, 0, priorController == null)
+    s = pushFiredTriggers(s, collectTeamTriggers(s, movedOwner, 'conquer', here), bfIndex, 0, priorController == null)
     offerLeblanc(s, movedOwner, bfIndex)
     s = offerTrashConquerReturn(s, movedOwner) // Super Mega Death Rocket!
   }
@@ -4811,9 +4913,9 @@ function finishBeginning(s: MatchState): MatchState {
   if (holdsAny) {
     const heldUnitIids = s.battlefields
       .filter((b) => b.controller === ap)
-      .flatMap((b) => b.units.filter((u) => controllerOf(u) === ap).map((u) => u.iid))
+      .flatMap((b) => b.units.filter((u) => sameTeam(s, ap, controllerOf(u))).map((u) => u.iid))
     // G3: hold triggers chain; finishBeginning runs inside beginTurn, so settle here too.
-    s = pushFiredTriggers(s, [...collectGlobal(s, ap, 'hold'), ...collectSelf(s, ap, 'hold', heldUnitIids)])
+    s = pushFiredTriggers(s, collectTeamTriggers(s, ap, 'hold', heldUnitIids))
     s = autoPassTriggers(s)
   }
 
@@ -5130,6 +5232,21 @@ function awardPoints(
   emit({ kind: 'score', player, amount })
   fireOpponentScore(s, player) // Sumpworks Map: opponents draw when this player scores
   if (kind === 'conquer') emit({ kind: 'conquer', player })
+  let next = log(s, player, `${p.name} ${reason} (+${amount}).`)
+  if (scoreFor(next, player) >= next.pointsToWin) next = endGame(next, player)
+  return next
+}
+
+/** Plain scoring that ISN'T a Hold or Conquer (Draven - Audacious "they score 1
+ *  point" on a combat death) — respects Tianna blocking + win detection, but
+ *  doesn't set holdPointsThisTurn or emit a conquer (those are Hold/Conquer-only). */
+function scoreSimple(s: MatchState, player: PlayerId, amount: number, reason: string): MatchState {
+  const p = s.players[player]
+  if (tiannaBlocksScore(s, player))
+    return log(s, player, `${p.name} can't gain points — an opponent's Tianna Crownguard is at a battlefield.`)
+  p.points += amount
+  emit({ kind: 'score', player, amount })
+  fireOpponentScore(s, player) // Sumpworks Map: opponents draw when this player scores
   let next = log(s, player, `${p.name} ${reason} (+${amount}).`)
   if (scoreFor(next, player) >= next.pointsToWin) next = endGame(next, player)
   return next
@@ -6237,6 +6354,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
       s = log(s, u.owner, `${getCard(u.cardId)?.name} was banished instead of dying.`)
     } else if (dead) {
       u.diedAtBf = bfIndex // for location-scoped death triggers (Kog'Maw)
+      u.diedInCombat = true // gates "when I die in combat" (Draven - Audacious)
       emit({ kind: 'defeat', iid: u.iid, cardId: u.cardId })
       defeated.push(u)
     } else survivors.push({ ...u, damage: 0 })
@@ -6271,11 +6389,11 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
   // "When I win a combat" / "When you win a combat" — the mover cleared the
   // defenders and still holds units. Self triggers (Draven - Vanquisher, Nidalee)
   // and global ones (Kha'Zix - Voidreaver "gain 1 XP", Draven - Glorious "draw 1").
-  const moverHere = s.battlefields[bfIndex].units.filter((u) => controllerOf(u) === moverOwner).map((u) => u.iid)
-  const enemyHere = s.battlefields[bfIndex].units.some((u) => controllerOf(u) !== moverOwner)
+  const moverHere = s.battlefields[bfIndex].units.filter((u) => sameTeam(s, moverOwner, controllerOf(u))).map((u) => u.iid)
+  const enemyHere = s.battlefields[bfIndex].units.some((u) => !sameTeam(s, moverOwner, controllerOf(u)))
   if (moverHere.length > 0 && !enemyHere) {
-    // G3: win-combat triggers chain.
-    s = pushFiredTriggers(s, [...collectSelf(s, moverOwner, 'winCombat', moverHere), ...collectGlobal(s, moverOwner, 'winCombat')])
+    // G3: win-combat triggers chain (E14: teammate's win-combat triggers too).
+    s = pushFiredTriggers(s, collectTeamTriggers(s, moverOwner, 'winCombat', moverHere))
   }
 
   // Conquer: mover ends as sole controller of a battlefield they didn't hold.
@@ -6291,7 +6409,7 @@ function finalizeShowdown(state: MatchState, bfIndex: number, steps: DamageAssig
     s = grantHunt(s, moverOwner, bfIndex)
     s = applyConquerPassive(s, moverOwner, bfIndex, excess)
     // G3: combat-conquer triggers chain (excess threaded for excess-damage gates).
-    s = pushFiredTriggers(s, [...collectGlobal(s, moverOwner, 'conquer'), ...collectSelf(s, moverOwner, 'conquer', moverHere)], bfIndex, excess, prevController == null)
+    s = pushFiredTriggers(s, collectTeamTriggers(s, moverOwner, 'conquer', moverHere), bfIndex, excess, prevController == null)
     offerLeblanc(s, moverOwner, bfIndex) // LeBlanc - Deceiver: copy a unit here
     s = offerTrashConquerReturn(s, moverOwner) // Super Mega Death Rocket!
   }
@@ -6914,6 +7032,12 @@ function resolveRevealedCard(s: MatchState, player: PlayerId, ci: EngineCard, ca
         .sort((a, b) => mightOf(b) - mightOf(a))
         .slice(0, Math.max(1, se.targetCount || 1))
         .map((u) => u.iid)
+    }
+    if (hasTargetedPart(se) && revealTargets.length === 0) {
+      // Rule 737: a [Hidden] spell needs a legal target at the battlefield it was
+      // hidden on — with none there, it fizzles to the trash (no silent no-op).
+      sendToTrash(s.players[player], ci)
+      return log(s, player, `Revealed ${card.name} — no legal target here; it fizzles.`)
     }
     s = resolveSpellEffects(s, player, card, revealTargets)
     s = firePlayTriggers(s, player, ci.iid, card, 0, true) // played from [Hidden]
@@ -8529,6 +8653,66 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         return ok(log(s, action.player, chosen ? `Put a card into hand and recycled ${cands.length - 1}.` : `Recycled ${cands.length} looked-at card(s).`))
       }
 
+      // E6 — the discarding player picks WHICH card to discard (chains per remaining;
+      // a Cancel falls back to the lowest-cost card so the discard always happens).
+      if (pc.kind === 'opponentDiscardPick') {
+        const { remaining, discarded } = JSON.parse(pc.payload ?? '{}') as { remaining: number; discarded: string[] }
+        const foe = s.players[action.player]
+        const pickIid = action.iid && foe.zones.hand.some((c) => c.iid === action.iid)
+          ? action.iid
+          : [...foe.zones.hand].sort((a, b) => cardCost(a) - cardCost(b))[0]?.iid ?? null
+        if (pickIid) {
+          const [d] = foe.zones.hand.splice(foe.zones.hand.findIndex((c) => c.iid === pickIid), 1)
+          sendToTrash(foe, d)
+          discarded.push(d.iid)
+          s = log(s, action.player, `Discarded ${getCard(d.cardId)?.name ?? 'a card'}.`)
+        }
+        return ok(offerOpponentDiscard(s, action.player, remaining - 1, discarded))
+      }
+
+      // E5 — pick which qualifying card to draw (Cancel → highest-cost fallback).
+      if (pc.kind === 'peekDrawPick') {
+        const { topIids, thenBuffIfTribe } = JSON.parse(pc.payload ?? '{}') as { topIids: string[]; thenBuffIfTribe?: string[] }
+        const p = s.players[action.player]
+        let drawnIid = action.iid && topIids.includes(action.iid) ? action.iid : null
+        if (!drawnIid) {
+          const top = topIids.map((iid) => p.zones.mainDeck.find((c) => c.iid === iid)).filter((c): c is EngineCard => !!c)
+          drawnIid = top.length ? top.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b)).iid : null
+        }
+        for (const l of resolvePeekDraw(s, action.player, topIids, drawnIid, thenBuffIfTribe)) s = log(s, action.player, l)
+        return ok(s)
+      }
+
+      // E8 — Dramatic Visionary [Predict 2]: recycle any of the two looked-at cards,
+      // order the rest (Cancel keeps both with the original order = keepA).
+      if (pc.kind === 'predict2') {
+        const { aIid, bIid } = JSON.parse(pc.payload ?? '{}') as { aIid: string; bIid: string }
+        const deck = s.players[action.player].zones.mainDeck
+        const a = deck.find((c) => c.iid === aIid)
+        const b = deck.find((c) => c.iid === bIid)
+        const rest = deck.filter((c) => c.iid !== aIid && c.iid !== bIid)
+        const keep = (c: EngineCard | undefined): c is EngineCard => !!c
+        let keptTop: EngineCard[] = []
+        let recycled: EngineCard[] = []
+        switch (action.iid) {
+          case 'keepB': keptTop = [b, a].filter(keep); break
+          case 'recA': recycled = [a].filter(keep); keptTop = [b].filter(keep); break
+          case 'recB': recycled = [b].filter(keep); keptTop = [a].filter(keep); break
+          case 'recBoth': recycled = [a, b].filter(keep); break
+          default: keptTop = [a, b].filter(keep) // keepA / Cancel
+        }
+        s.players[action.player].zones.mainDeck = [...keptTop, ...rest, ...recycled]
+        return ok(log(s, action.player, `Predict 2 — ${recycled.length ? `recycled ${recycled.length}; ` : ''}set the top.`))
+      }
+
+      // E11 — Draven - Audacious: the chosen opponent (`opp:N`) scores 1 point.
+      if (pc.kind === 'dravenAudaciousScore') {
+        const foeId = action.iid?.startsWith('opp:') ? (parseInt(action.iid.slice(4), 10) as PlayerId) : null
+        if (foeId == null || !s.players[foeId] || s.players[foeId].out)
+          return ok(log(s, action.player, 'Draven - Audacious — no opponent scored.'))
+        return ok(scoreSimple(s, foeId, 1, `scored from ${pc.srcName ?? 'Draven - Audacious'} dying in combat`))
+      }
+
       // Dusk Rose Lab pauses the Beginning Phase before scoring; resolving it
       // (pick or decline) resumes via finishBeginning.
       if (pc.kind === 'duskRoseSacrifice') {
@@ -8773,18 +8957,37 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
           const victim = s.players[victimId]
           if (caster.xp >= xpCost && victim && victim.zones.hand.length > 0) {
             caster.xp -= xpCost
-            const pick = [...victim.zones.hand].sort((a, b) => cardCost(b) - cardCost(a))[0]
-            const [stripped] = victim.zones.hand.splice(victim.zones.hand.findIndex((c) => c.iid === pick.iid), 1)
-            sendToTrash(victim, stripped)
-            victim.discardedThisTurn = true
-            s = log(s, action.player, `Insightful Investigator — paid 2 XP; ${victim.name} discarded ${getCard(stripped.cardId)?.name} and draws 1.`)
-            s = fireDiscard(s, victimId, [stripped]) // the victim's discard cascade
-            drawN(s.players[victimId], 1) // the VICTIM draws 1
+            // E7: the CASTER chooses WHICH card from the revealed hand (was auto
+            // highest-cost). The resolver discards it + the victim draws 1.
+            offerChoice(s, {
+              player: action.player, kind: 'insightfulPick', bfIndex: -1,
+              prompt: `Choose a card from ${victim.name}'s hand — they discard it and draw 1.`,
+              options: victim.zones.hand.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
+              payload: JSON.stringify({ victimId }), srcName: 'Insightful Investigator',
+            })
+            s = log(s, action.player, `Insightful Investigator — paid 2 XP; choose a card from ${victim.name}'s hand.`)
           } else {
             s = log(s, action.player, 'Insightful Investigator — could not pay (no XP / no cards).')
           }
         } else {
           s = log(s, action.player, 'Insightful Investigator — declined (kept 2 XP).')
+        }
+        return ok(s)
+      }
+      // E7 — the caster's pick from the revealed hand (Cancel falls back to highest-cost).
+      if (pc.kind === 'insightfulPick') {
+        const { victimId } = JSON.parse(pc.payload ?? '{}') as { victimId: PlayerId }
+        const victim = s.players[victimId]
+        const pickIid = action.iid && victim?.zones.hand.some((c) => c.iid === action.iid)
+          ? action.iid
+          : [...(victim?.zones.hand ?? [])].sort((a, b) => cardCost(b) - cardCost(a))[0]?.iid ?? null
+        if (victim && pickIid) {
+          const [stripped] = victim.zones.hand.splice(victim.zones.hand.findIndex((c) => c.iid === pickIid), 1)
+          sendToTrash(victim, stripped)
+          victim.discardedThisTurn = true
+          s = log(s, action.player, `${victim.name} discarded ${getCard(stripped.cardId)?.name} and draws 1.`)
+          s = fireDiscard(s, victimId, [stripped]) // the victim's discard cascade
+          drawN(s.players[victimId], 1) // the VICTIM draws 1
         }
         return ok(s)
       }
@@ -8987,8 +9190,14 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
 
     case 'ACTIVATE_UNIT': {
       const guard = requireActiveAction(state, action.player)
+      // [Reaction]-speed [Add] abilities (Seals, Energy Conduit) may be used off-turn
+      // and while a chain/showdown is open — they add resources with no chain item
+      // ("abilities that add resources can't be reacted to"). canActivateUnit has no
+      // timing gate, so probing it here is safe.
+      const probe = guard ? canActivateUnit(state, action.player, action.iid) : null
+      const isReactionAdd = !!probe && probe.reaction && (probe.effect.addEnergy > 0 || Object.keys(probe.effect.addPower).length > 0)
       // 2v2: a teammate may activate abilities during the Turn Player's open turn.
-      if (guard && !(state.teamMode && sameTeam(state, action.player, state.activePlayer) && !requireActiveAction(state, state.activePlayer)))
+      if (guard && !isReactionAdd && !(state.teamMode && sameTeam(state, action.player, state.activePlayer) && !requireActiveAction(state, state.activePlayer)))
         return fail(state, guard)
       const ab = canActivateUnit(state, action.player, action.iid)
       if (!ab) return fail(state, 'That ability can\'t be activated right now.')

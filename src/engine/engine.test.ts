@@ -1203,18 +1203,22 @@ describe('tokens (Recruit)', () => {
     expect(r2.state.players[1].zones.trash.some((x) => x.cardId === spell)).toBe(false) // recycled, not trashed
   })
 
-  it('opponentDiscards (Bewitching Spirit): opponent discards their lowest-cost card', () => {
+  it('opponentDiscards (Bewitching Spirit): the discarding player chooses which card to discard (E6)', () => {
     const bew = injectCard('bewitch-t', 'When you play me, choose a player. They discard 1.', { type: 'unit', energy: 0, power: {}, might: 1 })
     const cheap = injectCard('bw-cheap-t', 'x', { type: 'unit', energy: 1, power: {}, might: 1 })
     const pricey = injectCard('bw-pricey-t', 'x', { type: 'unit', energy: 7, power: {}, might: 7 })
     const s = baseState()
-    s.players[1].zones.hand.push(mk(pricey, 1), mk(cheap, 1))
+    const cheapC = mk(cheap, 1), priceyC = mk(pricey, 1)
+    s.players[1].zones.hand.push(priceyC, cheapC)
     const u = mk(bew, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
-    expect(r.error).toBeFalsy()
-    expect(r.state.players[1].zones.trash.some((x) => x.cardId === cheap)).toBe(true) // lowest-cost discarded
-    expect(r.state.players[1].zones.hand.some((x) => x.cardId === pricey)).toBe(true) // pricey kept
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r0.error).toBeFalsy()
+    expect(r0.state.pendingChoice?.kind).toBe('opponentDiscardPick')
+    expect(r0.state.pendingChoice?.player).toBe(1) // the DISCARDING player chooses
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 1, iid: cheapC.iid }) // they pitch the cheap one
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === cheapC.iid)).toBe(true)
+    expect(r.state.players[1].zones.hand.some((x) => x.iid === priceyC.iid)).toBe(true) // pricey kept
   })
 
   it('forced-discard cascade (Mindsplitter → Flame Chompers): victim gets the discard-replay offer', () => {
@@ -1250,9 +1254,11 @@ describe('tokens (Recruit)', () => {
     s.players[1].zones.runePool.push(mk(furyRune.id, 1))
     const u = mk(bew, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
-    expect(r.error).toBeFalsy()
-    expect(r.state.players[1].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // lowest-cost (Flame Chompers) discarded
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r0.error).toBeFalsy()
+    expect(r0.state.pendingChoice?.kind).toBe('opponentDiscardPick')
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 1, iid: fc.iid }) // they choose to discard Flame Chompers
+    expect(r.state.players[1].zones.trash.some((x) => x.iid === fc.iid)).toBe(true) // Flame Chompers discarded
     expect(r.state.pendingChoice?.kind).toBe('optionalPay') // cascade fired on the opponentDiscards path too
     expect(r.state.pendingChoice?.player).toBe(1)
   })
@@ -1966,13 +1972,17 @@ describe('tokens (Recruit)', () => {
     const bird = injectCard('iv-bird', 'A unit.', { energy: 2, tags: ['Bird'] })
     const ivern = injectCard('iv-test', 'When you play me, look at the top 3 cards of your Main Deck. You may reveal a unit from among them and draw it. Recycle the rest. Then if you revealed a Bird, Cat, Dog, or Poro, do this: [Buff] a friendly unit.', { type: 'unit', energy: 0, power: {} })
     const s = baseState()
-    s.players[0].zones.mainDeck = [mk(bird, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)]
+    const birdC = mk(bird, 0)
+    s.players[0].zones.mainDeck = [birdC, mk(furyUnit.id, 0), mk(furyUnit.id, 0)]
     const ally = mk(furyUnit.id, 0) // a friendly unit to receive the buff
     s.players[0].zones.base.push(ally)
     const u = mk(ivern, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
-    expect(r.error).toBeFalsy()
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r0.error).toBeFalsy()
+    expect(r0.state.pendingChoice?.kind).toBe('peekDrawPick') // 3 unit qualifiers → the player chooses (E5)
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: birdC.iid }) // draw the Bird
+    expect(r.state.players[0].zones.hand.some((x) => x.iid === birdC.iid)).toBe(true)
     // Exactly one +1 buff landed on a friendly unit (the Bird reveal triggered it).
     const totalBuffs = [...r.state.players[0].zones.base, ...r.state.battlefields.flatMap((b) => b.units)]
       .filter((x) => x.owner === 0)
@@ -1983,12 +1993,15 @@ describe('tokens (Recruit)', () => {
   it('Ivern - Nurturer: does NOT buff when no Bird/Cat/Dog/Poro is revealed', () => {
     const ivern = injectCard('iv-test2', 'When you play me, look at the top 3 cards of your Main Deck. You may reveal a unit from among them and draw it. Recycle the rest. Then if you revealed a Bird, Cat, Dog, or Poro, do this: [Buff] a friendly unit.', { type: 'unit', energy: 0, power: {} })
     const s = baseState()
-    s.players[0].zones.mainDeck = [mk(furyUnit.id, 0), mk(furyUnit.id, 0), mk(furyUnit.id, 0)] // no tribe card
+    const pickC = mk(furyUnit.id, 0)
+    s.players[0].zones.mainDeck = [pickC, mk(furyUnit.id, 0), mk(furyUnit.id, 0)] // no tribe card
     const ally = mk(furyUnit.id, 0)
     s.players[0].zones.base.push(ally)
     const u = mk(ivern, 0)
     s.players[0].zones.hand.push(u)
-    const r = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r0.state.pendingChoice?.kind).toBe('peekDrawPick')
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: pickC.iid })
     const totalBuffs = [...r.state.players[0].zones.base, ...r.state.battlefields.flatMap((b) => b.units)]
       .filter((x) => x.owner === 0)
       .reduce((a, x) => a + (x.buffs ?? 0), 0)
@@ -6903,7 +6916,9 @@ describe('A5 — persistent / cascading + bespoke singles', () => {
     r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'pay' })
     expect(r.error).toBeFalsy()
     expect(r.state.players[0].xp).toBe(1) // 3 − 2
-    expect(r.state.players[1].zones.trash.some((c) => c.iid === pricey.iid)).toBe(true) // highest-cost stripped
+    expect(r.state.pendingChoice?.kind).toBe('insightfulPick') // the caster now picks the card (E7)
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: pricey.iid }) // pick the costly card
+    expect(r.state.players[1].zones.trash.some((c) => c.iid === pricey.iid)).toBe(true) // chosen card stripped
     expect(r.state.players[1].zones.hand.length).toBe(2) // −pricey, +1 drawn = back to 2
     // --- Decline branch ---
     const s2 = baseState()
@@ -7540,14 +7555,14 @@ describe('Phase B — card wiring (conditional Might)', () => {
     expect([...r.state.battlefields.flatMap((b) => b.units), ...r.state.players[0].zones.base].some((u) => u.iid === trashUnit.iid)).toBe(true)
   })
 
-  it('Dramatic Visionary: its [Deathknell] Predict 2 sets the higher-cost card on top', () => {
+  it('Dramatic Visionary: its [Deathknell] Predict 2 lets the player order the cards (E8)', () => {
     const dvId = injectCard('b-dramatic', '[Deathknell] [Predict 2]. (When I die, look at the top two cards of your Main Deck. Recycle any of them and put the rest back in any order.)', { name: 'Dramatic Visionary', type: 'unit', energy: 0, might: 4 })
     const lowId = injectCard('b-dv-low', 'cheap', { type: 'unit', energy: 1 })
     const highId = injectCard('b-dv-high', 'pricey', { type: 'unit', energy: 5 })
     const s = baseState()
     const dv = mk(dvId, 0)
     s.players[0].zones.base.push(dv)
-    s.players[0].zones.mainDeck.push(mk(lowId, 0), mk(highId, 0)) // low on top, high second
+    s.players[0].zones.mainDeck.push(mk(lowId, 0), mk(highId, 0)) // low on top (a), high second (b)
     const killId = injectCard('b-dv-kill', 'Kill a unit.', { type: 'spell', energy: 0, power: {} })
     const sp = mk(killId, 0) // active player kills Dramatic Visionary (fires its Deathknell)
     s.players[0].zones.hand.push(sp)
@@ -7555,7 +7570,9 @@ describe('Phase B — card wiring (conditional Might)', () => {
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
     r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
     expect(r.error).toBeFalsy()
-    expect(r.state.players[0].zones.mainDeck[0].cardId).toBe(highId) // Predict 2 ordered the costlier card on top
+    expect(r.state.pendingChoice?.kind).toBe('predict2') // deferred pick surfaces after the death resolves
+    r = reduce(r.state, { type: 'RESOLVE_CHOICE', player: 0, iid: 'keepB' }) // keep both, the costly card on top
+    expect(r.state.players[0].zones.mainDeck[0].cardId).toBe(highId)
   })
 
   it('Svellsongur: copies the host text so its conquer trigger fires an extra time', () => {
