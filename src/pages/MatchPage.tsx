@@ -7,12 +7,12 @@ import { DeckPicker } from '../components/DeckTile'
 import type { Card } from '../types/cards'
 import { type MatchState, type PlayerId, type EngineCard, type Action, type Payment, type ResolvedCost, type GameEvent } from '../engine/types'
 import { createMatch } from '../engine/setup'
-import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
+import { reduce, getLegalTargets, pendingAssignment, pendingSplitAssignment, deflectSurcharge, repeatCostFor, optPlayCostFor, canActivateUnit, controlsQuickDrawAura, weaponmasterChoices, weaponmasterCost } from '../engine/engine'
 import { autoPay, autoPayEff, effectiveCostOf, addCost, costIsFree } from '../engine/autopay'
 import { needsTarget, spellEffect } from '../engine/effects'
 import { optionalPayLabel, choiceResolvedCost, choiceCostFree } from '../lib/optionalPay'
 import { checkInvariants } from '../engine/invariants'
-import { accelerateCost, optionalPlayCost, parseKeywords, type KeywordCost } from '../engine/keywords'
+import { accelerateCost, parseKeywords, type KeywordCost } from '../engine/keywords'
 import { DOMAIN_META, type Domain } from '../types/cards'
 import MulliganHand from '../components/MulliganHand'
 import MatchBoard from '../components/MatchBoard'
@@ -34,6 +34,21 @@ import TurnRecapBanner, { type TurnRecapData } from '../components/TurnRecapBann
 import HotkeyHelp from '../components/HotkeyHelp'
 import MatchEndScreen from '../components/MatchEndScreen'
 import { unitLabel } from '../lib/cardLabel'
+
+/** Thematic titles for the generic option-list ChoiceModal, keyed by pendingChoice
+ *  kind (Phase E added several interactive pickers). Falls back to '✦ Choose'. */
+export const CHOICE_TITLES: Record<string, string> = {
+  stealUnit: '⚔ Take Control of a Unit',
+  stealGear: '⚙ Steal a Gear',
+  selectGear: '⚙ Choose a Gear',
+  revealOpponent: '🃏 Reveal a Hand',
+  revealBattlefield: '✦ Choose a Battlefield',
+  dravenAudaciousScore: '⚔ Draven - Audacious — Give a Point',
+  peekDrawPick: '🔮 Look at the Top — Draw One',
+  opponentDiscardPick: '🗑 Discard a Card',
+  insightfulPick: '🔍 Insightful Investigator — Strip a Card',
+  predict2: '🔮 Predict 2 — Recycle / Reorder',
+}
 
 /** Accumulate this-turn events into a buffer; when the turn flips, build a
  *  recap from the just-ended turn's buffer and reset to the new turn. Shared by
@@ -397,7 +412,9 @@ export default function MatchPage() {
   const continueUnitPlay = (c: EngineCard, card: Card, cost: ResolvedCost, accelerate: boolean) => {
     // Optional "you may pay X as an additional cost to play me" — pause for a styled
     // Pay/Skip prompt. Bard - Mercurial's cost is "exhaust your legend" (no rune cost).
-    const opt = optionalPlayCost(card)
+    // optPlayCostFor applies the Ezreal - Prodigy discount so the payment the UI sizes
+    // here matches the strict-exact effCost the engine validates.
+    const opt = optPlayCostFor(match, controlling, card)
     const isBard = card.name.replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Bard - Mercurial'
     if (opt || isBard) {
       setOptCostPrompt({ c, card, cost, accelerate, opt: opt ?? null })
@@ -1038,19 +1055,7 @@ export default function MatchPage() {
       )}
       {match.pendingChoice && match.pendingChoice.player === controlling && match.pendingChoice.kind !== 'nameTag' && match.pendingChoice.kind !== 'revealHandCard' && match.pendingChoice.kind !== 'revealView' && match.pendingChoice.kind !== 'cullKill' && match.pendingChoice.kind !== 'tideSwap' && match.pendingChoice.kind !== 'optionalPay' && match.pendingChoice.kind !== 'payCost' && match.pendingChoice.kind !== 'selectTarget' && (
         <ChoiceModal
-          title={
-            match.pendingChoice.kind === 'stealUnit'
-              ? '⚔ Take Control of a Unit'
-              : match.pendingChoice.kind === 'stealGear'
-                ? '⚙ Steal a Gear'
-                : match.pendingChoice.kind === 'selectGear'
-                  ? '⚙ Choose a Gear'
-                  : match.pendingChoice.kind === 'revealOpponent'
-                    ? '🃏 Reveal a Hand'
-                    : match.pendingChoice.kind === 'revealBattlefield'
-                      ? '✦ Choose a Battlefield'
-                      : '✦ Battlefield'
-          }
+          title={CHOICE_TITLES[match.pendingChoice.kind] ?? '✦ Choose'}
           subtitle={match.pendingChoice.prompt}
           options={match.pendingChoice.options.map((o) => ({ label: o.label, value: o.iid }))}
           onPick={(iid) => act({ type: 'RESOLVE_CHOICE', player: controlling, iid: String(iid) })}

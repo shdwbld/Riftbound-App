@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reduce } from './engine'
+import { reduce, repeatCostFor, optPlayCostFor } from './engine'
 import type { MatchState, PlayerState, EngineCard, PlayerId, ZoneId } from './types'
 import { emptyPayment } from './types'
 import { CARDS, CARD_INDEX } from '../data/cards'
@@ -13,7 +13,6 @@ function injectCard(id: string, text: string, extra: Record<string, unknown> = {
   } as never
   return id
 }
-const furyRune = CARDS.find((c) => c.type === 'rune' && c.produces.includes('fury'))!
 const furyUnit = CARDS.find((c) => isUnit(c) && c.domains.length === 1 && c.domains[0] === 'fury')!
 const battlefield = CARDS.find((c) => c.type === 'battlefield')!
 
@@ -123,5 +122,146 @@ describe('E4 — Hidden cleanup on mid-turn control loss', () => {
     // The killed unit left bf0 with no controller → the facedown is trashed mid-turn.
     expect((r.state.battlefields[0] as { facedown?: unknown }).facedown ?? null).toBe(null)
     expect(r.state.players[0].zones.trash.some((c) => c.iid === hidden.iid)).toBe(true)
+  })
+})
+
+// ── E10 — Ezreal - Prodigy: optional additional costs cost 1 less ───────────────
+describe('E10 — Ezreal - Prodigy optional-cost discount', () => {
+  const repeatSpell = injectCard('e10-rep', '[Repeat] :rb_energy_2:. Draw 1.', { type: 'spell', energy: 0, power: {} })
+  const optUnit = injectCard('e10-opt', 'You may pay :rb_energy_1: as an additional cost to play me.', { type: 'unit', energy: 0, power: {} })
+
+  it('discounts a [Repeat] cost by 1 Energy while Ezreal - Prodigy is in play', () => {
+    if (!CARD_INDEX['sfd-149-221']) return
+    const card = CARD_INDEX[repeatSpell]
+    const noProdigy = baseState()
+    expect(repeatCostFor(noProdigy, 0, card)?.energy).toBe(2) // baseline
+    const withProdigy = baseState()
+    withProdigy.players[0].zones.base.push(mk('sfd-149-221', 0)) // Ezreal - Prodigy
+    expect(repeatCostFor(withProdigy, 0, card)?.energy).toBe(1) // 2 − 1
+  })
+
+  it('discounts a "you may pay X as additional cost" by 1 (engine + UI share optPlayCostFor)', () => {
+    if (!CARD_INDEX['sfd-149-221']) return
+    const card = CARD_INDEX[optUnit]
+    const noProdigy = baseState()
+    expect(optPlayCostFor(noProdigy, 0, card)?.energy).toBe(1) // baseline
+    const withProdigy = baseState()
+    withProdigy.players[0].zones.base.push(mk('sfd-149-221', 0))
+    expect(optPlayCostFor(withProdigy, 0, card)?.energy).toBe(0) // 1 − 1
+  })
+})
+
+// ── E11 — Draven - Audacious: dies in combat → an opponent scores ───────────────
+describe('E11 — Draven - Audacious combat death', () => {
+  const dravText = 'When I die in combat, choose an opponent. They score 1 point.'
+
+  it('dying in combat scores 1 for the opponent (1v1 auto-picks the sole foe)', () => {
+    const drav = mk(injectCard('e11-drav', dravText, { name: 'Draven - Audacious', might: 3 }), 0)
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('e11-wall', 'A unit.', { might: 9 }), 1, { exhausted: true })], controller: 1 }
+    s.players[0].zones.base.push(drav)
+    const r = resolveCombat(s, drav)
+    expect(r.state.battlefields[0].units.some((u) => u.iid === drav.iid)).toBe(false) // Draven died (3 vs 9)
+    expect(r.state.players[1].points).toBe(1) // the opponent scored
+  })
+
+  it('a SPELL kill does NOT trigger the death-score (no diedInCombat stamp)', () => {
+    const drav = mk(injectCard('e11-drav2', dravText, { name: 'Draven - Audacious', might: 3 }), 1)
+    const s = baseState()
+    s.battlefields[0] = { cardId: battlefield.id, units: [drav], controller: 1 }
+    const sp = mk(injectCard('e11-kill', 'Kill a unit.', { type: 'spell', energy: 0, power: {} }), 0)
+    s.players[0].zones.hand.push(sp)
+    let r = reduce(s, { type: 'PLAY_SPELL', player: 0, iid: sp.iid, targets: [drav.iid], payment: emptyPayment() })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[1].points).toBe(0) // not a combat death → no score
+  })
+})
+
+// ── E12 — Hidden reveal with no legal target fizzles to trash ────────────────────
+describe('E12 — Hidden reveal fizzle', () => {
+  it('a revealed [Hidden] "Deal 3 to an enemy unit" with no enemy at its battlefield fizzles to trash', () => {
+    const s = baseState()
+    s.battlefields[0].controller = 0
+    s.battlefields[0].units.push(mk(furyUnit.id, 0)) // P0 holds bf0 — only friendly units here
+    s.battlefields[1].units.push(mk(furyUnit.id, 1)) // an enemy elsewhere — irrelevant
+    const spellId = injectCard('e12-bolt', '[Hidden] Deal 3 to an enemy unit.', { type: 'spell', energy: 0, power: {} })
+    const fd = mk(spellId, 0, { facedown: true, hiddenTurn: 1 } as Partial<EngineCard>)
+    ;(s.battlefields[0] as { facedown?: EngineCard }).facedown = fd
+    let r = reduce(s, { type: 'REVEAL', player: 0, iid: fd.iid })
+    expect(r.error).toBeFalsy()
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 1 })
+    r = reduce(r.state, { type: 'PASS_PRIORITY', player: 0 })
+    expect(r.state.players[0].zones.trash.some((c) => c.iid === fd.iid)).toBe(true) // fizzled to trash
+    expect(r.state.log.some((l) => /fizzles/i.test(l.text))).toBe(true)
+  })
+})
+
+// ── E13 — [Reaction] [Add] gear activates off-turn / mid-chain ───────────────────
+describe('E13 — [Reaction] [Add] off-turn activation', () => {
+  it('a [Reaction] [Add] gear adds to the pool on the opponent\'s turn', () => {
+    const sealId = injectCard('e13-seal', ':rb_exhaust:: [Reaction] — [Add] :rb_rune_fury:. (Abilities that add resources can\'t be reacted to.)', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.activePlayer = 1 // P1's turn — P0 is off-turn
+    const seal = mk(sealId, 0)
+    s.players[0].zones.base.push(seal)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: seal.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].pool?.power.fury).toBe(1)
+    expect(r.state.players[0].zones.base.find((x) => x.iid === seal.iid)?.exhausted).toBe(true)
+  })
+
+  it('a non-[Reaction] gear ability is still blocked off-turn', () => {
+    const plainId = injectCard('e13-plain', ':rb_exhaust:: [Add] :rb_rune_fury:.', { type: 'gear', energy: 0, power: {} })
+    const s = baseState()
+    s.activePlayer = 1
+    const plain = mk(plainId, 0)
+    s.players[0].zones.base.push(plain)
+    const r = reduce(s, { type: 'ACTIVATE_UNIT', player: 0, iid: plain.iid })
+    expect(r.error).toBeTruthy() // off-turn, not a [Reaction] → blocked
+  })
+})
+
+// ── E14 — 2v2 cross-player triggers: a teammate's death watcher fires ────────────
+function teamState(): MatchState {
+  const tp = (id: PlayerId, team: 0 | 1) => ({ ...player(id), team } as PlayerState)
+  const s = baseState()
+  s.players = [tp(0, 0), tp(1, 1), tp(2, 0), tp(3, 1)] // seats 0,2 = team 0; 1,3 = team 1
+  ;(s as unknown as { teamMode: boolean }).teamMode = true
+  s.pointsToWin = 11
+  return s
+}
+describe('E14 — 2v2 cross-player death trigger', () => {
+  it("a teammate's global \"when a friendly unit dies\" watcher fires when an ally dies", () => {
+    const s = teamState()
+    s.sandbox = true
+    // Player 0 holds a global death watcher; player 2 (teammate) owns the dying unit.
+    s.players[0].zones.base.push(mk(injectCard('e14-watch', 'When a friendly unit dies, draw 1.', { might: 3 }), 0))
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    const ally = mk(injectCard('e14-ally', 'A unit.', { might: 2 }), 2)
+    s.battlefields[0].units.push(ally)
+    const before = s.players[0].zones.hand.length
+    const r = reduce(s, { type: 'OVERRIDE', player: 0, op: 'kill', iid: ally.iid })
+    expect(r.error).toBeFalsy()
+    expect(r.state.players[0].zones.hand.length).toBe(before + 1) // teammate's death fired P0's watcher
+  })
+})
+
+// ── E15 — Svellsongur forwards the host's combat (attack/defend) triggers ────────
+describe('E15 — Svellsongur combat-trigger forwarding', () => {
+  it('copies the host\'s "when I attack, draw 1" so the gear fires it a second time', () => {
+    if (!CARD_INDEX['sfd-059-221']) return // Svellsongur
+    const hostId = injectCard('e15-host', 'When I attack, draw 1.', { might: 8 })
+    const s = baseState()
+    const host = mk(hostId, 0, { attached: ['sfd-059-221|svell-1'] }) // Svellsongur attached
+    s.players[0].zones.base.push(host)
+    for (let i = 0; i < 4; i++) s.players[0].zones.mainDeck.push(mk(furyUnit.id, 0))
+    // A weak stunned defender so combat auto-resolves and the host wins.
+    s.battlefields[0] = { cardId: battlefield.id, units: [mk(injectCard('e15-def', 'A unit.', { might: 1 }), 1, { exhausted: true, stunned: true })], controller: 1 }
+    const before = s.players[0].zones.hand.length
+    const r = resolveCombat(s, host)
+    expect(r.error).toBeFalsy()
+    // Host's "when I attack, draw 1" + the Svellsongur copy = drew 2.
+    expect(r.state.players[0].zones.hand.length).toBe(before + 2)
   })
 })

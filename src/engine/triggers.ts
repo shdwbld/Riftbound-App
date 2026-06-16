@@ -74,7 +74,10 @@ const PATTERNS: Pattern[] = [
   { event: 'becomesState', scope: 'global', re: /when(?:ever)?\s+(?:a|one of your|an?)\s+(?:friendly\s+)?units?\s+(?:you\s+control\s+)?becomes?\s+\[?(\w+)\]?/i },
   // "When I become [Mighty]" / "When this unit becomes [Mighty]" — self.
   { event: 'becomesState', scope: 'self', re: /when(?:ever)?\s+(?:i|this(?:\s+unit)?)\s+becomes?\s+\[?(\w+)\]?/i },
-  { event: 'death', scope: 'self', re: /when(?:ever)?\s+(?:i['’]?m|i am|this(?:\s+unit)?\s+is|this(?:\s+unit)?)\s+(?:defeated|killed|destroyed|dies)/i },
+  // NB: the leading `(?<!\()` excludes [Deathknell] REMINDER text "(When I die, …)"
+  // — those are handled by the [Deathknell] keyword below; only real (non-paren)
+  // "when I die/am defeated" rules text is a self-death trigger here.
+  { event: 'death', scope: 'self', re: /(?<!\()when(?:ever)?\s+(?:i['’]?m|i am|i|this(?:\s+unit)?\s+is|this(?:\s+unit)?)\s+(?:dies?|defeated|killed|destroyed)/i },
   // "When another non-Recruit unit you control dies" (Viktor - Leader), "when
   // another friendly unit dies" (Spectral Centaur), "when a buffed friendly unit
   // dies" (Vanguard Helm) — global. "you control" / "friendly" / "buffed" are all
@@ -225,6 +228,10 @@ export interface FiredTrigger {
   sourceCardId?: string
   /** The battlefield the source died at, for location-scoped death triggers. */
   bfIndex?: number
+  /** Snapshotted at death: the source died while participating in a showdown —
+   *  gates "when I die in combat" (Draven - Audacious). Read from the FiredTrigger
+   *  (not the trash) since the trashed copy may predate the combat stamp. */
+  diedInCombat?: boolean
 }
 
 /** Order simultaneously-fired triggers: the turn player's resolve first, then

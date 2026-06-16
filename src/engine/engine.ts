@@ -17,7 +17,7 @@ import {
   fail,
 } from './types'
 import { RULES, TOKEN_PILE_IDS, GOLD_TOKEN_ID, TOKEN_BY_NAME, shuffle } from './setup'
-import { parseKeywords, keywordsAt, accelerateCost, repeatCost, levelBonus, optionalPlayCost } from './keywords'
+import { parseKeywords, keywordsAt, accelerateCost, repeatCost, levelBonus, optionalPlayCost, type KeywordCost } from './keywords'
 import { addCost, costOf, effectiveCostOf, autoPayEff, autoPay, costIsFree } from './autopay'
 import { bfScript, bfScriptAt, battlefieldOf, type BfApi } from './battlefieldScripts'
 
@@ -1417,7 +1417,7 @@ function collectTeamTriggers(s: MatchState, player: PlayerId, event: TriggerEven
 function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, excess = 0, wasUncontrolled = false): MatchState {
   if (fired.length === 0) return s
   const ordered = orderTriggers(fired, s.activePlayer, s.players.length)
-  for (const { player, ability, sourceIid, sourceCardId, bfIndex: deathBf } of ordered) {
+  for (const { player, ability, sourceIid, sourceCardId, bfIndex: deathBf, diedInCombat: firedDiedInCombat } of ordered) {
     const label = ability.event === 'death' ? 'Deathknell' : `Trigger (${ability.event})`
     const p = s.players[player]
     const e = ability.effect
@@ -1933,11 +1933,11 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
         }
         handled = true
       } else if (baseName === 'Draven - Audacious') {
-        // "When I die in combat, choose an opponent. They score 1 point." Gate on the
-        // combat-death stamp (a spell/ability kill does NOT trigger it). The opponent
-        // pick is DEFERRED through pendingDecisions in 3-4p (avoids a mid-loop pause).
-        const dyer = s.players.flatMap((pl) => pl.zones.trash).find((c) => c.iid === sourceIid)
-        if (dyer?.diedInCombat) {
+        // "When I die in combat, choose an opponent. They score 1 point." Gate on
+        // the combat-death snapshot (a non-showdown spell/ability kill does NOT
+        // trigger it). The opponent pick is DEFERRED through pendingDecisions in
+        // 3-4p (avoids a mid-loop pause).
+        if (firedDiedInCombat) {
           const foes = s.players.filter((pl) => !pl.out && !sameTeam(s, player, pl.id))
           if (foes.length === 1) {
             s = scoreSimple(s, foes[0].id, 1, `scored from ${baseName} dying in combat`)
@@ -2005,7 +2005,7 @@ function fireDeaths(s: MatchState, defeated: EngineCard[], caster?: PlayerId): M
       if (ck === 'wasMighty' && !mightyAtDeath(u)) continue
       if (ck === 'diedAlone' && !aloneAtDeath(u)) continue
       if (ck === 'diedNotAlone' && aloneAtDeath(u)) continue
-      for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex: u.diedAtBf })
+      for (let i = 0; i < mult; i++) fired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: u.cardId, bfIndex: u.diedAtBf, diedInCombat: u.diedInCombat })
     }
     // Global "when a friendly unit dies" triggers (Viktor - Leader), on the dead
     // unit's controller's other permanents — and (E14) the teammate's too in 2v2,
@@ -3564,7 +3564,36 @@ export function repeatCostFor(s: MatchState, player: PlayerId, card: Card): Reso
   }
   if (!cost) return null
   if (controlsBFNamed(s, player, 'Marai Spire')) cost = { energy: Math.max(0, cost.energy - 1), power: cost.power }
+  if (ezrealProdigyInPlay(s, player)) cost = discountCostByOne(cost) // E10
   return cost
+}
+
+/** E10 — Ezreal - Prodigy: "Optional additional costs you pay cost 1 Energy or
+ *  rainbow-rune less." True while its controller has one in play. */
+function ezrealProdigyInPlay(s: MatchState, player: PlayerId): boolean {
+  return controlledPermanents(s, player).some(
+    (u) => (getCard(u.cardId)?.name ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim() === 'Ezreal - Prodigy',
+  )
+}
+
+/** Trim 1 off a cost — Energy first, else one Power pip (the Ezreal - Prodigy
+ *  "1 Energy or rainbow-rune less" discount on an optional additional cost). */
+function discountCostByOne(cost: { energy: number; power: Partial<Record<Domain, number>> }): ResolvedCost {
+  if (cost.energy > 0) return { energy: cost.energy - 1, power: { ...cost.power } }
+  const power: Partial<Record<Domain, number>> = { ...cost.power }
+  for (const d of Object.keys(power) as Domain[]) {
+    if ((power[d] ?? 0) > 0) { const n = power[d]! - 1; if (n > 0) power[d] = n; else delete power[d]; break }
+  }
+  return { energy: cost.energy, power }
+}
+
+/** E10 — the optional "you may pay X as an additional cost" with the Ezreal -
+ *  Prodigy discount applied. Shared by the engine fold-in AND both UI pages so the
+ *  cost the player pays matches the strict-exact effCost the engine validates. */
+export function optPlayCostFor(s: MatchState, player: PlayerId, card: Card): KeywordCost | null {
+  const cost = optionalPlayCost(card)
+  if (!cost) return null
+  return ezrealProdigyInPlay(s, player) ? discountCostByOne(cost) : cost
 }
 
 /** Whether a player can pay N Energy (pool first, then ready runes). */
@@ -5985,7 +6014,13 @@ function collectCombatFired(s: MatchState, bfIndex: number): FiredTrigger[] {
     for (const ref of u.attached ?? []) {
       const gCard = getCard(ref.split('|')[0])
       if (!gCard) continue
-      for (const ab of triggersFor(gCard, event))
+      // E15 — Svellsongur copies the host's text, so it also forwards the host's
+      // attack/defend triggers (fires them an extra time via the gear), matching
+      // the self-trigger forwarding in collectSelf.
+      const effGear = (gCard.name ?? '').replace(/\s*\([^)]*\)\s*$/, '') === 'Svellsongur'
+        ? { ...gCard, text: getCard(u.cardId)?.text ?? '' }
+        : gCard
+      for (const ab of triggersFor(effGear, event))
         combatFired.push({ player: u.owner, ability: ab, sourceIid: u.iid, sourceCardId: gCard.id })
     }
   }
@@ -6931,6 +6966,9 @@ function killTarget(s: MatchState, iid: string, spellKill = false): EngineCard[]
     if (idx >= 0) {
       const [u] = bf.units.splice(idx, 1)
       u.diedAtBf = bi // for location-scoped death triggers (Kog'Maw)
+      // "Die in combat": a unit killed by a spell/ability WHILE participating in an
+      // open showdown at its battlefield counts as dying in combat (Draven - Audacious).
+      if (s.showdown && bi === s.showdown.battlefield) u.diedInCombat = true
       if (tryRecallInsteadOfDeath(s, u, bi)) { recallToBase(s, u); recomputeControllers(s); cleanupUnsupportedHidden(s); return [] }
       if (trashOrBanish(s, u)) { recomputeControllers(s); cleanupUnsupportedHidden(s); return [] }
       if (spellKill) u.killedBySpell = true
@@ -7673,7 +7711,7 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // Optional "you may pay X as an additional cost to play me" (Clockwork Keeper,
       // Blast Corps Cadet, Frostcoat Cub, Sea Monkey, Akshan). Opt-in via the action;
       // fold the cost in now and gate the "if you paid" bonus on `paidAdditional`.
-      const optPlayCost = action.type === 'PLAY_UNIT' ? optionalPlayCost(card) : null
+      const optPlayCost = action.type === 'PLAY_UNIT' ? optPlayCostFor(s, action.player, card) : null
       // Crescent Guardian: the optional Chaos cost is only OFFERED if you've already
       // played a spell this turn — gate the opt-in on spellPlayedThisTurn so a bogus
       // payAdditionalCost can't fold the cost or grant enter-ready when the gate is unmet.
