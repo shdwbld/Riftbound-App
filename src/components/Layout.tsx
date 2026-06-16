@@ -31,7 +31,11 @@ export default function Layout() {
   // The in-match board (Match / Online) goes full-bleed to use the whole desktop;
   // every other page stays centered at max-w-6xl.
   const { pathname } = useLocation()
-  const fullBleed = ['/match', '/online'].some((p) => pathname === p || pathname.startsWith(p + '/'))
+  // Match / Online boards are full-bleed; the card database also goes edge-to-edge
+  // (its sidebar + grid fill the screen). /cards/spec stays centered.
+  const fullBleed =
+    pathname === '/cards' ||
+    ['/match', '/online'].some((p) => pathname === p || pathname.startsWith(p + '/'))
 
   // Global click SFX: first gesture also unlocks the AudioContext.
   useEffect(() => {

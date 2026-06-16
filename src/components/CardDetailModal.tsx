@@ -13,21 +13,33 @@ import CardText, { DomainIcon } from './CardText'
 export default function CardDetailModal({
   card,
   onClose,
+  large = false,
 }: {
   card: Card
   onClose: () => void
+  /** ~20% larger panel + art (used on the Cards database page). */
+  large?: boolean
 }) {
   const costed = isUnit(card) || isSpell(card) || isGear(card)
+  const panelW = large ? 'max-w-[806px]' : 'max-w-2xl'
+  const imgW =
+    card.type === 'battlefield'
+      ? large
+        ? 'w-full sm:w-[384px]'
+        : 'w-full sm:w-80'
+      : large
+        ? 'w-[230px] sm:w-[269px]'
+        : 'w-48 sm:w-56'
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[88vh] w-full max-w-2xl flex-col gap-4 overflow-y-auto rounded-2xl border border-white/10 bg-[#12121a] p-4 sm:flex-row"
+        className={`flex max-h-[90vh] w-full ${panelW} flex-col gap-4 overflow-y-auto rounded-2xl border border-white/10 bg-[#12121a] p-4 sm:flex-row`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className={`mx-auto shrink-0 ${card.type === 'battlefield' ? 'w-full sm:w-80' : 'w-48 sm:w-56'}`}>
+        <div className={`mx-auto shrink-0 ${imgW}`}>
           {card.imageUrl ? (
             <img
               src={card.imageUrl}

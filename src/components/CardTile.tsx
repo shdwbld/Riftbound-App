@@ -61,12 +61,76 @@ function CostBadge({ card }: { card: Card }) {
 export default function CardTile({
   card,
   onClick,
+  compact = false,
 }: {
   card: Card
   onClick?: () => void
+  /** Image-first dense tile for the card database grid — shows just the art with
+   *  a domain stripe, might badge, and a hover name overlay. */
+  compact?: boolean
 }) {
   const [imgFailed, setImgFailed] = useState(false)
   const showImage = card.imageUrl && !imgFailed
+  const isBattlefield = card.type === 'battlefield'
+
+  if (compact) {
+    return (
+      <div
+        onClick={onClick}
+        data-hover-sfx
+        title={card.name}
+        className={`group relative flex flex-col overflow-hidden rounded-lg border border-white/10 bg-[#0a1428] transition duration-150 hover:-translate-y-0.5 hover:border-amber-300/60 hover:shadow-[0_12px_28px_-14px_rgba(0,0,0,0.9)] ${
+          onClick ? 'cursor-pointer' : ''
+        }`}
+      >
+        <DomainStripe card={card} />
+        {showImage ? (
+          <div
+            className="relative w-full overflow-hidden bg-black/40"
+            style={{ aspectRatio: isBattlefield ? '1039 / 744' : '744 / 1039' }}
+          >
+            <img
+              src={card.imageUrl}
+              alt={card.name}
+              loading="lazy"
+              onError={() => setImgFailed(true)}
+              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.05]"
+            />
+            {isUnit(card) && (
+              <span className="absolute right-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-xs text-rose-300 shadow">
+                {card.might}⚔
+              </span>
+            )}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end bg-gradient-to-t from-black/90 via-black/40 to-transparent p-2 pt-6 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+              <span className="truncate text-[11px] font-semibold text-white">
+                {card.name}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div
+            className="flex flex-col gap-1.5 p-2.5"
+            style={{ aspectRatio: '744 / 1039' }}
+          >
+            <div className="line-clamp-2 text-xs font-semibold leading-tight">
+              {card.name}
+            </div>
+            <div className="text-[10px] uppercase tracking-wide text-white/40">
+              {card.type}
+            </div>
+            <div className="mt-auto">
+              <CostBadge card={card} />
+              {isUnit(card) && (
+                <span className="ml-1 rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-[10px] text-rose-300">
+                  {card.might}⚔
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div
