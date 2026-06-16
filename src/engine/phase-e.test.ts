@@ -222,6 +222,25 @@ describe('E13 — [Reaction] [Add] off-turn activation', () => {
   })
 })
 
+// ── Review fix — peekDrawPick Cancel stays within the qualifying type ────────────
+describe('E5 review fix — peekDrawPick Cancel draws a qualifying card only', () => {
+  it('Cancel falls back to the highest-cost UNIT, never an off-type top card', () => {
+    const peeker = injectCard('e5-peek', 'When you play me, look at the top 3 cards of your Main Deck. You may reveal a unit from among them and draw it. Recycle the rest.', { type: 'unit', energy: 0, power: {} })
+    const s = baseState()
+    const unitLow = mk(injectCard('e5-ul', 'A unit.', { energy: 1, might: 2 }), 0)
+    const unitHigh = mk(injectCard('e5-uh', 'A unit.', { energy: 5, might: 5 }), 0)
+    const spellTop = mk(injectCard('e5-sp', 'Draw 1.', { type: 'spell', energy: 9, power: {} }), 0)
+    s.players[0].zones.mainDeck = [unitLow, unitHigh, spellTop] // a costlier off-type spell is also on top
+    const u = mk(peeker, 0)
+    s.players[0].zones.hand.push(u)
+    const r0 = reduce(s, { type: 'PLAY_UNIT', player: 0, iid: u.iid, payment: { exhaust: [], recycle: [] } })
+    expect(r0.state.pendingChoice?.kind).toBe('peekDrawPick')
+    const r = reduce(r0.state, { type: 'RESOLVE_CHOICE', player: 0, iid: null }) // Cancel → qualifying fallback
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === unitHigh.iid)).toBe(true) // drew the costliest UNIT
+    expect(r.state.players[0].zones.hand.some((c) => c.iid === spellTop.iid)).toBe(false) // never the spell
+  })
+})
+
 // ── E14 — 2v2 cross-player triggers: a teammate's death watcher fires ────────────
 function teamState(): MatchState {
   const tp = (id: PlayerId, team: 0 | 1) => ({ ...player(id), team } as PlayerState)

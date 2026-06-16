@@ -979,11 +979,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
         options: matches.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
         payload: JSON.stringify({ topIids: top.map((c) => c.iid), thenBuffIfTribe }), srcName: 'Look',
       }
-      if (s.pendingChoice) {
-        s.pendingDecisions = [...(s.pendingDecisions ?? []), { player: p.id, kind: 'choice', prompt: choice.prompt, srcName: 'Look', raw: choice }]
-      } else {
-        offerChoice(s, choice)
-      }
+      deferOrOffer(s, choice)
       lines.push(`Looking at the top ${top.length} — choose one to draw.`)
     } else {
       for (const l of resolvePeekDraw(s, p.id, top.map((c) => c.iid), matches[0]?.iid ?? null, thenBuffIfTribe)) lines.push(l)
@@ -1010,11 +1006,7 @@ function applyParsed(s: MatchState, p: PlayerState, e: ParsedEffect, bfIndex?: n
       }
       // When a choice is already open, DEFER through pendingDecisions instead of
       // silently auto-taking the top card (the old `|| s.pendingChoice` shortcut).
-      if (s.pendingChoice) {
-        s.pendingDecisions = [...(s.pendingDecisions ?? []), { player: p.id, kind: 'choice', prompt: choice.prompt, srcName: 'Look at the top cards', raw: choice }]
-      } else {
-        offerChoice(s, choice)
-      }
+      deferOrOffer(s, choice)
       lines.push(`Looking at the top ${n} cards — choose one to keep.`)
     }
   }
@@ -1926,7 +1918,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
             ],
             payload: JSON.stringify({ aIid: a.iid, bIid: b.iid }), srcName: 'Predict 2',
           }
-          s.pendingDecisions = [...(s.pendingDecisions ?? []), { player, kind: 'choice', prompt: choice.prompt, srcName: 'Predict 2', raw: choice }]
+          deferChoice(s, choice)
           s = log(s, player, `${label}: [Predict 2] — look at the top two cards.`)
         } else {
           s = log(s, player, `${label}: Predict 2 — too few cards in deck.`)
@@ -1947,7 +1939,7 @@ function fireTriggers(s: MatchState, fired: FiredTrigger[], bfIndex?: number, ex
               prompt: `${baseName} died in combat — choose an opponent to score 1 point.`,
               options: foes.map((f) => ({ iid: `opp:${f.id}`, label: f.name })), srcName: baseName,
             }
-            s.pendingDecisions = [...(s.pendingDecisions ?? []), { player, kind: 'choice', prompt: choice.prompt, srcName: baseName, raw: choice }]
+            deferChoice(s, choice)
             s = log(s, player, `${label}: choose an opponent to score 1 point.`)
           }
         }
@@ -2234,6 +2226,21 @@ function canAffordEnergy(pl: PlayerState, n: number): boolean {
 // QUEUE a decision here and keep going; reduce() surfaces them one at a time after
 // the action finishes (surfaceNextDecision), so we never pause mid-trigger-loop.
 
+/** Phase E — DEFER a bespoke interactive choice behind any already-open choices
+ *  via the pendingDecisions 'choice' queue (surfaceNextDecision promotes `raw`
+ *  verbatim). Use when the choice MUST NOT pause the current loop (e.g. inside the
+ *  death-trigger loop). Mutates s in place. */
+function deferChoice(s: MatchState, choice: NonNullable<MatchState['pendingChoice']>): void {
+  s.pendingDecisions = [...(s.pendingDecisions ?? []), { player: choice.player, kind: 'choice', prompt: choice.prompt, srcName: choice.srcName ?? 'Choice', raw: choice }]
+}
+
+/** Surface a bespoke interactive choice NOW, or defer it (deferChoice) when a
+ *  choice is already open — instead of silently auto-resolving it. */
+function deferOrOffer(s: MatchState, choice: NonNullable<MatchState['pendingChoice']>): void {
+  if (s.pendingChoice) deferChoice(s, choice)
+  else offerChoice(s, choice)
+}
+
 /** Queue an OPTIONAL cost the player may pay (surfaced as a Pay/Decline modal;
  *  accepting opens the rune picker when `resolvedCost` is present). */
 function queueOptionalPay(s: MatchState, player: PlayerId, d: { prompt: string; srcName: string; cost: { energy?: number; powerAny?: number }; resolvedCost?: ResolvedCost & { powerAny?: number }; op: DeferredOp }): MatchState {
@@ -2286,8 +2293,10 @@ function surfaceNextDecision(s: MatchState): MatchState {
   s.pendingDecisions = s.pendingDecisions.slice(1)
   if (!s.pendingDecisions.length) s.pendingDecisions = undefined
   if (!head) return s
-  // A deferred bespoke choice carries its full pendingChoice spec — promote it verbatim.
-  if (head.raw) { s.pendingChoice = head.raw; return s }
+  // A deferred bespoke choice carries its full pendingChoice spec — promote it
+  // verbatim. A 'choice' decision is ALWAYS consumed here (never falls through to
+  // the generic promotion, which can't represent kind: 'choice').
+  if (head.kind === 'choice') { if (head.raw) s.pendingChoice = head.raw; return s }
   s.pendingChoice = {
     player: head.player,
     kind: head.kind as 'optionalPay' | 'payCost' | 'selectTarget' | 'selectGear', // 'choice' returned above via raw
@@ -2874,11 +2883,7 @@ function offerOpponentDiscard(s: MatchState, foeId: PlayerId, remaining: number,
     options: foe.zones.hand.map((c) => ({ iid: c.iid, label: getCard(c.cardId)?.name ?? 'a card' })),
     payload: JSON.stringify({ remaining, discarded }),
   }
-  if (s.pendingChoice) {
-    s.pendingDecisions = [...(s.pendingDecisions ?? []), { player: foeId, kind: 'choice', prompt: choice.prompt, srcName: 'Discard', raw: choice }]
-  } else {
-    offerChoice(s, choice)
-  }
+  deferOrOffer(s, choice)
   return s
 }
 
@@ -4503,6 +4508,7 @@ function applyTargetDamage(s: MatchState, targetIid: string, amount: number, spe
       // remaining Might hits 0 (NOT when damage >= remaining, which double-counts).
       if (mightOf(u) <= 0 || (elderLethal && !sameTeam(s, caster, controllerOf(u)))) {
         u.diedAtBf = i // for location-scoped death triggers (Kog'Maw)
+        if (s.showdown && i === s.showdown.battlefield) u.diedInCombat = true // split/spell damage during a showdown (Draven - Audacious)
         bf.units = bf.units.filter((x) => x.iid !== targetIid)
         if (tryRecallInsteadOfDeath(s, u, i)) {
           recallToBase(s, u)
@@ -8714,8 +8720,11 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
         const p = s.players[action.player]
         let drawnIid = action.iid && topIids.includes(action.iid) ? action.iid : null
         if (!drawnIid) {
-          const top = topIids.map((iid) => p.zones.mainDeck.find((c) => c.iid === iid)).filter((c): c is EngineCard => !!c)
-          drawnIid = top.length ? top.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b)).iid : null
+          // Cancel → the highest-cost QUALIFYING card (only the offered options),
+          // never an off-type top card (the effect says "draw a <type>").
+          const optIids = new Set(pc.options.map((o) => o.iid))
+          const cands = topIids.map((iid) => p.zones.mainDeck.find((c) => c.iid === iid)).filter((c): c is EngineCard => !!c && optIids.has(c.iid))
+          drawnIid = cands.length ? cands.reduce((b, c) => (cardCost(c) > cardCost(b) ? c : b)).iid : null
         }
         for (const l of resolvePeekDraw(s, action.player, topIids, drawnIid, thenBuffIfTribe)) s = log(s, action.player, l)
         return ok(s)
@@ -8745,9 +8754,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
 
       // E11 — Draven - Audacious: the chosen opponent (`opp:N`) scores 1 point.
       if (pc.kind === 'dravenAudaciousScore') {
-        const foeId = action.iid?.startsWith('opp:') ? (parseInt(action.iid.slice(4), 10) as PlayerId) : null
-        if (foeId == null || !s.players[foeId] || s.players[foeId].out)
-          return ok(log(s, action.player, 'Draven - Audacious — no opponent scored.'))
+        let foeId = action.iid?.startsWith('opp:') ? (parseInt(action.iid.slice(4), 10) as PlayerId) : null
+        // "Choose an opponent" is MANDATORY — a decline / invalid pick defaults to
+        // the first eligible opponent (the point still goes to someone).
+        if (foeId == null || !s.players[foeId] || s.players[foeId].out || sameTeam(s, pc.player, foeId))
+          foeId = s.players.find((pl) => !pl.out && !sameTeam(s, pc.player, pl.id))?.id ?? null
+        if (foeId == null) return ok(log(s, action.player, 'Draven - Audacious — no opponent to score.'))
         return ok(scoreSimple(s, foeId, 1, `scored from ${pc.srcName ?? 'Draven - Audacious'} dying in combat`))
       }
 
@@ -9232,12 +9244,12 @@ function reduceInner(state: MatchState, action: Action): EngineResult {
       // and while a chain/showdown is open — they add resources with no chain item
       // ("abilities that add resources can't be reacted to"). canActivateUnit has no
       // timing gate, so probing it here is safe.
-      const probe = guard ? canActivateUnit(state, action.player, action.iid) : null
+      const probe = canActivateUnit(state, action.player, action.iid)
       const isReactionAdd = !!probe && probe.reaction && (probe.effect.addEnergy > 0 || Object.keys(probe.effect.addPower).length > 0)
       // 2v2: a teammate may activate abilities during the Turn Player's open turn.
       if (guard && !isReactionAdd && !(state.teamMode && sameTeam(state, action.player, state.activePlayer) && !requireActiveAction(state, state.activePlayer)))
         return fail(state, guard)
-      const ab = canActivateUnit(state, action.player, action.iid)
+      const ab = probe
       if (!ab) return fail(state, 'That ability can\'t be activated right now.')
       const s = clone(state)
       const p = s.players[action.player]
